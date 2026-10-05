@@ -8,6 +8,7 @@
  * 想加功能？写一个插件（可以注册自己的控制台页面/页面元素/消息菜单），
  * 加进 registry，并在 yunhu.config.yml 的 plugins 下写它的配置即可。
  */
+import { enableMobileDebug } from './core/mobileDebug'
 import { shallowRef, watchEffect } from 'vue'
 import { Context } from 'cordis'
 import './core/augment'   // cordis 服务/事件的类型补充（声明合并）
@@ -31,8 +32,10 @@ import { sessionEventPlugin } from './plugins/session-event'
 import { socialPlugin } from './plugins/social'
 import { botConsolePlugin } from './plugins/botconsole'
 import { communityPlugin } from './plugins/community'
+import { deeplinkPlugin } from './plugins/deeplink'
 import { stickersPlugin } from './plugins/stickers'
 import { commandsPlugin } from './plugins/commands'
+enableMobileDebug()  // 安卓内置调试浮层（仅 native 环境生效，最早捕获初始化错误）
 
 export interface RegistryItem {
   key: string
@@ -66,6 +69,7 @@ export const registry: RegistryItem[] = [
   { key: 'group-admin', plugin: groupAdminPlugin, desc: '群管理 · 成员/踢出/禁言/看板/记录搜索', provide: ['group'], deps: ['api', 'chat', 'ui'] },
   { key: 'quickreply', plugin: quickReplyPlugin, desc: '快捷回复 · 注册独立页面', provide: ['quickreply'], deps: ['ui', 'chat'] },
   { key: 'commands', plugin: commandsPlugin, desc: '机器人指令 · 标题栏入口 + 输入 / 唤起（按机器人归类）', provide: ['commands'], deps: ['api', 'chat', 'ui', 'console'] },
+  { key: 'deeplink', plugin: deeplinkPlugin, desc: '云湖内链 yunhu:// 支持（加好友/文章/板块）', provide: ['deeplink'], deps: ['api', 'ui', 'chat', 'console', 'community'] },
   { key: 'stickers', plugin: stickersPlugin, desc: '表情收藏面板 + 语音消息', provide: ['stickers'], deps: ['api', 'chat', 'ui', 'console'] },
   { key: 'social', plugin: socialPlugin, desc: '通讯录 · 用户/群聊/机器人 + 添加 + 创建群聊', provide: ['social'], deps: ['api', 'ui', 'console'] },
   { key: 'botconsole', plugin: botConsolePlugin, desc: '机器人控制台 · 我创建的机器人/编辑/Token/指令', provide: ['botconsole'], deps: ['api', 'ui', 'console'] },
