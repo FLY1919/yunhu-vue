@@ -1,3 +1,7 @@
 node_modules/
 dist/
 *.log
+
+# VitePress 文档站构建产物
+docs-site/.vitepress/dist
+docs-site/.vitepress/cache

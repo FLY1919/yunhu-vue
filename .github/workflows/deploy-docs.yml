@@ -1,0 +1,59 @@
+name: 部署文档到 GitHub Pages
+
+on:
+  # 推送到 master 时部署
+  push:
+    branches: [master]
+  # 支持在 Actions 页面手动触发
+  workflow_dispatch:
+
+# 只允许一个并发部署；进行中的不会被取消，排队等待（避免 Pages 部署互相打架）
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 安装 Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: 安装依赖
+        run: npm ci --no-audit --no-fund
+
+      - name: 构建 VitePress 文档
+        # 文档源在 docs-site/，产物默认输出到 docs-site/.vitepress/dist
+        run: npx vitepress build docs-site
+
+      - name: 配置 Pages
+        uses: actions/configure-pages@v5
+
+      - name: 上传构建产物
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: docs-site/.vitepress/dist
+
+  deploy:
+    needs: build
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: 部署到 GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
