@@ -38,10 +38,28 @@ protocol.registerSchemesAsPrivileged([{
 }])
 
 /** 把 request.headers 转成纯对象（去掉会和上游冲突的字段） */
+/* HTTP 头只允许 0-255 的 ByteString。昵称/群名里的泰文组合符、生僻 emoji
+ * 一旦混进头（哪怕是透传的 accept-language 片段），Headers 构造就会抛
+ * 'Invalid header value'，表现就是桌面端开屏弹 JS 错误。这里统一清洗。 */
+const HEADER_ALLOW = new Set(['token', 'content-type', 'accept', 'accept-encoding', 'accept-language', 'range', 'cookie', 'user-agent', 'if-none-match', 'if-modified-since'])
+function asciiOnly(v) { return String(v).replace(/[^\x00-\x7F]/g, '') }
 function proxyHeaders(request) {
   const h = {}
-  for (const [k, v] of request.headers.entries()) h[k] = v
-  delete h.host; delete h.origin; delete h.referer; delete h['content-length']
+  for (const [k, v] of request.headers.entries()) {
+    const key = k.toLowerCase()
+    if (!HEADER_ALLOW.has(key)) continue
+    const clean = asciiOnly(v)
+    if (clean) h[key] = clean
+  }
+  return h
+}
+/** 响应头同样清洗：上游偶尔会回带非 ASCII 的自定义头 */
+function safeHeaders(headers) {
+  const h = new Headers()
+  for (const [k, v] of headers.entries()) {
+    if (k === 'set-cookie') continue
+    try { h.set(k, asciiOnly(v)) } catch { /* 非法头丢弃 */ }
+  }
   return h
 }
 
@@ -60,7 +78,7 @@ async function handle(request) {
         body: (request.method === 'GET' || request.method === 'HEAD') ? undefined : request.body,
       })
       // 关键：/api 绝不能缓存
-      const h = new Headers(resp.headers)
+      const h = safeHeaders(resp.headers)
       h.set('cache-control', 'no-store')
       return new Response(resp.body, { status: resp.status, statusText: resp.statusText, headers: h })
     } catch (e) {
@@ -80,7 +98,7 @@ async function handle(request) {
         method: 'GET',
         headers: { referer: RES_REFERER, range: request.headers.get('range') || '' },
       })
-      const h = new Headers(resp.headers)
+      const h = safeHeaders(resp.headers)
       h.set('cache-control', 'public, max-age=86400')
       h.set('access-control-allow-origin', '*')
       h.set('access-control-expose-headers', 'content-range, content-length, accept-ranges')
@@ -103,7 +121,7 @@ async function handle(request) {
         headers: proxyHeaders(request),
         body: request.body,
       })
-      const h = new Headers(resp.headers)
+      const h = safeHeaders(resp.headers)
       h.set('access-control-allow-origin', '*')
       return new Response(resp.body, { status: resp.status, headers: h })
     } catch (e) {
@@ -137,6 +155,8 @@ function createWindow() {
     autoHideMenuBar: true,
     webPreferences: { nodeIntegration: false, contextIsolation: true },
   })
+  // UA 里的非 ASCII 段剔除（系统语言区标签等），避免个别请求头场景抛 Invalid header value
+  try { mainWindow.webContents.setUserAgent(mainWindow.webContents.getUserAgent().replace(/[^\x00-\x7F]/g, '')) } catch { /* 忽略 */ }
   mainWindow.loadURL('yunhu://app/index.html')
 
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
@@ -174,6 +194,23 @@ if (!gotLock) {
   })
 
   app.whenReady().then(() => {
+    // 应用菜单：Linux 的托盘右键在 GNOME/Wayland 下经常不弹（AppIndicator 限制），
+    // 必须有一个不依赖托盘的退出/刷新入口
+    const isMac = process.platform === 'darwin'
+    const menu = Menu.buildFromTemplate([
+      ...(isMac ? [] : [{ label: '文件', submenu: [
+        { label: '退出', accelerator: 'Ctrl+Q', click: () => { isQuitting = true; app.quit() } },
+      ] }]),
+      { label: '视图', submenu: [
+        { label: '刷新', accelerator: 'CmdOrCtrl+R', click: (_, win) => win && win.reload() },
+        { label: '开发者工具', accelerator: 'CmdOrCtrl+Shift+I', click: (_, win) => win && win.webContents.toggleDevTools() },
+      ] },
+      { label: '帮助', submenu: [
+        { label: '关于', click: () => dialog.showMessageBox({ message: '云湖第三方客户端\nElectron 内嵌版 · 仅供学习交流' }) },
+      ] },
+    ])
+    Menu.setApplicationMenu(menu)
+
     protocol.handle('yunhu', handle)
     createWindow()
     createTray()

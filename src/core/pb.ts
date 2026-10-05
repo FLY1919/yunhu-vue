@@ -39,6 +39,27 @@ export function decode(u8) {
     for (;;) { const b = u8[i++]; s |= BigInt(b & 127) << sh; if (!(b & 128)) break; sh += 7n }
     return s
   }
+  /**
+   * 跳过某个字段（含递归跳过 group）。
+   * ⚠️ 之前只支持 wire type 0/1/2/5，遇到 3（start group）/4（end group）就抛
+   *    'unsupported wire type 4' —— 云湖某些响应里有已废弃的 group 类型字段，
+   *    客户端用不到这些字段，正确做法是**跳过**而不是崩溃。
+   */
+  const skip = (w) => {
+    if (w === 0) { rv(); return }
+    if (w === 2) { const len = Number(rv()); i += len; return }
+    if (w === 5) { i += 4; return }
+    if (w === 1) { i += 8; return }
+    if (w === 3) {
+      // start group：递归跳到匹配的 end group（字段号在 tag 里，这里只按 w 判断）
+      for (;;) {
+        const t2 = rv(); const w2 = Number(t2 & 7n)
+        if (w2 === 4) return  // 遇到 end group，group 结束
+        skip(w2)
+      }
+    }
+    // w === 4（end group）或其它非法值：无 payload，直接返回
+  }
   while (i < u8.length) {
     const t = rv(); const f = Number(t >> 3n); const w = Number(t & 7n)
     let v
@@ -46,7 +67,7 @@ export function decode(u8) {
     else if (w === 2) { const len = Number(rv()); v = u8.slice(i, i + len); i += len }
     else if (w === 5) { v = u8.slice(i, i + 4); i += 4 }
     else if (w === 1) { v = u8.slice(i, i + 8); i += 8 }
-    else throw new Error('unsupported wire type ' + w)
+    else { skip(w); continue }  // wire type 3/4 或其它未知：跳过，不崩
     ;(out[f] = out[f] || []).push(v)
   }
   return out
