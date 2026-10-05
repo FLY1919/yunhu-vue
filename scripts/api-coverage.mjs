@@ -12,8 +12,9 @@
  */
 import { readFileSync, writeFileSync, readdirSync, statSync } from 'node:fs'
 import { join, dirname, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
-const ROOT = resolve(new URL('..', import.meta.url).pathname)
+const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 
 /** 文档来源：优先本地文件（离线也能跑），否则抓在线版 */
 async function loadDoc() {
