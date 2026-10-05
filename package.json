@@ -15,7 +15,8 @@
     "test:api": "tsx test.mjs",
     "test:ws": "tsx test-ws.mjs",
     "desktop": "electron electron/main.cjs",
-    "desktop:test": "DISPLAY=:99 ELECTRON_DISABLE_SANDBOX=1 electron electron/selftest.cjs --no-sandbox"
+    "desktop:test": "DISPLAY=:99 ELECTRON_DISABLE_SANDBOX=1 electron electron/selftest.cjs --no-sandbox",
+    "desktop:dist": "electron-builder --linux AppImage --x64"
   },
   "dependencies": {
     "@satorijs/core": "^4.6.0",
@@ -32,10 +33,38 @@
     "@types/node": "^26.6.4",
     "@vitejs/plugin-vue": "^5.2.1",
     "electron": "^44.5.1",
+    "electron-builder": "^26.15.3",
     "js-yaml": "^5.4.2",
     "tsx": "^4.23.15",
     "typescript": "^7.0.2",
     "vite": "^6.0.7",
     "vitepress": "^1.6.4"
+  },
+  "main": "electron/main.cjs",
+  "build": {
+    "appId": "io.fly1919.yunhu",
+    "productName": "云湖客户端",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "electron/**/*",
+      "build/icon.png",
+      "package.json"
+    ],
+    "linux": {
+      "target": [
+        "AppImage"
+      ],
+      "icon": "build/icon.png",
+      "category": "Network"
+    },
+    "win": {
+      "target": [
+        "nsis"
+      ],
+      "icon": "build/icon.png"
+    }
   }
 }

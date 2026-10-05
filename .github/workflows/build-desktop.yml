@@ -1,0 +1,66 @@
+name: 构建桌面版并发布 Release
+
+on:
+  push:
+    branches: [desktop]
+    paths:
+      - 'src/**'
+      - 'dist/**'
+      - 'electron/**'
+      - 'package.json'
+      - '.github/workflows/build-desktop.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: desktop-build
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 安装 Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: 安装依赖
+        run: npm ci --no-audit --no-fund
+
+      - name: 构建前端
+        run: npm run build
+
+      - name: 打包 Linux AppImage
+        run: npx electron-builder --linux AppImage --x64 --publish never
+
+      - name: 上传产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: yunhu-linux-appimage
+          path: release/*.AppImage
+          retention-days: 30
+
+      - name: 发布到 Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -e
+          APPIMAGE=$(ls release/*.AppImage 2>/dev/null | head -1)
+          TAG=desktop-latest
+          gh release delete "$TAG" --yes --cleanup-tag 2>/dev/null || true
+          gh release create "$TAG" "$APPIMAGE" \
+            --title "云湖客户端桌面版（Linux AppImage，自动构建）" \
+            --notes "自动触发构建 · commit ${{ github.sha }}
+
+          - 构建时间：${{ github.event.head_commit.timestamp || '手动触发' }}
+          - 平台：Linux x64（AppImage）
+
+          > 下载后 chmod +x 再运行，双击即可（内置 API 代理，无需额外后端）。" \
+            --latest
