@@ -69,6 +69,11 @@ async function request(ctx: Context, url: string, config: HttpConfig = {}) {
   const timer = window.setTimeout(() => ctl.abort(), timeout)
 
   try {
+    // ⚠️ Capacitor 原生（安卓内置）：用原生 HTTP 直连云湖，绕 CORS
+    const isNative = typeof window !== 'undefined' && (window as any).Capacitor?.isNativePlatform?.()
+    if (isNative) {
+      return await nativeRequest(finalUrl, config, headers, body, timeout)
+    }
     const res = await fetch(finalUrl, {
       method: (config.method || 'GET').toUpperCase(),
       headers,
@@ -93,6 +98,40 @@ async function request(ctx: Context, url: string, config: HttpConfig = {}) {
     }
   } finally {
     window.clearTimeout(timer)
+  }
+}
+
+/** Capacitor 原生 HTTP 请求（安卓「内置」时走这里，直连云湖绕 CORS） */
+async function nativeRequest(finalUrl: string, config: HttpConfig, headers: Record<string, string>, body: any, timeout: number) {
+  // 动态 import + vite-ignore：web 端没装 @capacitor/http 也不影响构建，
+  // 运行时只有 native 分支才会真正走到这里。
+  // @ts-ignore - @capacitor/http 只在 android 分支安装，web 端构建忽略类型
+  const { CapacitorHttp } = await import(/* @vite-ignore */ '@capacitor/http')
+  const UPSTREAM = 'https://chat-go.jwzhd.com'
+  let url = finalUrl
+  if (url.startsWith('/api')) url = UPSTREAM + url.slice(4)
+  else if (!/^https?:\/\//i.test(url)) url = UPSTREAM + url
+  // 原生层手动补 Referer（有些接口校验来源）
+  const h: Record<string, string> = { ...headers }
+  if (!h.referer) h.referer = 'https://myapp.jwznb.com/'
+
+  const resp = await CapacitorHttp.request({
+    url,
+    method: (config.method || 'GET').toUpperCase(),
+    headers: h,
+    data: typeof body === 'string' ? body : undefined,
+    connectTimeout: timeout,
+    readTimeout: timeout,
+  })
+  let data = resp.data
+  if (typeof data === 'string') { try { data = JSON.parse(data) } catch { /* 保留原文 */ } }
+  const st = resp.status || 0
+  return {
+    status: st,
+    headers: resp.headers || {},
+    data,
+    ok: st >= 200 && st < 300,
+    get raw() { return data },
   }
 }
 
