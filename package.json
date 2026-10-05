@@ -58,13 +58,15 @@
         "AppImage"
       ],
       "icon": "build/icon.png",
-      "category": "Network"
+      "category": "Network",
+      "artifactName": "yunhu-client-${version}-x64.AppImage"
     },
     "win": {
       "target": [
         "nsis"
       ],
       "icon": "build/icon.png"
-    }
+    },
+    "executableName": "yunhu-client"
   }
 }
