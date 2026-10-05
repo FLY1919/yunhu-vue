@@ -105,8 +105,8 @@ async function request(ctx: Context, url: string, config: HttpConfig = {}) {
 async function nativeRequest(finalUrl: string, config: HttpConfig, headers: Record<string, string>, body: any, timeout: number) {
   // 动态 import + vite-ignore：web 端没装 @capacitor/http 也不影响构建，
   // 运行时只有 native 分支才会真正走到这里。
-  // @ts-ignore - @capacitor/http 只在 android 分支安装，web 端构建忽略类型
-  const { CapacitorHttp } = await import(/* @vite-ignore */ '@capacitor/http')
+  // @ts-ignore - @capacitor/core 里导出 CapacitorHttp（Capacitor 5+ 已合并，@capacitor/http 是废弃的 0.0.2）
+  const { CapacitorHttp } = await import(/* @vite-ignore */ '@capacitor/core')
   const UPSTREAM = 'https://chat-go.jwzhd.com'
   let url = finalUrl
   if (url.startsWith('/api')) url = UPSTREAM + url.slice(4)
