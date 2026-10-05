@@ -1,0 +1,69 @@
+name: 构建 Android APK
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - 'src/**'
+      - 'dist/**'
+      - 'capacitor.config.ts'
+      - 'package.json'
+      - '.github/workflows/build-android.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: android-build
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 安装 Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: 安装依赖
+        run: npm ci --no-audit --no-fund
+
+      - name: 构建前端
+        run: npm run build
+
+      - name: 安装 Capacitor CLI
+        run: npm i -g @capacitor/cli
+
+      - name: 初始化 Capacitor Android
+        run: npx cap add android
+
+      - name: 同步 web 资源到 Android
+        run: npx cap sync android
+
+      - name: 设置 JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: 设置 Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: 'platforms;android-34 build-tools;34.0.0'
+
+      - name: 构建 debug APK
+        run: cd android && chmod +x gradlew && ./gradlew assembleDebug --no-daemon
+
+      - name: 上传 APK 构建产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: yunhu-android-debug
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+          retention-days: 30

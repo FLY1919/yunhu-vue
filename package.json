@@ -3,7 +3,7 @@
   "private": true,
   "version": "1.0.0",
   "type": "module",
-  "description": "\u4e91\u6e56\u7b2c\u4e09\u65b9 Web \u5ba2\u6237\u7aef \u00b7 Vue3 + \u771f cordis \u63d2\u4ef6\u5185\u6838 + Satori \u534f\u8bae + WebDAV \u7f51\u5173\uff08\u4ec5\u4f9b\u5b66\u4e60\u4ea4\u6d41\uff09",
+  "description": "云湖第三方 Web 客户端 · Vue3 + 真 cordis 插件内核 + Satori 协议 + WebDAV 网关（仅供学习交流）",
   "scripts": {
     "dev": "vite",
     "preflight": "node scripts/preflight.mjs",
@@ -25,6 +25,9 @@
     "vue": "^3.5.13"
   },
   "devDependencies": {
+    "@capacitor/android": "^8.5.2",
+    "@capacitor/cli": "^8.5.2",
+    "@capacitor/core": "^8.5.2",
     "@types/js-yaml": "^4.0.9",
     "@types/node": "^26.6.4",
     "@vitejs/plugin-vue": "^5.2.1",
