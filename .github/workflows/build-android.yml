@@ -47,6 +47,15 @@ jobs:
       - name: 同步 web 资源到 Android
         run: npx cap sync android
 
+      - name: 诊断：检查 web 资源是否打包进 APK
+        run: |
+          echo "=== assets/public 内容 ==="
+          ls -la android/app/src/main/assets/public/ 2>&1 | head -20
+          echo "=== index.html 是否存在 ==="
+          ls -la android/app/src/main/assets/public/index.html 2>&1
+          echo "=== AndroidManifest 里的 MainActivity exported ==="
+          grep -A 3 "MainActivity" android/app/src/main/AndroidManifest.xml 2>&1 | head -10
+
       - name: 设置 JDK 17
         uses: actions/setup-java@v4
         with:
