@@ -1,4 +1,4 @@
-name: 构建 Android APK
+name: 构建 Android APK 并发布 Release
 
 on:
   push:
@@ -67,3 +67,22 @@ jobs:
           name: yunhu-android-debug
           path: android/app/build/outputs/apk/debug/app-debug.apk
           retention-days: 30
+
+      - name: 发布 APK 到 Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -e
+          APK=android/app/build/outputs/apk/debug/app-debug.apk
+          TAG=android-latest
+          # 同名 release 先删掉（保留 latest 语义，避免重复堆积）
+          gh release delete "$TAG" --yes --cleanup-tag 2>/dev/null || true
+          gh release create "$TAG" "$APK" \
+            --title "云湖客户端 Android（debug，自动构建）" \
+            --notes "自动触发构建 · commit ${{ github.sha }}
+          
+          - 构建时间：${{ github.event.head_commit.timestamp || '手动触发' }}
+          - APK：app-debug.apk（未签名，仅供测试）
+          
+          > 安装后打开，在「设置 → API 基址」里填你的云湖服务地址即可使用。" \
+            --latest
