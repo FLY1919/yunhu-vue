@@ -51,6 +51,8 @@
       "dist/**/*",
       "electron/**/*",
       "build/icon.png",
+      "build/icon.ico",
+      "build/icon.icns",
       "package.json"
     ],
     "linux": {
@@ -65,8 +67,17 @@
       "target": [
         "nsis"
       ],
-      "icon": "build/icon.png"
+      "artifactName": "yunhu-client-${version}-setup-x64.exe",
+      "icon": "build/icon.ico"
     },
-    "executableName": "yunhu-client"
+    "executableName": "yunhu-client",
+    "mac": {
+      "target": [
+        "dmg"
+      ],
+      "artifactName": "yunhu-client-${version}-x64.dmg",
+      "category": "public.app-category.social-networking",
+      "icon": "build/icon.icns"
+    }
   }
 }

@@ -20,7 +20,20 @@ permissions:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            name: linux
+            pattern: '*.AppImage'
+          - os: windows-latest
+            name: windows
+            pattern: '*.exe'
+          - os: macos-latest
+            name: macos
+            pattern: '*.dmg'
+    runs-on: ${{ matrix.os }}
     steps:
       - name: 检出代码
         uses: actions/checkout@v4
@@ -37,30 +50,39 @@ jobs:
       - name: 构建前端
         run: npm run build
 
-      - name: 打包 Linux AppImage
-        run: npx electron-builder --linux AppImage --x64 --publish never
+      - name: 打包（${{ matrix.name }}）
+        run: npx electron-builder --publish never
 
       - name: 上传产物
         uses: actions/upload-artifact@v4
         with:
-          name: yunhu-linux-appimage
-          path: release/*.AppImage
+          name: yunhu-desktop-${{ matrix.name }}
+          path: release/${{ matrix.pattern }}
           retention-days: 30
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: 下载所有平台产物
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
 
       - name: 发布到 Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -e
-          APPIMAGE=$(ls release/*.AppImage 2>/dev/null | head -1)
           TAG=desktop-latest
           gh release delete "$TAG" --yes --cleanup-tag 2>/dev/null || true
-          gh release create "$TAG" "$APPIMAGE" \
-            --title "云湖客户端桌面版（Linux AppImage，自动构建）" \
+          gh release create "$TAG" artifacts/* \
+            --title "云湖客户端桌面版（自动构建）" \
             --notes "自动触发构建 · commit ${{ github.sha }}
 
           - 构建时间：${{ github.event.head_commit.timestamp || '手动触发' }}
-          - 平台：Linux x64（AppImage）
+          - 平台：Linux x64 (AppImage) · Windows x64 (安装包) · macOS x64 (dmg)
 
-          > 下载后 chmod +x 再运行，双击即可（内置 API 代理，无需额外后端）。" \
+          > 内置 API 代理，无需额外后端。Windows/macOS 未签名，安装时如提示未知来源请手动允许。" \
             --latest
