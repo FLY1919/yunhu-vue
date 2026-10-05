@@ -2,7 +2,7 @@ name: 构建 Android APK 并发布 Release
 
 on:
   push:
-    branches: [master]
+    branches: [android]
     paths:
       - 'src/**'
       - 'dist/**'
