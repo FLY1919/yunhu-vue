@@ -1,0 +1,35 @@
+app:
+  title: 云湖 · 第三方客户端
+  theme: dark
+  pollMs: 4000
+plugins:
+  config: {}
+  theme:
+    preset: yunhu
+    accent: ''
+    wallpaper: ''
+    radius: 10
+    blur: 0
+  message-actions:
+    confirmRecall: true
+  group-admin:
+    memberPageSize: 50
+  logger: {}
+  ui: {}
+  console: {}
+  api: {}
+  auth: {}
+  adapter: {}
+  chat:
+    pollMs: 4000
+    maxMessages: 200
+  ws:
+    heartbeat: 25000
+  quickreply:
+    enabled: true
+    items:
+      - 收到 ✅
+      - 稍等一下
+      - 好的
+      - 哈哈哈哈
+      - （溜了）
