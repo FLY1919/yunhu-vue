@@ -1,102 +1,131 @@
 /**
  * Electron 主进程 —— 云湖客户端桌面版（GUI）
  *
- * 设计思路：**不重复实现业务**，而是直接复用现有的 Node 服务端（server.ts）。
- *   1) 主进程里以子进程方式拉起服务端（默认 8902 端口）
- *   2) BrowserWindow 加载 http://127.0.0.1:8902
- *   3) 这样「Web 版有的功能，桌面版全都有」，不用维护两份逻辑
- *
- * 另外做了几件桌面端才有的事：
- *   - 单实例锁（避免重复启动）
- *   - 系统托盘（关闭窗口时最小化到托盘，而不是退出）
- *   - 启动前等待服务端就绪（避免白屏）
- *   - 退出时一并结束服务端子进程
+ * ⚠️ 架构（重要）：**不搞前后端分离**。
+ *   之前我写的是「主进程 spawn 一个 node 服务端 + 窗口连本地 HTTP」——那是套壳启动器，
+ *   等于没用上 Electron。现在改成：
+ *     1) 注册自定义协议 yunhu://
+ *     2) 窗口 loadURL('yunhu://app/index.html') 直接加载打包进应用的前端
+ *     3) 前端发的 /api、/res、/up 请求由**主进程 protocol.handle 代理**到云湖
+ *        （主进程没有 CORS 限制，顺带加防盗链 Referer）
+ *   这样是真正的自包含桌面应用，没有独立后端进程。
  */
-const { app, BrowserWindow, Tray, Menu, shell, dialog } = require('electron')
-const { spawn } = require('child_process')
+const { app, BrowserWindow, protocol, net, Tray, Menu, shell, session } = require('electron')
 const path = require('path')
-const http = require('http')
+const { pathToFileURL } = require('url')
 const fs = require('fs')
 
-const PORT = Number(process.env.YH_PORT || 8902)
-// HTTPS 端口也要可配：系统服务可能已经占用了默认 8903，GUI 得换一个，否则启动就崩
-const HTTPS_PORT = Number(process.env.YH_HTTPS_PORT || PORT + 1)
-const BASE_URL = `http://127.0.0.1:${PORT}`
+const UPSTREAM = process.env.UPSTREAM || 'https://chat-go.jwzhd.com'
+// 云湖数据床域名白名单（和 server.ts 一致）
+const RES_HOST_RE = /^chat-(img|img2|img3|audio1|file|file-oss|storage1|video1)\.jwznb\.com$/i
+const RES_REFERER = 'http://myapp.jwznb.com'
 
 let mainWindow = null
 let tray = null
-let serverProcess = null
-/** 是否真的要退出（点托盘「退出」才算） */
 let isQuitting = false
 
-/** 服务端目录：打包后是 resources/app，开发时是项目根 */
-function serverDir() {
-  // __dirname = <app>/electron
-  const root = path.join(__dirname, '..')
-  return fs.existsSync(path.join(root, 'server.ts')) ? root : path.join(process.resourcesPath || '', 'app')
+/** 应用根目录：打包后是 resources/app，开发时是项目根 */
+function rootDir() {
+  const r = path.join(__dirname, '..')
+  return fs.existsSync(path.join(r, 'dist')) ? r : path.join(process.resourcesPath || '', 'app')
 }
 
-/** 拉起服务端：优先用 tsx 跑 server.ts（Node 26 可直接跑 TS），退回 node */
-function startServer() {
-  const dir = serverDir()
-  const tsEntry = path.join(dir, 'server.ts')
-  const jsEntry = path.join(dir, 'dist-server', 'server.cjs')
+/* ---------------- 自定义协议：yunhu:// ---------------- */
+// 必须在 app ready 前注册特权
+protocol.registerSchemesAsPrivileged([{
+  scheme: 'yunhu',
+  privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true, stream: true },
+}])
 
-  /*
-   * ⚠️ 不能只写 'node'：Electron 主进程的 PATH 可能不含 node（或环境被隔离），
-   *    spawn 会静默失败 → 服务端起不来 → 窗口白屏。用 process.execPath（当前 node 绝对路径）最稳，
-   *    找不到再退回 'node'。
-   */
-  let cmd = process.execPath || 'node'
-  let args = []
-  if (fs.existsSync(tsEntry)) {
-    // Node 22.6+ / 26 原生支持直接运行 .ts（type stripping）
-    args = [tsEntry]
-  } else if (fs.existsSync(jsEntry)) {
-    args = [jsEntry]
-  } else {
-    dialog.showErrorBox('启动失败', '找不到服务端入口（server.ts / dist-server/server.cjs）')
-    return
+/** 把 request.headers 转成纯对象（去掉会和上游冲突的字段） */
+function proxyHeaders(request) {
+  const h = {}
+  for (const [k, v] of request.headers.entries()) h[k] = v
+  delete h.host; delete h.origin; delete h.referer; delete h['content-length']
+  return h
+}
+
+/** 请求处理：/api /res /up 走代理，其余走本地静态文件 */
+async function handle(request) {
+  const url = new URL(request.url)
+  const p = url.pathname
+
+  // ---- /api/* → 反代到云湖（带 token，no-store） ----
+  if (p === '/api' || p.startsWith('/api/')) {
+    const target = UPSTREAM + p.replace(/^\/api/, '') + url.search
+    try {
+      const resp = await net.fetch(target, { duplex: 'half',
+        method: request.method,
+        headers: proxyHeaders(request),
+        body: (request.method === 'GET' || request.method === 'HEAD') ? undefined : request.body,
+      })
+      // 关键：/api 绝不能缓存
+      const h = new Headers(resp.headers)
+      h.set('cache-control', 'no-store')
+      return new Response(resp.body, { status: resp.status, statusText: resp.statusText, headers: h })
+    } catch (e) {
+      return new Response(JSON.stringify({ code: -1, msg: 'proxy error: ' + e.message }), { status: 502, headers: { 'content-type': 'application/json' } })
+    }
   }
 
-  serverProcess = spawn(cmd, args, {
-    cwd: dir,
-    env: { ...process.env, PORT: String(PORT), HTTPS_PORT: String(HTTPS_PORT), HOST: '127.0.0.1' },
-    stdio: ['ignore', 'pipe', 'pipe'],
-  })
-
-  const logPrefix = '[yunhu-server]'
-  console.log(logPrefix, '启动：', cmd, args.join(' '), 'cwd =', dir)
-  serverProcess.stdout.on('data', (d) => console.log(logPrefix, String(d).trim()))
-  serverProcess.stderr.on('data', (d) => console.error(logPrefix, String(d).trim()))
-  serverProcess.on('exit', (code) => {
-    if (!isQuitting) console.warn(logPrefix, '服务端意外退出，code =', code)
-  })
-  serverProcess.on('error', (err) => {
-    console.error(logPrefix, 'spawn 失败：', err.message)
-    dialog.showErrorBox('服务端启动失败', String(err.message))
-  })
-}
-
-/** 轮询等待服务端就绪（最多约 30 秒） */
-function waitForServer(timeoutMs = 30000) {
-  const deadline = Date.now() + timeoutMs
-  return new Promise((resolve, reject) => {
-    const tick = () => {
-      const req = http.get(`${BASE_URL}/`, (res) => {
-        res.resume()
-        res.statusCode && resolve()
+  // ---- /res/<host>/<path> → 数据床（带防盗链 Referer + 透传 Range 支持音视频） ----
+  if (p.startsWith('/res/')) {
+    const m = p.match(/^\/res\/([^/]+)(\/.*)?$/)
+    if (!m) return new Response('bad res url', { status: 400 })
+    const host = decodeURIComponent(m[1])
+    if (!RES_HOST_RE.test(host)) return new Response('host not allowed', { status: 403 })
+    try {
+      const target = 'https://' + host + (m[2] || '/') + url.search
+      const resp = await net.fetch(target, { duplex: 'half',
+        method: 'GET',
+        headers: { referer: RES_REFERER, range: request.headers.get('range') || '' },
       })
-      req.on('error', () => {
-        if (Date.now() > deadline) reject(new Error('服务端启动超时'))
-        else setTimeout(tick, 400)
-      })
-      req.setTimeout(1500, () => req.destroy())
+      const h = new Headers(resp.headers)
+      h.set('cache-control', 'public, max-age=86400')
+      h.set('access-control-allow-origin', '*')
+      h.set('access-control-expose-headers', 'content-range, content-length, accept-ranges')
+      return new Response(resp.body, { status: resp.status, headers: h })
+    } catch (e) {
+      return new Response('res proxy error: ' + e.message, { status: 502 })
     }
-    tick()
-  })
+  }
+
+  // ---- /up/<host>/<path> → 上传代理 ----
+  if (p.startsWith('/up/')) {
+    const m = p.match(/^\/up\/([^/]+)(\/.*)?$/)
+    if (!m) return new Response('bad up url', { status: 400 })
+    const host = decodeURIComponent(m[1])
+    if (!/^[\w.-]+$/.test(host)) return new Response('host not allowed', { status: 403 })
+    try {
+      const target = 'https://' + host + (m[2] || '/') + url.search
+      const resp = await net.fetch(target, { duplex: 'half',
+        method: request.method,
+        headers: proxyHeaders(request),
+        body: request.body,
+      })
+      const h = new Headers(resp.headers)
+      h.set('access-control-allow-origin', '*')
+      return new Response(resp.body, { status: resp.status, headers: h })
+    } catch (e) {
+      return new Response('up proxy error: ' + e.message, { status: 502 })
+    }
+  }
+
+  // ---- 静态文件（前端 dist） ----
+  let filePath = p === '/' ? '/index.html' : p
+  // 防止目录穿越
+  const full = path.normalize(path.join(rootDir(), 'dist', filePath))
+  if (!full.startsWith(path.normalize(path.join(rootDir(), 'dist')))) {
+    return new Response('forbidden', { status: 403 })
+  }
+  try {
+    return await net.fetch(pathToFileURL(full).toString())
+  } catch (e) {
+    return new Response('not found: ' + filePath, { status: 404 })
+  }
 }
 
+/* ---------------- 窗口 / 托盘 ---------------- */
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1280,
@@ -106,89 +135,48 @@ function createWindow() {
     title: '云湖客户端',
     backgroundColor: '#17181f',
     autoHideMenuBar: true,
-    webPreferences: {
-      nodeIntegration: false,
-      contextIsolation: true,
-      // 允许加载本地 127.0.0.1 服务（同源，无跨域问题）
-      webSecurity: true,
-    },
+    webPreferences: { nodeIntegration: false, contextIsolation: true },
   })
+  mainWindow.loadURL('yunhu://app/index.html')
 
-  mainWindow.loadURL(BASE_URL)
-
-  // 站内链接用默认浏览器打开
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    if (url.startsWith('http://127.0.0.1') || url.startsWith(BASE_URL)) return { action: 'allow' }
+    if (url.startsWith('yunhu://')) return { action: 'allow' }
     shell.openExternal(url)
     return { action: 'deny' }
   })
 
-  // 关闭按钮 → 最小化到托盘（Windows/Linux）
   mainWindow.on('close', (e) => {
-    if (!isQuitting) {
-      e.preventDefault()
-      mainWindow.hide()
-      return
-    }
+    if (!isQuitting) { e.preventDefault(); mainWindow.hide(); return }
   })
-
   mainWindow.on('closed', () => { mainWindow = null })
 }
 
 function createTray() {
-  // 优先使用项目里的图标，没有就用 Electron 内置空图标
-  const icoPath = path.join(serverDir(), 'build', 'icon.png')
-  tray = fs.existsSync(icoPath)
-    ? new Tray(icoPath)
-    : new Tray(path.join(__dirname, 'tray.png'))
-
-  const contextMenu = Menu.buildFromTemplate([
-    {
-      label: '打开云湖客户端',
-      click: () => { mainWindow ? mainWindow.show() : createWindow() },
-    },
+  const icoPath = path.join(rootDir(), 'build', 'icon.png')
+  tray = fs.existsSync(icoPath) ? new Tray(icoPath) : new Tray(path.join(__dirname, 'tray.png'))
+  const menu = Menu.buildFromTemplate([
+    { label: '打开云湖客户端', click: () => { mainWindow ? mainWindow.show() : createWindow() } },
     { type: 'separator' },
-    {
-      label: '在浏览器中打开',
-      click: () => shell.openExternal(BASE_URL),
-    },
-    { type: 'separator' },
-    {
-      label: '退出',
-      click: () => {
-        isQuitting = true
-        app.quit()
-      },
-    },
+    { label: '退出', click: () => { isQuitting = true; app.quit() } },
   ])
   tray.setToolTip('云湖客户端')
-  tray.setContextMenu(contextMenu)
+  tray.setContextMenu(menu)
   tray.on('click', () => { mainWindow ? mainWindow.show() : createWindow() })
 }
 
-/** 单实例：第二个实例直接聚焦已有窗口 */
+/* ---------------- 生命周期 ---------------- */
 const gotLock = app.requestSingleInstanceLock()
 if (!gotLock) {
   app.quit()
 } else {
   app.on('second-instance', () => {
-    if (mainWindow) {
-      if (mainWindow.isMinimized()) mainWindow.restore()
-      mainWindow.focus()
-    }
+    if (mainWindow) { if (mainWindow.isMinimized()) mainWindow.restore(); mainWindow.focus() }
   })
 
-  app.whenReady().then(async () => {
-    // 先起服务端，再开窗，避免白屏
-    startServer()
-    try {
-      await waitForServer()
-    } catch (e) {
-      console.error('[gui]', e.message)
-    }
+  app.whenReady().then(() => {
+    protocol.handle('yunhu', handle)
     createWindow()
     createTray()
-
     app.on('activate', () => {
       if (BrowserWindow.getAllWindows().length === 0) createWindow()
       else if (mainWindow) mainWindow.show()
@@ -197,9 +185,3 @@ if (!gotLock) {
 }
 
 app.on('before-quit', () => { isQuitting = true })
-app.on('will-quit', () => {
-  // 退出时结束服务端子进程
-  if (serverProcess && !serverProcess.killed) {
-    try { serverProcess.kill() } catch { /* 忽略 */ }
-  }
-})
