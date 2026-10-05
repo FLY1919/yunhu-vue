@@ -5,6 +5,8 @@ export default {
   appName: '云湖客户端',
   webDir: 'dist',
   server: {
+    // WebView origin 设成云湖白名单域名：图片/资源请求的 Referer 天然通过防盗链
+    hostname: 'myapp.jwznb.com',
     allowNavigation: ['*.jwzhd.com', '*.jwznb.com'],
     cleartext: true,
   },

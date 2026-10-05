@@ -16,6 +16,7 @@
     "test:ws": "tsx test-ws.mjs"
   },
   "dependencies": {
+    "@capacitor/http": "^0.0.2",
     "@satorijs/core": "^4.6.0",
     "cordis": "^3.18.1",
     "dompurify": "^3.4.16",
