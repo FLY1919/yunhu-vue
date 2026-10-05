@@ -13,9 +13,7 @@
     "typecheck": "vue-tsc --noEmit",
     "test:kernel": "tsx test-kernel.mjs",
     "test:api": "tsx test.mjs",
-    "test:ws": "tsx test-ws.mjs",
-    "desktop": "electron electron/main.cjs",
-    "desktop:test": "DISPLAY=:99 ELECTRON_DISABLE_SANDBOX=1 electron electron/selftest.cjs --no-sandbox"
+    "test:ws": "tsx test-ws.mjs"
   },
   "dependencies": {
     "@satorijs/core": "^4.6.0",
@@ -25,13 +23,9 @@
     "vue": "^3.5.13"
   },
   "devDependencies": {
-    "@capacitor/android": "^8.5.2",
-    "@capacitor/cli": "^8.5.2",
-    "@capacitor/core": "^8.5.2",
     "@types/js-yaml": "^4.0.9",
     "@types/node": "^26.6.4",
     "@vitejs/plugin-vue": "^5.2.1",
-    "electron": "^44.5.1",
     "js-yaml": "^5.4.2",
     "tsx": "^4.23.15",
     "typescript": "^7.0.2",

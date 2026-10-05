@@ -10,8 +10,22 @@ export const resPrefix = () => (typeof window !== 'undefined' && window.YUNHU_RE
 
 export function isResHost(host) { return RES_HOST_RE.test(host) }
 
+const isNative = () => typeof window !== 'undefined' && (window as any).Capacitor?.isNativePlatform?.()
+
 /** https://chat-img.jwznb.com/a.jpg  ->  /res/chat-img.jwznb.com/a.jpg */
 export function resUrl(u) {
+  // ⚠️ Capacitor 原生（安卓内置）：不写 /res 代理，直接返回原始 https 地址。
+  // 配合 capacitor.config.ts 的 server.hostname='myapp.jwznb.com'，
+  // WebView 的页面 origin 就是云湖白名单域名，图片请求 Referer 天然通过防盗链。
+  if (isNative()) {
+    if (!u || typeof u !== 'string') return u
+    if (u.startsWith('data:') || u.startsWith('blob:') || u.startsWith('/res/')) return u
+    // 相对 key 补图片桶域名
+    if (!/^https?:\/\//i.test(u) && !u.startsWith('/')) {
+      return `https://chat-img.jwznb.com/${u.replace(/^\/+/, '')}`
+    }
+    return u
+  }
   if (!u || typeof u !== 'string') return u
   if (u.startsWith('data:') || u.startsWith('blob:')) return u
   if (u.startsWith('/res/')) return u
