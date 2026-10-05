@@ -56,7 +56,7 @@ jobs:
       - name: 设置 Android SDK
         uses: android-actions/setup-android@v3
         with:
-          packages: 'platforms;android-34 build-tools;34.0.0'
+          packages: 'platforms;android-35 build-tools;35.0.0'
 
       - name: 构建 debug APK
         run: cd android && chmod +x gradlew && ./gradlew assembleDebug --no-daemon
