@@ -9,11 +9,23 @@
  *
  * 注册控制台页面「机器人」。
  */
+import Schema from 'schemastery'
 import { reactive } from 'vue'
 import type { Context } from '../core/context'
 import BotConsolePage from '../console/pages/BotConsolePage.vue'
 
+export const name = 'botconsole'
+
+export interface BotConsoleCfg {
+  autoLoad: boolean
+}
+
+export const botConsoleConfig: Schema<BotConsoleCfg> = Schema.object({
+  autoLoad: Schema.boolean().default(true).description('进入时自动加载机器人列表'),
+})
+
 export const botConsolePlugin = {
+  Config: botConsoleConfig,
   name: 'botconsole',
   inject: ['api', 'ui', 'console'],
   provide: ['botconsole'],

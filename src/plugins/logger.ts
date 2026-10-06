@@ -9,10 +9,24 @@
  *   ctx.logger.info('...')
  *   ctx.logger('插件名').warn('...')      ← cordis 原生支持带作用域
  */
+import Schema from 'schemastery'
 import { reactive } from 'vue'
 import LogsPage from '../console/pages/LogsPage.vue'
 
+export const name = 'logger'
+
+export interface LoggerCfg {
+  maxLines: number
+  level: string
+}
+
+export const loggerConfig: Schema<LoggerCfg> = Schema.object({
+  maxLines: Schema.number().default(500).description('日志最多保留行数'),
+  level: Schema.string().default('info').description('默认日志级别'),
+})
+
 export const loggerPlugin = {
+  Config: loggerConfig,
   name: 'logger',
   provide: ['logs'],
 

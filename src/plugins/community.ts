@@ -11,11 +11,25 @@
  *
  * 注册控制台页面「板块」。
  */
+import Schema from 'schemastery'
 import { reactive } from 'vue'
 import type { Context } from '../core/context'
 import CommunityPage from '../console/pages/CommunityPage.vue'
 
+export const name = 'community'
+
+export interface CommunityCfg {
+  pageSize: number
+  autoLoadMine: boolean
+}
+
+export const communityConfig: Schema<CommunityCfg> = Schema.object({
+  pageSize: Schema.number().default(20).description('板块文章每页条数'),
+  autoLoadMine: Schema.boolean().default(true).description('启动时自动加载我的板块'),
+})
+
 export const communityPlugin = {
+  Config: communityConfig,
   name: 'community',
   inject: ['api', 'ui', 'console'],
   provide: ['community'],

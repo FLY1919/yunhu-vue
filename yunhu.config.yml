@@ -21,7 +21,7 @@ plugins:
   auth: {}
   adapter: {}
   chat:
-    pollMs: 4000
+    pollMs: 7777
     maxMessages: 200
   ws:
     heartbeat: 25000
@@ -33,3 +33,7 @@ plugins:
       - 好的
       - 哈哈哈哈
       - （溜了）
+  social: {}
+  community: {}
+  stickers: {}
+  botconsole: {}
