@@ -14,13 +14,25 @@
  *
  * 另外往输入区注册两个按钮：「😀 表情」「🎤 语音」。
  */
+import Schema from 'schemastery'
 import { reactive } from 'vue'
 import type { Context } from '../core/context'
 import StickerPanel from '../components/StickerPanel.vue'
 import StickersPage from '../console/pages/StickersPage.vue'
 import { h } from '../satori/element'
 
+export const name = 'stickers'
+
+export interface StickersCfg {
+  panelOnStart: boolean
+}
+
+export const stickersConfig: Schema<StickersCfg> = Schema.object({
+  panelOnStart: Schema.boolean().default(false).description('启动时是否展开表情面板'),
+})
+
 export const stickersPlugin = {
+  Config: stickersConfig,
   name: 'stickers',
   inject: ['api', 'chat', 'ui', 'console'],
   provide: ['stickers'],

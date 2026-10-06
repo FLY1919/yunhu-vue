@@ -5,6 +5,7 @@
  * 依赖：api、auth；可选使用 adapter 提供的 ctx.bots
  */
 import { reactive, watch , toRaw } from 'vue'
+import Schema from 'schemastery'
 import type { Context, Disposer } from '../core/context'
 import { parse, render, toText, h, ContentType } from '../satori/element'
 import ChatPage from '../console/pages/ChatPage.vue'
@@ -30,7 +31,21 @@ export function previewOf(m: any): string {
   return (m.elements ? toText(m.elements) : (m.content?.text || '')).slice(0, 40)
 }
 
+export const name = 'chat'
+
+export interface ChatCfg {
+  pollMs: number
+  pageSize: number
+}
+
+/** 配置构型：控制台据此生成表单 */
+export const chatConfig: Schema<ChatCfg> = Schema.object({
+  pollMs: Schema.number().default(4000).description('轮询间隔（毫秒），调大省流、调小更实时'),
+  pageSize: Schema.number().default(30).description('每次拉取的消息条数'),
+})
+
 export const chatPlugin = {
+  Config: chatConfig,
   name: 'chat',
   inject: ['api', 'auth'],
   provide: ['chat'],

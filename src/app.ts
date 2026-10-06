@@ -28,6 +28,13 @@ import { groupAdminPlugin } from './plugins/group-admin'
 import { quickReplyPlugin } from './plugins/quickreply'
 import { marketPlugin } from './plugins/market'
 import { quickReplyConfig } from './plugins/quickreply'
+import { loggerConfig } from './plugins/logger'
+import { botConsoleConfig } from './plugins/botconsole'
+import { stickersConfig } from './plugins/stickers'
+import { communityConfig } from './plugins/community'
+import { socialConfig } from './plugins/social'
+import { themeConfig } from './plugins/theme'
+import { chatConfig } from './plugins/chat'
 import { apply as charbgPlugin } from './plugins/charbg'
 import { apply as httpPlugin } from './plugins/http'
 import { sessionEventPlugin } from './plugins/session-event'
@@ -115,6 +122,13 @@ const appService = {
   schemas(): Array<{ key: string; schema: any }> {
     const map: Record<string, any> = {
       quickreply: quickReplyConfig,
+      chat: chatConfig,
+      theme: themeConfig,
+      social: socialConfig,
+      community: communityConfig,
+      stickers: stickersConfig,
+      botconsole: botConsoleConfig,
+      logger: loggerConfig,
     }
     return Object.entries(map)
       .filter(([, v]) => !!v)

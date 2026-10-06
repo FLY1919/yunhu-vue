@@ -12,6 +12,7 @@
  *   · 看板娘贴纸：URL / 透明度 / 水平垂直偏移
  *   · 自带「主题」控制台页面，配置写在 yunhu.config.yml → plugins.theme
  */
+import Schema from 'schemastery'
 import { reactive } from 'vue'
 import type { Context } from '../core/context'
 import ThemePage from '../console/pages/ThemePage.vue'
@@ -152,7 +153,20 @@ export const PRESETS: ThemePreset[] = [
   },
 ]
 
+export const name = 'theme'
+
+export interface ThemeCfg {
+  preset: string
+  radius: number
+}
+
+export const themeConfig: Schema<ThemeCfg> = Schema.object({
+  preset: Schema.string().default('dark').description('默认配色预设'),
+  radius: Schema.number().default(8).role('slider').description('圆角大小（像素）'),
+})
+
 export const themePlugin = {
+  Config: themeConfig,
   name: 'theme',
   inject: ['ui'],
   provide: ['theme'],
