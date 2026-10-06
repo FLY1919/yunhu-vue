@@ -29,6 +29,7 @@ export class ConsoleService extends Service {
       actions: {},      // 动作表
       menus: {},        // 菜单表
       entries: [],      // 客户端入口
+      settings: [],     // 用户设置（对标 Koishi ctx.settings，与插件配置分离）
     })
     this.listeners = new Map()
   }
@@ -54,6 +55,7 @@ export class ConsoleService extends Service {
       slot: (cfg) => this.slot(cfg, owner),
       action: (id, impl) => this.action(id, impl, owner),
       menu: (id, items) => this.menu(id, items, owner),
+      settings: (cfg) => this.settings(cfg),
       send: (name, ...args) => this.send(name, ...args),
     }
     try { fn(facade) } catch (e) { console.error('[console] client entry error', e) }
@@ -122,6 +124,26 @@ export class ConsoleService extends Service {
   }
 
   slotsOf(type) { return this.state.slots.filter(s => s.type === type && !s.disabled?.()) }
+
+  /**
+   * 注册「用户设置」表单（对标 Koishi ctx.settings）。
+   * 与插件配置的区别：
+   *   · 插件配置 = 管理员决定，存 yunhu.config.yml
+   *   · 用户设置 = 每个用户自己决定，存 IndexedDB（如主题、语言、气泡样式）
+   *
+   * usage: ctx.console.settings({ id: 'appearance', title: '外观', schema })
+   */
+  settings(config) {
+    const entry = markRaw(config)
+    this.state.settings.push(entry)
+    return () => {
+      const i = this.state.settings.indexOf(entry)
+      if (i >= 0) this.state.settings.splice(i, 1)
+    }
+  }
+
+  /** 取某个用户设置项 */
+  settingsOf(id) { return this.state.settings.find((x) => x.id === id) || null }
   /** 当前页（由 Console.vue 同步进来，Class 里要用 = 而不是 :） */
   currentPage = ''
 
