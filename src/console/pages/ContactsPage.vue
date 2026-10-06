@@ -65,7 +65,7 @@ function showProfile(it: any) {
 </script>
 
 <template>
-  <KLayout title="通讯录" desc="我加的用户 / 群聊 / 机器人 · 添加与创建">
+  <KLayout ns="contacts" title="通讯录" desc="我加的用户 / 群聊 / 机器人 · 添加与创建">
     <template #actions>
       <span class="pill">{{ (s.book?.users || []).length }} 用户</span>
       <span class="pill">{{ (s.book?.groups || []).length }} 群聊</span>

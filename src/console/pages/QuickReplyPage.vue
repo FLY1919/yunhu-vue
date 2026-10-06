@@ -20,7 +20,7 @@ function add() {
 </script>
 
 <template>
-  <KLayout title="快捷回复" desc="这一页由 quickreply 插件注册，卸载插件后页面会一起消失">
+  <KLayout ns="quickreply" title="快捷回复" desc="这一页由 quickreply 插件注册，卸载插件后页面会一起消失">
     <template #actions>
       <label class="switch">
         <input type="checkbox" v-model="qr.state.enabled" />
