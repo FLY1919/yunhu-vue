@@ -700,3 +700,42 @@ export function apply(ctx) {
 更多示例见仓库 `examples/plugins/`：
 - `hello-slot.js` —— 往主题页注入内容（演示插槽）
 - `quick-actions.js` —— 往输入区加按钮（演示 composer 扩展）
+
+
+## 15. 各插件的配置项（控制台「配置 → 表单」可视化编辑）
+
+以下插件都声明了 `Config: Schema<Config>`，配置页会**自动生成表单**，
+改完点「保存」写回 `yunhu.config.yml`（实测落盘）。
+
+| 插件 | 配置项 | 默认值 | 说明 |
+| --- | --- | --- | --- |
+| `chat` | `pollMs` | 4000 | 轮询间隔（毫秒），调大省流 |
+| `chat` | `pageSize` | 30 | 每次拉取消息条数 |
+| `theme` | `preset` | dark | 默认配色预设 |
+| `theme` | `radius` | 8 | 圆角（滑杆） |
+| `social` | `autoLoad` | true | 进入时自动加载通讯录 |
+| `social` | `pageSize` | 50 | 通讯录每页条数 |
+| `community` | `pageSize` | 20 | 板块文章每页条数 |
+| `community` | `autoLoadMine` | true | 启动时加载我的板块 |
+| `stickers` | `panelOnStart` | false | 启动时展开表情面板 |
+| `botconsole` | `autoLoad` | true | 自动加载机器人列表 |
+| `logger` | `maxLines` | 500 | 日志保留行数 |
+| `logger` | `level` | info | 默认日志级别 |
+| `quickreply` | `enabled` | true | 是否启用快捷回复 |
+| `quickreply` | `items` | 5 条 | 默认快捷回复（新增存 IndexedDB） |
+
+### 给自己的插件加配置
+```ts
+export const name = 'my-plugin'
+export const Config = Schema.object({
+  foo: Schema.string().default('bar').description('一句话说明'),
+  n: Schema.number().default(1).role('slider'),
+})
+// 然后在 app.ts 的 schemas() 映射表里登记：myplugin: myPluginConfig
+```
+
+⚠️ 两个已踩过的坑：
+1. `interface Config` 与 `const Config` **同名**会让对象里的 `Config` 简写失效
+   （被当成类型），改名如 `myPluginConfig` 再 `Config: myPluginConfig`。
+2. `cfg.save()` 必须用**绝对路径** `/config`，相对路径 `./config` 在
+   `/config` 路由下会变成 `/config/config`，导致保存假成功但不落盘。

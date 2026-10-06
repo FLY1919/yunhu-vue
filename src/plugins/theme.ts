@@ -16,6 +16,7 @@ import Schema from 'schemastery'
 import { reactive } from 'vue'
 import type { Context } from '../core/context'
 import ThemePage from '../console/pages/ThemePage.vue'
+import SettingsUserPage from '../console/pages/SettingsUserPage.vue'
 
 export interface ThemePreset {
   id: string
@@ -287,7 +288,14 @@ export const themePlugin = {
     /* ---- 控制台扩展：主题页 ---- */
     ctx.inject(['console'], (ctx: Context) => {
       ctx.console.addEntry((cc: any) => {
-        cc.page({ name: '主题', path: '/theme', icon: 'palette', order: 850, component: ThemePage })
+                cc.settings({
+          id: 'appearance',
+          title: '外观（用户设置）',
+          schema: themeConfig,
+          value: { preset: 'dark', radius: 8 },
+        })
+cc.page({ name: '主题', path: '/theme', icon: 'palette', order: 850, component: ThemePage })
+        cc.page({ name: '用户设置', path: '/settings-user', icon: 'sliders', order: 870, component: SettingsUserPage })
       })
     })
   },
