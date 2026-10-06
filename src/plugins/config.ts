@@ -54,7 +54,7 @@ export const configPlugin = {
       /** 从 server 拉取 yunhu.config.yml */
       async load() {
         try {
-          const res = await fetch('./config', { cache: 'no-store' })
+          const res = await fetch('/config', { cache: 'no-store' })
           if (!res.ok) throw new Error('HTTP ' + res.status)
           const text = await res.text()
           state.text = text
@@ -86,7 +86,7 @@ export const configPlugin = {
       /** 写回 server */
       async save() {
         const body = config.toYaml()
-        const res = await fetch('./config', {
+        const res = await fetch('/config', {
           method: 'PUT',
           headers: { 'Content-Type': 'text/yaml; charset=utf-8' },
           body,

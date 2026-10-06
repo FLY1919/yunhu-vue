@@ -8,11 +8,25 @@
  *
  * 注册控制台页面「通讯录」。
  */
+import Schema from 'schemastery'
 import { reactive } from 'vue'
 import type { Context } from '../core/context'
 import ContactsPage from '../console/pages/ContactsPage.vue'
 
+export const name = 'social'
+
+export interface SocialCfg {
+  autoLoad: boolean
+  pageSize: number
+}
+
+export const socialConfig: Schema<SocialCfg> = Schema.object({
+  autoLoad: Schema.boolean().default(true).description('进入时是否自动加载通讯录'),
+  pageSize: Schema.number().default(50).description('通讯录每页条数'),
+})
+
 export const socialPlugin = {
+  Config: socialConfig,
   name: 'social',
   inject: ['api', 'ui', 'console'],
   provide: ['social'],
