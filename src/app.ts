@@ -26,6 +26,7 @@ import { wsPlugin } from './plugins/ws'
 import { messageActionsPlugin } from './plugins/message-actions'
 import { groupAdminPlugin } from './plugins/group-admin'
 import { quickReplyPlugin } from './plugins/quickreply'
+import { marketPlugin } from './plugins/market'
 import { quickReplyConfig } from './plugins/quickreply'
 import { apply as charbgPlugin } from './plugins/charbg'
 import { apply as httpPlugin } from './plugins/http'
@@ -69,6 +70,7 @@ export const registry: RegistryItem[] = [
   { key: 'message-actions', plugin: messageActionsPlugin, desc: '消息操作 · 撤回/多选/转发/引用/全选', provide: ['messageActions'], deps: ['chat', 'ui'] },
   { key: 'group-admin', plugin: groupAdminPlugin, desc: '群管理 · 成员/踢出/禁言/看板/记录搜索', provide: ['group'], deps: ['api', 'chat', 'ui'] },
   { key: 'quickreply', plugin: quickReplyPlugin, desc: '快捷回复 · 注册独立页面', provide: ['quickreply'], deps: ['ui', 'chat'] },
+  { key: 'market', plugin: marketPlugin, desc: '插件市场 · 用户自己安装/卸载插件（URL 或代码）', provide: ['market'], deps: ['api', 'ui', 'chat', 'console'] },
   { key: 'commands', plugin: commandsPlugin, desc: '机器人指令 · 标题栏入口 + 输入 / 唤起（按机器人归类）', provide: ['commands'], deps: ['api', 'chat', 'ui', 'console'] },
   { key: 'deeplink', plugin: deeplinkPlugin, desc: '云湖内链 yunhu:// 支持（加好友/文章/板块）', provide: ['deeplink'], deps: ['api', 'ui', 'chat', 'console', 'community'] },
   { key: 'stickers', plugin: stickersPlugin, desc: '表情收藏面板 + 语音消息', provide: ['stickers'], deps: ['api', 'chat', 'ui', 'console'] },

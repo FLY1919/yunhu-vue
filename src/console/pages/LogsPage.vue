@@ -46,7 +46,7 @@ function copyAll() {
 </script>
 
 <template>
-  <KLayout title="日志" desc="记录插件生命周期与服务变化（来自 ctx.logs）">
+  <KLayout ns="logs" title="日志" desc="记录插件生命周期与服务变化（来自 ctx.logs）">
     <template #actions>
       <button class="ghost small" :class="{ on: level === 'all' }" @click="level = 'all'">
         全部 <em>{{ counts.all }}</em>

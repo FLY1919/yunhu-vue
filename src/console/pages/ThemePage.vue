@@ -18,7 +18,7 @@ const accent = computed({
 </script>
 
 <template>
-  <KLayout title="主题" desc="配色、壁纸与圆角，即时生效并记住选择">
+  <KLayout ns="theme" title="主题" desc="配色、壁纸与圆角，即时生效并记住选择">
     <template #actions>
       <button class="ghost small" @click="theme.reset()">恢复默认</button>
       <button class="ghost small" @click="ui.toggleTheme()">

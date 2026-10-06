@@ -42,7 +42,7 @@ const entryCount = computed(() => console_.state.entries.length)
 </script>
 
 <template>
-  <KLayout title="插件" desc="控制台按已装载插件动态生成页面与导航">
+  <KLayout ns="plugins" title="插件" desc="控制台按已装载插件动态生成页面与导航">
     <template #actions>
       <span class="pill">{{ items.length }} 个插件</span>
       <span class="pill">{{ pageCount }} 个页面</span>

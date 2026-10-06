@@ -39,7 +39,7 @@ async function create() {
 </script>
 
 <template>
-  <KLayout title="板块" desc="云湖文章分区：创建 / 管理 / 绑定群聊">
+  <KLayout ns="community" title="板块" desc="云湖文章分区：创建 / 管理 / 绑定群聊">
     <template #actions>
       <button v-for="t in TABS" :key="t[0]" class="ghost small"
               :class="{ on: (tab === 'mine' && t[0] === '我的') || (tab === 'all' && t[0] === '全部') || (tab === 'hot' && t[0] === '热门') || (tab === 'follow' && t[0] === '关注') }"
