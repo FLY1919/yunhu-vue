@@ -11,6 +11,7 @@
  *   · 默认带 token（已登录时），可被 config.headers 覆盖
  *   · 支持 get / post / put / patch / delete / head / request
  */
+import { CapacitorHttp } from '@capacitor/core'
 import type { Context } from '../core/context'
 
 export const inject = { optional: ['api', 'auth', 'cfg'] }
@@ -103,10 +104,9 @@ async function request(ctx: Context, url: string, config: HttpConfig = {}) {
 
 /** Capacitor 原生 HTTP 请求（安卓「内置」时走这里，直连云湖绕 CORS） */
 async function nativeRequest(finalUrl: string, config: HttpConfig, headers: Record<string, string>, body: any, timeout: number) {
-  // 动态 import + vite-ignore：web 端没装 @capacitor/http 也不影响构建，
+  // 动态 import + vite-ignore：web 端没装 @capacitor/core 也不影响构建，
   // 运行时只有 native 分支才会真正走到这里。
-  // @ts-ignore - @capacitor/http 只在 android 分支安装，web 端构建忽略类型
-  const { CapacitorHttp } = await import(/* @vite-ignore */ '@capacitor/http')
+  // @ts-ignore - @capacitor/core 只在 android 分支安装，web 端构建忽略类型
   const UPSTREAM = 'https://chat-go.jwzhd.com'
   let url = finalUrl
   if (url.startsWith('/api')) url = UPSTREAM + url.slice(4)

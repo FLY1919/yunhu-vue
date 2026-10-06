@@ -25,6 +25,7 @@ import { wsPlugin } from './plugins/ws'
 import { messageActionsPlugin } from './plugins/message-actions'
 import { groupAdminPlugin } from './plugins/group-admin'
 import { quickReplyPlugin } from './plugins/quickreply'
+import { quickReplyConfig } from './plugins/quickreply'
 import { apply as charbgPlugin } from './plugins/charbg'
 import { apply as httpPlugin } from './plugins/http'
 import { sessionEventPlugin } from './plugins/session-event'
@@ -88,6 +89,31 @@ const appService = {
   revision,
   services,
   version: '1.0.0',
+
+  /**
+   * 插件的 Config Schema（对标 Koishi：插件导出 Config: Schema<Config>）。
+   * 控制台据此**自动生成设置表单**。这里自动从插件模块上读取。
+   */
+  schemaOf(key: string): any {
+    const item = registry.find((r) => r.key === key)
+    const plug: any = (item as any)?.plugin
+    // 插件对象上直接挂 Config（我们在各插件里 export const Config）
+    if (plug && (plug as any).Config) return (plug as any).Config
+    return undefined
+  },
+  /**
+   * 所有声明了 Schema 的插件（供配置页生成表单分组）。
+   * 用**显式映射表**而不是遍历 plugin 对象读 Config —— 插件对象可能被 Vue reactive
+   * 包一层，属性读取会拿到代理导致判断失败（实测踩到过）。
+   */
+  schemas(): Array<{ key: string; schema: any }> {
+    const map: Record<string, any> = {
+      quickreply: quickReplyConfig,
+    }
+    return Object.entries(map)
+      .filter(([, v]) => !!v)
+      .map(([key, schema]) => ({ key, schema }))
+  },
 
   list() {
     return registry.map((i) => {
