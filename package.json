@@ -21,6 +21,7 @@
     "cordis": "^3.18.1",
     "dompurify": "^3.4.16",
     "marked": "^18.0.14",
+    "schemastery": "^3.18.0",
     "vue": "^3.5.13"
   },
   "devDependencies": {
