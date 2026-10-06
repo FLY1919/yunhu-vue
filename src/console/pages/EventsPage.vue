@@ -24,7 +24,7 @@ const pending = computed(() => Math.max(0, (ctx.chat?.state.conversations?.reduc
 </script>
 
 <template>
-  <KLayout title="事件" desc="适配器把云湖推送统一成 Satori 风格会话事件">
+  <KLayout ns="events" title="事件" desc="适配器把云湖推送统一成 Satori 风格会话事件">
     <template #actions>
       <button class="ghost small" :class="{ on: filter === 'all' }" @click="filter = 'all'">全部</button>
       <button class="ghost small" :class="{ on: filter === 'message-created' }" @click="filter = 'message-created'">新消息</button>

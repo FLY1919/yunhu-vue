@@ -102,7 +102,7 @@ function saveAndReload() {
 </script>
 
 <template>
-  <KLayout title="配置" desc="对应项目根目录的 yunhu.config.yml（对标 koishi.yml）">
+  <KLayout ns="config" title="配置" desc="对应项目根目录的 yunhu.config.yml（对标 koishi.yml）">
     <template #actions>
       <button class="ghost small" :class="{ on: mode === 'form' }" @click="mode = 'form'">表单</button>
       <button class="ghost small" :class="{ on: mode === 'yaml' }" @click="mode = 'yaml'">YAML</button>

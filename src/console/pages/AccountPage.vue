@@ -19,7 +19,7 @@ const wsText = computed(() => ({
 </script>
 
 <template>
-  <KLayout title="账号" desc="登录态、连接与外观">
+  <KLayout ns="account" title="账号" desc="登录态、连接与外观">
     <KCard>
       <div class="account">
         <img :src="user.avatar ? resUrl(user.avatar) : fallbackAvatar(user.name)"

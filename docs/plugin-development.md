@@ -613,3 +613,90 @@ export const echoPlugin = {
 ```
 
 再在 `src/app.ts` 的 `registry` 里加一行即可（`provide` / `deps` 写清楚，cordis 会自动处理依赖顺序）。
+
+
+## 13. 插件市场：用户自己安装插件（运行时插件）
+
+除了「源码里内置、随应用启动」的插件，用户还能在**运行时**安装插件：
+控制台 → **插件市场**。
+
+### 安装方式
+| 方式 | 说明 |
+| --- | --- |
+| 从 URL 安装 | 填一个可直接访问的 `.js` 直链（GitHub raw / jsDelivr / 自建） |
+| 粘贴代码 | 直接把插件源码粘进文本框 |
+
+装好的插件存在 **IndexedDB**，刷新页面会自动重新装载；可**启用/禁用/卸载**。
+
+### 插件格式
+```js
+export const name = 'my-plugin'        // 可选：插件名
+
+export function apply(ctx) {           // 必需：入口
+  // 注册页面 / 插槽 / 菜单 / 动作 …
+}
+```
+
+装载机制：源码 → Blob URL → 浏览器原生 `import()` → 用 cordis `ctx.plugin()` fork 装载。
+**卸载时 cordis 会自动回收插件注册的一切**（页面、插槽、菜单、按钮）。
+
+### ⚠️ 运行时插件的两个关键限制（务必看）
+1. **没有 Vue 编译器**：不能用 `template` 字符串写组件，必须用**渲染函数**：
+   ```js
+   component: {
+     render() { return ctx.h('p', { style: 'color:var(--fg2)' }, 'Hello') }
+   }
+   ```
+   `ctx.h` 由 market 插件挂载（就是 Vue 的 `h`）。
+2. **服务可能还没就绪**：用 `ctx.inject(['console'], (c) => { ... })` 等服务可用后再注册。
+
+### 安全提示
+第三方插件运行在你的浏览器里，**能读到登录 token**。只安装你信任的来源。
+
+## 14. 插槽（Slot）：往任意页面注入内容
+
+对标 Koishi 的 `ctx.slot()`。页面用 `<KSlot :name="..." />` 声明扩展点，
+插件用 `ctx.console.slot({ type, component, order })` 注入组件。
+
+### 内置插槽
+| 插槽 | 位置 |
+| --- | --- |
+| `global` | 整个应用（浮层、全局组件） |
+| `status-left` | 底部状态栏左侧 |
+| `chat-header-extra` | 聊天页标题栏右侧 |
+
+### 页面级插槽（每个页面都有三个）
+控制台页面通过 `KLayout` 的 `ns` 命名空间自动获得：
+
+```
+<ns>-header    页面标题栏（右侧按钮区）
+<ns>-top       内容区上方
+<ns>-bottom    内容区下方
+```
+
+`ns` 取值：`theme` / `settings` / `contacts` / `config` / `plugins` /
+`community` / `stickers` / `bots` / `quickreply` / `logs` / `events` / `account` / `market`
+
+例：往「主题」页底部注入内容 → `type: 'theme-bottom'`。
+
+### 完整示例（可直接粘贴安装）
+```js
+export const name = 'hello-slot'
+export function apply(ctx) {
+  ctx.inject(['console'], (c) => {
+    c.console.slot({
+      type: 'theme-bottom',
+      order: 100,
+      component: {
+        render() {
+          return ctx.h('p', { style: 'padding:8px 12px' }, '插件注入的内容')
+        },
+      },
+    })
+  })
+}
+```
+
+更多示例见仓库 `examples/plugins/`：
+- `hello-slot.js` —— 往主题页注入内容（演示插槽）
+- `quick-actions.js` —— 往输入区加按钮（演示 composer 扩展）

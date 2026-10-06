@@ -44,7 +44,7 @@ async function importZip(ev: any) {
 </script>
 
 <template>
-  <KLayout title="表情" desc="表情包与个人收藏的管理">
+  <KLayout ns="stickers" title="表情" desc="表情包与个人收藏的管理">
     <template #actions>
       <span class="pill">{{ (s.packs || []).length }} 个表情包</span>
       <span class="pill">{{ favCount }} 个收藏</span>

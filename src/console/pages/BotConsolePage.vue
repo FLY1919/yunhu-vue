@@ -39,7 +39,7 @@ function copy(text: string, label = '内容') {
 </script>
 
 <template>
-  <KLayout title="机器人" desc="我创建的机器人 · 编辑信息 / Token / 指令">
+  <KLayout ns="bots" title="机器人" desc="我创建的机器人 · 编辑信息 / Token / 指令">
     <template #actions>
       <span class="pill">共 {{ s.total }} 个</span>
       <button class="ghost small" @click="bc.load()">刷新</button>

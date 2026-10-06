@@ -119,7 +119,7 @@ ctx.on('chat/open', loadAll)
 </script>
 
 <template>
-  <KLayout title="设置" desc="账号信息 · 个人资料 · 群设置">
+  <KLayout ns="settings" title="设置" desc="账号信息 · 个人资料 · 群设置">
     <template #actions>
       <span class="pill">{{ cur?.name || '未选择会话' }}</span>
       <button class="ghost small" @click="loadAll">刷新</button>
