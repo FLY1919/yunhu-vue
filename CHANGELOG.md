@@ -36,8 +36,8 @@ v1.0.6 ~ v1.0.22 由社区维护者 [@DontFPCKMe](https://github.com/DontFPCKMe)
 
 ### 安装说明
 
-1. Windows 安装版：下载 `yunhulaoda-1.0.22-windows-x64-tauri-setup.exe`，先彻底退出旧程序再双击覆盖安装，无需清除本地账号或设置（Windows 10/11 x64，需系统 WebView2 运行时，Win11 自带）
-2. Windows 便携版：下载 `yunhulaoda-1.0.22-windows-x64-tauri-portable.zip` 解压即用，免安装
+1. Windows 安装版：下载 `yunhulaoda-1.0.22-windows-x64-setup.exe`，先彻底退出旧程序再双击覆盖安装，无需清除本地账号或设置（Windows 10/11 x64，需系统 WebView2 运行时，Win11 自带）
+2. Windows 便携版：下载 `yunhulaoda-1.0.22-windows-x64-portable.zip` 解压即用，免安装；首次运行会在解压目录自动生成 `yunhu.config.yml` 与 `certs/` 自签证书，删除目录即彻底清理
 3. 覆盖安装不会丢失本地数据：登录信息与会话缓存保存在文档目录（默认 `文档/yhchat`，关于页可自定义）
 4. 旧版已被删除的本机账号凭据无法恢复，需要重新登录一次
 
