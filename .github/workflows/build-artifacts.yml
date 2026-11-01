@@ -81,13 +81,13 @@ jobs:
           $ErrorActionPreference = 'Stop'
           $ver = (Get-Content package.json -Raw | ConvertFrom-Json).version
           $rel = 'src-tauri/target/release'
-          $stage = "portable/yunhulaoda-$ver-windows-x64-tauri-portable"
+          $stage = "portable/yunhulaoda-$ver-windows-x64-portable"
           New-Item -ItemType Directory -Force -Path $stage | Out-Null
           Copy-Item "$rel/yunhulaoda-desktop.exe" "$stage/"
           Copy-Item "src-tauri/resources/node.exe" "$stage/"
           Copy-Item "src-tauri/resources/server-bundle.mjs" "$stage/"
           Copy-Item -Recurse "src-tauri/resources/dist" "$stage/dist"
-          Compress-Archive -Path "$stage/*" -DestinationPath "portable/yunhulaoda-$ver-windows-x64-tauri-portable.zip" -Force
+          Compress-Archive -Path "$stage/*" -DestinationPath "portable/yunhulaoda-$ver-windows-x64-portable.zip" -Force
           Get-ChildItem portable/
 
       - name: 上传产物
