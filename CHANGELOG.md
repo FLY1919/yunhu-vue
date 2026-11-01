@@ -32,7 +32,9 @@ v1.0.6 ~ v1.0.22 由社区维护者 [@DontFPCKMe](https://github.com/DontFPCKMe)
 - 真实 Vue + Chromium 离线上传链路：PNG/JPG/WebP/GIF 的 multipart 文件字节与输入逐字节一致；Protobuf 发送的图片 key、宽高及最终显示正确
 - Vue 类型检查、源码 preflight、生产前端构建、Node sidecar 构建通过；sidecar 实际监听 8902，退出后能立即重新绑定同一地址
 - 维护者为 Linux 环境，未在真实 Windows 桌面安装、登录或点击资源管理器；所有验证使用虚拟账号与本机模拟响应，未登录真实云湖账号或执行真实群管理操作
-- Windows 原生壳与 WebView2Loader 沿用 1.0.21 安装包所用的已校验二进制（该原生壳来自 1.0.20），本版未重新编译 Rust 主程序；Node 使用完整的 Windows x64 22.23.4 运行时并校验摘要
+- Windows 原生壳本次**从源码重新编译**（MSVC 目标，`yunhulaoda-desktop v1.0.22`），主程序 `ProductVersion`/`FileVersion` 均为 **1.0.22**；WebView2Loader 为静态链接，安装包与便携版内均不需要外部 `WebView2Loader.dll`
+  > 维护者交付包中的 setup.exe 沿用了未重新编译的旧原生壳，其主程序版本登记停留在 **1.0.18**（与其交付说明所称「原生壳来自 1.0.20」不一致）；前端 dist 内为 1.0.22，故「关于」页显示不受影响。本次发布已消除该差异。
+- Node 使用完整的 Windows x64 **22.23.4** 运行时，SHA-256 `dccc52de…dec14f` 与官方值一致（87,034,184 字节，非 1.0.19 那个被截断成 72 MiB 的版本）；构建前经 `verify-windows-assets.mjs` 与 `test:windows-assets` 校验
 
 ### 安装说明
 
@@ -43,7 +45,8 @@ v1.0.6 ~ v1.0.22 由社区维护者 [@DontFPCKMe](https://github.com/DontFPCKMe)
 
 ### 已知限制
 
-- 未在 Windows 实机验收安装、登录、系统通知与资源管理器定位
+- **便携版已在 Windows 11 实机验证**：进程正常启动、sidecar 从便携目录拉起（端口占用时自动降级到 8905）、后端 HTTP 返回 200、前端资源为本次构建产物、WebView2 正常创建主窗口并渲染（57 个 msedgewebview2 子进程）；首次运行自动生成 `yunhu.config.yml` 与 `certs/` 自签证书，关闭后端口立即释放
+- **未实机验证的部分**：NSIS 安装流程（安装/覆盖安装/卸载）、真实账号登录、Windows 系统通知投递、消息右键「在文件夹中打开」的资源管理器定位、AI 群管理的真实执行——这些需在你自己的 Windows 桌面与真实云湖账号下确认
 - 自动回复与群管理依赖客户端在线，退出客户端后停止工作，离线期间不保证补发
 - Bot 记忆由用户手动维护或按阈值自动总结，不处理图片内容
 
