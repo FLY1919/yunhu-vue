@@ -446,6 +446,31 @@ Function RunMainBinary
   nsis_tauri_utils::RunAsUser "$INSTDIR\${MAINBINARYNAME}.exe" ""
 FunctionEnd
 
+; 结束安装目录内的残留进程（主程序 + sidecar node.exe）。
+; 模板自带的 CheckIfAppIsRunning 只检查主程序 exe；sidecar 是独立 node.exe 进程，
+; 主程序异常退出/被强杀时会成为孤儿进程继续锁住 $INSTDIR\node.exe，
+; 导致覆盖安装写文件报「无法打开要写入的文件」。
+; 匹配条件是进程可执行路径前缀 = $INSTDIR\，不会误杀机器上其他 node 进程。
+!macro KillAppProcessesInInstallDirImpl
+  FileOpen $0 "$TEMP\yh-kill-residual.ps1" w
+  FileWrite $0 "Get-CimInstance Win32_Process | Where-Object { $$_.ExecutablePath -like '$INSTDIR\*' } | ForEach-Object { Stop-Process -Id $$_.ProcessId -Force -ErrorAction SilentlyContinue }$\r$\n"
+  FileClose $0
+  ; 输出执行结果到安装详情日志，现场失效时可凭此排查（静默 no-op 是最危险的失败模式）
+  DetailPrint "结束安装目录内残留进程: $INSTDIR"
+  nsExec::ExecToStack 'powershell -NoProfile -ExecutionPolicy Bypass -File "$TEMP\yh-kill-residual.ps1"'
+  Pop $0
+  Pop $1
+  DetailPrint "残留进程清理: exit=$0 out=$1"
+  Delete "$TEMP\yh-kill-residual.ps1"
+  Sleep 500
+!macroend
+Function KillAppProcessesInInstallDir
+  !insertmacro KillAppProcessesInInstallDirImpl
+FunctionEnd
+Function un.KillAppProcessesInInstallDir
+  !insertmacro KillAppProcessesInInstallDirImpl
+FunctionEnd
+
 ; Uninstaller Pages
 ; 1. Confirm uninstall page
 Var DeleteAppDataCheckbox
@@ -689,6 +714,9 @@ Section Install
 
   !insertmacro CheckIfAppIsRunning "$INSTDIR\${MAINBINARYNAME}.exe" "${PRODUCTNAME}"
 
+  ; 结束孤儿 sidecar（node.exe）等安装目录内残留进程，避免写文件被锁
+  Call KillAppProcessesInInstallDir
+
   ; Copy main executable
   File "${MAINBINARYSRCPATH}"
 
@@ -825,6 +853,9 @@ Section Uninstall
   !endif
 
   !insertmacro CheckIfAppIsRunning "$INSTDIR\${MAINBINARYNAME}.exe" "${PRODUCTNAME}"
+
+  ; 结束孤儿 sidecar（node.exe）等安装目录内残留进程，避免删除文件被锁
+  Call un.KillAppProcessesInInstallDir
 
   ; Delete the app directory and its content from disk
   ; Copy main executable
