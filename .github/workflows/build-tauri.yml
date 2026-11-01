@@ -146,27 +146,45 @@ jobs:
           [ -n "$EXE" ] || { echo "::error::no exe in artifacts"; exit 1; }
           [ -n "$ZIP" ] || { echo "::error::no portable zip in artifacts"; exit 1; }
 
-      - name: 从 CHANGELOG.md 抽取本版更新日志
+      - name: 从 CHANGELOG.md 抽取更新日志（跳版本发布时累积）
         run: |
           set -e
           VER=$(node -p "require('./package.json').version")
-          # 取 "## v$VER" 到下一个 "## v" 之间的内容；抽不到就退回指针说明，不让 Release 无正文
-          # 先去掉行尾 \r：runner 检出若带 CRLF，精确行匹配会失败
-          awk -v ver="v$VER" '
-            { sub(/\r$/, "") }
-            $0 == "## " ver { f=1; next }
-            f && /^## v/ { exit }
-            f { print }
-          ' CHANGELOG.md > notes.md
+          # 上一个 Release 的 tag：决定抽取范围。逐版发布时=上一版（抽单段），
+          # 跳版本累积发布时=更早的 tag（抽中间全部版本段，功能更新不丢失）
+          PREV=$(git tag --sort=-v:refname | grep -vx "v$VER" | head -1 || true)
+          echo "current=v$VER prev=${PREV:-<none>}"
+          if [ -n "$PREV" ]; then
+            awk -v cur="## v$VER" -v prev="## $PREV" '
+              { sub(/\r$/, "") }
+              $0 == cur { f=1 }
+              f && $0 == prev { exit }
+              f { print }
+            ' CHANGELOG.md > notes.md
+          else
+            awk -v cur="## v$VER" '
+              { sub(/\r$/, "") }
+              $0 == cur { f=1 }
+              f { print }
+            ' CHANGELOG.md > notes.md
+          fi
           if [ ! -s notes.md ]; then
             echo "本版更新日志见仓库 CHANGELOG.md 的 v$VER 段落。" > notes.md
             echo "::warning::CHANGELOG.md 中未抽到 v$VER 段落，已用指针说明兜底"
           fi
-          # 维护者署名固定写进 Release 正文
-          printf '\n---\n\n本版本由社区维护者 [@DontFPCKMe](https://github.com/DontFPCKMe)（云湖用户名 @TunRat）维护交付，感谢他的长期投入。\n' >> notes.md
-          echo "--- Release notes 预览 ---"
-          head -20 notes.md
-          echo "...(共 $(wc -l < notes.md) 行)"
+          # 标题 + 累积说明（多于一个版本段即累积发布）+ 维护者署名
+          N=$(grep -c '^## v' notes.md || true)
+          { echo "# 云湖牢大版 v$VER"; echo
+            if [ "$N" -gt 1 ]; then
+              echo "> 本版为**累积发布**：自上一个 Release（${PREV:-无}）以来的全部版本更新均列于下方。各版完整技术说明见仓库 \`RELEASE_NOTES_1.0.*.md\`。"
+              echo
+            fi
+            cat notes.md
+            printf '\n---\n\n本版本由社区维护者 [@DontFPCKMe](https://github.com/DontFPCKMe)（云湖用户名 @TunRat）维护交付，感谢他的长期投入。\n'
+          } > notes-final.md
+          mv notes-final.md notes.md
+          echo "--- Release notes 预览（前 12 行，共 $(wc -l < notes.md) 行 / $(grep -c '^## v' notes.md) 个版本段）---"
+          head -12 notes.md
 
       - name: 发布到 Release（存在则覆盖上传，不删不重建）
         env:
