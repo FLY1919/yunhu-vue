@@ -72,7 +72,15 @@ export const adapterPlugin = {
     /* ---------------- 收消息：云湖推送 -> Session ---------------- */
     function toSession(msg: any, chatType: number): Session | null {
       if (!bot) return null
-      const channel: Channel = { id: msg.chatId, type: (chatType || 2) as 1 | 2 | 3, name: msg.name, avatar: msg.avatar }
+      const type = (chatType || 2) as 1 | 2 | 3
+      // 私聊推送的 chat_id 可能是接收方（自己），会话身份必须取对端。
+      const selfId = auth.state.user?.id
+      const id = type === 1 && msg.chatId === selfId
+        ? (msg.senderId && msg.senderId !== selfId ? msg.senderId : msg.recvId)
+        : msg.chatId
+      if (!id) return null
+      const conv = ctx.chat?.state.conversations.find((c: any) => c.id === id && c.type === type)
+      const channel: Channel = { id, type, name: conv?.name, avatar: conv?.avatar }
       const user: User = { id: msg.senderId, name: msg.sender, avatar: msg.avatar }
       const elements = Satori.parse(msg.content || {}, msg.type)
       return makeSession(bot, channel, user, {

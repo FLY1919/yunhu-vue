@@ -1,151 +1,164 @@
-/**
- * auth 插件
- * 提供 ctx.auth：登录态管理（邮箱登录 / token 登录 / 持久化 / 自动恢复）
- * 依赖：api、storage
- * 凭据（token/设备号）落盘到 storage 的 session 数据（文档/yhchat/session.json），
- * 旧版本存在 localStorage 的 yh.token/yh.device 会在首次读写时迁移并清除。
- */
-import { reactive, watch } from 'vue'
-import AccountPage from '../console/pages/AccountPage.vue'
+/** Local account vault. Passwords are never retained and only public summaries reach the UI. */
+import { reactive } from 'vue'
+import AccountConfigPage from '../console/pages/AccountConfigPage.vue'
 
 export const authPlugin = {
   name: 'auth',
   inject: ['api', 'storage'],
   provide: ['auth'],
-
   apply(ctx) {
-    const api = ctx.get('api')
-    const storage = ctx.get('storage')
-
-    const state = reactive({
-      status: 'guest', // guest | loading | ready
-      user: null,
-      error: '',
-    })
-
-    let deviceId = ''
-    /** 设备号：优先落盘值 → 旧 localStorage 迁移 → 新生成（迁移后清除旧 key） */
-    async function ensureDevice(): Promise<string> {
+    const api = ctx.get('api'), storage = ctx.get('storage')
+    const state = reactive({ status: 'guest', user: null as any, error: '', savedAccounts: [] as any[], accountsLoading: false })
+    let deviceId = '', contextAccount = '', busy = false
+    let accounts: any[] = []
+    let loaded: Promise<void> | undefined
+    let operations = Promise.resolve<any>(undefined)
+    let restoration: Promise<any> | undefined
+    const newDevice = () => 'web-' + crypto.randomUUID()
+    // A permission/ACL failure (403) does not establish that saved credentials expired.
+    const invalidCredential = (error: any) => error?.status === 401 || /(?:token|credential).{0,20}(?:invalid|expired)|(?:invalid|expired).{0,20}(?:token|credential)|unauthori[sz]ed|未登录|(?:登录|凭证|令牌|token).{0,8}(?:失效|过期|无效)|HTTP\s*401/i.test(error?.message || String(error || ''))
+    const publicUser = (u: any) => ({ id: String(u.id), name: u.name || String(u.id), avatar: u.avatar || '', email: u.email || '' })
+    function publish() {
+      state.savedAccounts = accounts.map(a => ({ ...a.user, id: a.id, savedAt: a.savedAt, needsLogin: !!a.needsLogin }))
+        .sort((a, b) => b.savedAt - a.savedAt)
+    }
+    async function loadAccounts(refresh = false) {
+      if (refresh && !state.accountsLoading) loaded = undefined
+      if (!loaded) loaded = (async () => {
+        state.accountsLoading = true
+        try {
+          const read = (name: string) => refresh && storage.refresh ? storage.refresh(name) : storage.load(name)
+          const data = await read('accounts')
+          accounts = Array.isArray(data.items) ? [...new Map<string, any>(data.items.filter(a => a?.id && typeof a.token === 'string' && a.token)
+            .map(a => [String(a.id), { id: String(a.id), token: a.token, device: a.device || '', user: publicUser({ ...a.user, id: a.id }), savedAt: Number(a.savedAt) || 0, needsLogin: !!a.needsLogin }])).values()] : []
+          const session = await read('session')
+          if (session.token && session.user?.id && !accounts.some(a => a.id === String(session.user.id))) {
+            accounts.push({ id: String(session.user.id), token: session.token, device: session.device,
+              user: publicUser(session.user), savedAt: 0 })
+          }
+          publish()
+          state.error = ''
+        } finally { state.accountsLoading = false }
+      })().catch((error: any) => { loaded = undefined; state.error = error?.message || String(error); throw error })
+      return loaded
+    }
+    async function persistAccounts() {
+      publish()
+      await storage.save('accounts', { version: 1, items: accounts })
+    }
+    async function ensureDevice() {
       if (deviceId) return deviceId
-      const s = await storage.load('session').catch(() => ({}))
-      const legacy = localStorage.getItem('yh.device')
-      deviceId = s.device || legacy || ('web-' + Math.random().toString(36).slice(2))
-      if (legacy) localStorage.removeItem('yh.device')
-      if (!s.device) await storage.save('session', { ...s, device: deviceId }).catch(() => {})
+      const s = await storage.load('session')
+      deviceId = s.device || localStorage.getItem('yh.device') || newDevice()
       return deviceId
     }
-
-    async function enter(token) {
-      api.setToken(token)
-      state.status = 'loading'
-      state.error = ''
-      try {
-        const user = await api.self()
-        state.user = user
-        state.status = 'ready'
-        // 凭据落盘（storage 不可用时自动回退 localStorage，登录不被阻塞）
-        const s = await storage.load('session').catch(() => ({}))
-        await storage.save('session', { ...s, token, device: deviceId || s.device }).catch(() => {})
-        localStorage.removeItem('yh.token')   // 旧 key 迁移后清除，避免双份凭据
-        ctx.emit('auth/login', user)
-        return user
-      } catch (e) {
-        api.setToken('')
-        state.status = 'guest'
-        state.user = null
-        throw e
-      }
+    function exclusive(fn: () => Promise<any>) {
+      const task = operations.then(async () => {
+        busy = true; state.error = ''
+        try { return await fn() }
+        catch (e: any) { state.error = e?.message || String(e); throw e }
+        finally { busy = false }
+      })
+      operations = task.catch(() => {})
+      return task
     }
-
+    async function enter(token: string, device: string, restore = false) {
+      token = token.trim()
+      if (!token) throw new Error('请填写账号 Token')
+      // Validate using a per-request header, leaving live credentials intact on failure.
+      const user = await api.self(token)
+      if (!user?.id) throw new Error('账号信息不完整，请重新登录')
+      await loadAccounts()
+      const id = String(user.id)
+      const remembered = accounts.find(a => a.id === id)
+      const item = { id, token, device: device || remembered?.device || newDevice(), user: publicUser(user), savedAt: Date.now(), needsLogin: false }
+      accounts = [...accounts.filter(a => a.id !== id), item]
+      await persistAccounts()
+      await storage.save('session', { token, device: item.device, user: publicUser(user) })
+      localStorage.removeItem('yh.token'); localStorage.removeItem('yh.device')
+      if ((contextAccount && contextAccount !== id) || (state.status === 'ready' && (String(state.user?.id) !== id || api.token !== token || deviceId !== item.device))) {
+        // Restart the plugin context so WS, group caches, in-flight requests and drafts cannot cross accounts.
+        state.status = 'switching'
+        ctx.emit('auth/logout')
+        api.setToken('')
+        window.location.reload()
+        return user
+      }
+      storage.setAccount?.(id, restore)
+      api.setToken(token); deviceId = item.device; contextAccount = id
+      state.user = user; state.status = 'ready'
+      ctx.emit('auth/login', user)
+      return user
+    }
     const auth = {
-      state,
+      state, loadAccounts,
       get user() { return state.user },
       get isLoggedIn() { return state.status === 'ready' },
-      /** 当前设备号（ws 登录包要用同一个，避免一机多设备号） */
       get deviceId() { return deviceId },
-
-      async login(email, password) {
-        state.error = ''
-        const dev = await ensureDevice()
-        const token = await api.login(email, password, dev, 'web')
-        return enter(token)
+      login(email: string, password: string) {
+        return exclusive(async () => {
+          if (!email.trim() || !password) throw new Error('请填写邮箱和密码')
+          const device = state.status === 'ready' ? newDevice() : await ensureDevice()
+          const token = await api.login(email.trim(), password, device, 'web')
+          return enter(token, device)
+        })
       },
-
-      async loginWithToken(token) {
-        await ensureDevice()
-        return enter(token.trim())
+      loginWithToken(token: string) { return exclusive(async () => enter(token, state.status === 'ready' ? newDevice() : await ensureDevice())) },
+      verifyToken(token: string) { return api.self(token.trim()) },
+      switchAccount(id: string) {
+        return exclusive(async () => {
+          await loadAccounts()
+          if (state.status === 'ready' && String(state.user?.id) === String(id)) return state.user
+          const item = accounts.find(a => a.id === String(id))
+          if (!item) throw new Error('未找到本地账号，请重新登录')
+          try { return await enter(item.token, item.device) }
+          catch (error) { if (invalidCredential(error)) { item.needsLogin = true; await persistAccounts() }; throw error }
+        })
       },
-
-      /**
-       * 只验证 token 有效性、**不改动当前登录态**（锁屏忘记密码等场景用）。
-       * 失败抛错但原 token/状态原样恢复，不会把已登录的会话踢回登录页。
-       */
-      async verifyToken(token: string) {
-        const prev = api.token
-        const prevStatus = state.status
-        const prevUser = state.user
-        api.setToken(token.trim())
-        try {
-          const user = await api.self()
-          return user
-        } catch (e) {
-          // 恢复原会话，绝不把用户踢回登录页
-          api.setToken(prev || '')
-          state.status = prevStatus
-          state.user = prevUser
-          throw e
-        } finally {
-          if (prev) { api.setToken(prev); state.status = prevStatus; state.user = prevUser }
-        }
+      async forgetAccount(id: string) {
+        if (busy) throw new Error('正在处理账号，请稍候')
+        await loadAccounts()
+        if (String(state.user?.id) === String(id)) throw new Error('请先退出当前账号')
+        accounts = accounts.filter(a => a.id !== String(id)); await persistAccounts()
       },
-
-      /**
-       * 退出账号：清除本地**全部凭据**（token/设备号/PIN/锁态/会话缓存/扫码中继），
-       * 保留非凭据偏好（主题/壁纸/快捷回复等）。
-       */
       async logout() {
-        const dev = deviceId
-        api.setToken('')
-        state.user = null
-        state.status = 'guest'
-        deviceId = ''
-        // 通知云端注销本设备（失败不阻塞本地登出）
-        if (dev) api.logoutDevice?.(dev)
-        localStorage.removeItem('yh.token')
-        localStorage.removeItem('yh.device')
-        localStorage.removeItem('yh.data.session')
-        localStorage.removeItem('yh.data.cache')
-        for (const k of ['session', 'cache', 'pin', 'lock', 'relay']) {
-          await storage.remove(k).catch(() => {})
-        }
-        ctx.emit('auth/logout')
+        if (busy) return
+        busy = true
+        try {
+          // End the local session; saved accounts are removed explicitly in the account list.
+          // Revoking the upstream device here would invalidate the remembered login too.
+          await loadAccounts()
+          state.status = 'guest'; state.user = null; api.setToken('')
+          ctx.emit('auth/logout')
+          publish()
+          for (const name of ['session', 'cache', 'recall', 'pin', 'lock', 'relay']) await storage.remove(name).catch(() => {})
+          storage.setAccount?.('')
+          deviceId = ''
+          localStorage.removeItem('yh.token'); localStorage.removeItem('yh.device')
+        } finally { busy = false }
       },
-
-      /** 页面加载时尝试恢复上次的登录态（凭据从落盘文件读） */
-      async restore() {
-        const legacy = localStorage.getItem('yh.token')
-        const s = await storage.load('session').catch(() => ({}))
-        const t = s.token || legacy
-        if (!t) return
-        await ensureDevice()
-        try { await enter(t) } catch { /* 忽略，回到登录页；坏凭据不残留 */ }
+      restore() {
+        if (restoration) return restoration
+        restoration = exclusive(async () => {
+        await loadAccounts()
+        const session = await storage.load('session')
+        const token = session.token || localStorage.getItem('yh.token')
+        if (!token) return
+        try { await enter(token, await ensureDevice(), true) }
+        catch (error) {
+          const item = accounts.find(a => a.token === token)
+          if (item && invalidCredential(error)) { item.needsLogin = true; await persistAccounts() }
+          api.setToken(''); state.status = 'guest'; state.user = null
+        }
+        })
+        return restoration
       },
     }
-
-    // 登录/登出时自动打日志（演示事件总线）
     ctx.on('auth/login', u => ctx.logger?.info(`已登录：${u.name} (${u.id})`))
     ctx.on('auth/logout', () => ctx.logger?.info('已退出登录'))
-
-    // 避免未使用告警
-    void watch
-
     ctx.set('auth', auth)
-
-    /* ---- 控制台扩展：账号页面 ---- */
     ctx.inject(['console'], (ctx) => {
-      ctx.console.addEntry((cc) => {
-        cc.page({ name: '账号', path: '/account', icon: 'userCircle', order: 950, component: AccountPage })
-      })
+      ctx.console.addEntry(cc => cc.page({ name: '账号与配置', path: '/account', icon: 'settings', order: 950, component: AccountConfigPage }))
     })
   },
 }

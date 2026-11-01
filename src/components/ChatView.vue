@@ -11,6 +11,7 @@
  */
 import { inject, ref, onUnmounted, nextTick, watch, computed, reactive } from 'vue'
 import { CHAT_TYPE_LABEL } from '../core/util'
+import { showMessage } from '../core/recall-display'
 import MessageItem from './MessageItem.vue'
 import MessageMenu from './MessageMenu.vue'
 import SelectionBar from './SelectionBar.vue'
@@ -30,6 +31,8 @@ const flow = computed(() => {
   const out: Array<{ t: 'div'; ts: number; id: string } | { t: 'msg'; msg: any }> = []
   let last = 0
   for (const m of chat.state.messages || []) {
+    // With local retention enabled, an unmatched recall has no retained message to display.
+    if (!showMessage(m, chat.preferences.antiRecall)) continue
     if (m.ts && (!last || m.ts - last > 5 * 60 * 1000)) out.push({ t: 'div', ts: m.ts, id: 'div-' + m.id })
     out.push({ t: 'msg', msg: m })
     if (m.ts) last = m.ts
@@ -93,6 +96,7 @@ function jumpTo(mid: string) {
   if (cur.value && mid) chat.locate(cur.value, mid)
 }
 function seekLocated(mid: string) {
+  clearFlash()
   const current = chat.state.current
   const request = ++jumpRequest
   const seek = (tries = 12) => {
@@ -101,7 +105,8 @@ function seekLocated(mid: string) {
     if (el) {
       el.scrollIntoView({ block: 'center', behavior: 'auto' })
       el.classList.add('flash')
-      setTimeout(() => el.classList.remove('flash'), 2000)
+      flashed = el
+      flashTimer = setTimeout(clearFlash, 2000)
       return
     }
     if (tries > 0) setTimeout(() => seek(tries - 1), 80)
@@ -110,7 +115,18 @@ function seekLocated(mid: string) {
   nextTick(() => seek())
 }
 
-function toBottom() { nextTick(() => { if (box.value && !chat.state.jumpedAway) box.value.scrollTop = box.value.scrollHeight }) }
+function toBottom() {
+  const current = chat.state.current
+  // A sent message supersedes a pending history-page position restoration.
+  scrollIntent++
+  nextTick(() => {
+    if (box.value && chat.state.current === current && !chat.state.jumpedAway) {
+      box.value.scrollTop = box.value.scrollHeight
+      chat.setAtBottom?.(true)
+      showJump.value = false
+    }
+  })
+}
 
 /** 搜索跳转历史后一键回最新：重载最新消息并滚到底 */
 async function backLatest() {
@@ -123,10 +139,13 @@ async function backLatest() {
 
 /** 滚动时上报「是否贴底」：新消息/轮询刷新只在贴底时自动滚，翻历史不被打断 */
 let loadingTop = false
+let scrollIntent = 0
 const showJump = ref(false)   // 离开底部时显示「回最新」箭头
 function onScroll() {
   const el = box.value
   if (!el) return
+  // 打开会话时 DOM 会先显示缓存/加载占位；其滚动事件不能触发历史分页或覆盖贴底意图。
+  if (chat.state.loadingMsgs && !chat.state.jumpedAway) return
   const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 40
   ctx.chat?.setAtBottom?.(atBottom)
   showJump.value = !atBottom
@@ -136,9 +155,13 @@ function onScroll() {
     const current = chat.state.current
     const prevH = el.scrollHeight
     const topBefore = el.scrollTop
+    const intent = scrollIntent
     Promise.resolve(chat.loadMore()).finally(() => {
       nextTick(() => {
-        if (!unmounted && chat.state.current === current && box.value === el) el.scrollTop = el.scrollHeight - prevH + topBefore
+        if (!unmounted && chat.state.current === current && box.value === el) {
+          if (intent === scrollIntent) el.scrollTop = el.scrollHeight - prevH + topBefore
+          else if (chat.atBottom?.() && !chat.state.jumpedAway) toBottom()
+        }
         loadingTop = false
       })
     })
@@ -158,21 +181,52 @@ function fmtDiv(ts: number) {
   return `${d.getFullYear()}年${d.getMonth() + 1}月${d.getDate()}日 ${hm}`
 }
 const off = ctx.on('chat/scroll-bottom', toBottom)
+// Composer expansion, its fade animation and attachment decoding can resize the viewport
+// after the first nextTick. Follow only while the reader still intends to stay at the bottom.
+let sizeObserver: ResizeObserver | undefined
+watch(box, (element) => {
+  sizeObserver?.disconnect()
+  if (element && typeof ResizeObserver !== 'undefined') {
+    sizeObserver = new ResizeObserver(() => {
+      if (chat.atBottom?.() && !chat.state.jumpedAway && !loadingTop) toBottom()
+    })
+    sizeObserver.observe(element)
+  }
+}, { flush: 'post' })
 const offLocate = ctx.on('chat/locate', seekLocated)
 let unmounted = false
 let jumpRequest = 0
+let flashed: HTMLElement | null = null
+let flashTimer: ReturnType<typeof setTimeout> | undefined
+function clearFlash() {
+  clearTimeout(flashTimer)
+  flashed?.classList.remove('flash')
+  flashed = null
+}
+function dismissLocate(event?: Event) {
+  if (event?.target instanceof Element && event.target.closest('.row.locate')) return
+  jumpRequest++
+  chat.state.locateId = null
+  clearFlash()
+}
 const offDoc = () => closeMore()
-const onEscape = (e: KeyboardEvent) => { if (e.key === 'Escape') { closeMore(); closeMenu() } }
+const onEscape = (e: KeyboardEvent) => { if (e.key === 'Escape') { closeMore(); closeMenu(); dismissLocate() } }
+// 捕获阶段执行：引用块、头像和侧栏按钮即使 stopPropagation 也不会漏掉。
+// 先清旧定位再由本次引用点击建立新定位，避免刚跳转就被同一次点击清除。
+document.addEventListener('click', dismissLocate, { capture: true })
 document.addEventListener('click', offDoc)
 document.addEventListener('keydown', onEscape)
 onUnmounted(() => {
   unmounted = true
+  sizeObserver?.disconnect()
   off()
   offLocate()
+  clearFlash()
+  document.removeEventListener('click', dismissLocate, { capture: true })
   document.removeEventListener('click', offDoc)
   document.removeEventListener('keydown', onEscape)
 })
-watch(cur, () => { jumpRequest++; closeMore(); closeMenu(); showJump.value = false; toBottom() })
+watch(cur, () => { jumpRequest++; clearFlash(); closeMore(); closeMenu(); showJump.value = false; toBottom() })
 watch(() => chat.state.locateId, (mid) => { if (mid) seekLocated(mid) }, { immediate: true, flush: 'post' })
 </script>
 
@@ -184,8 +238,6 @@ watch(() => chat.state.locateId, (mid) => { if (mid) seekLocated(mid) }, { immed
     <div class="head-main">
       <div class="t">
         <span class="nm">{{ cur?.name || '未选择会话' }}</span>
-        <!-- QQ 式昵称旁绿点：云湖无对方在线接口，映射为「实时连接在线」（ws online） -->
-        <span v-if="cur && ctx.ws?.state?.status === 'online'" class="online-dot" title="实时连接在线"></span>
         <span class="s" v-if="cur">{{ CHAT_TYPE_LABEL[cur.type] }} · {{ cur.id }}</span>
       </div>
     </div>
@@ -219,6 +271,7 @@ watch(() => chat.state.locateId, (mid) => { if (mid) seekLocated(mid) }, { immed
           <button class="more-item" v-if="cur.type === 2" @click="pick('tags')"><Icon name="check" :size="14" /> 群标签</button>
           <button class="more-item" v-if="cur.type === 2" @click="pick('all')"><Icon name="search" :size="14" /> 全部看板</button>
           <button class="more-item" @click="pick('chatbg')"><Icon name="palette" :size="14" /> 聊天背景</button>
+          <button v-if="ctx.userbot" class="more-item" @click="closeMore(); ctx.userbot.open(cur)"><Icon name="robot" :size="14" /> 用户 Bot / AI 设置</button>
           <button class="more-item" @click="pick('settings')"><Icon name="settings" :size="14" /> {{ cur.type === 2 ? '群设置' : '会话设置' }}</button>
         </div>
       </Teleport>
@@ -229,7 +282,7 @@ watch(() => chat.state.locateId, (mid) => { if (mid) seekLocated(mid) }, { immed
 
   <div v-if="!cur" class="empty">
     <div>
-      <div style="font-size: 30px">💬</div>
+      <Icon name="chat" :size="30" aria-hidden="true" />
       <div>从左侧选择一个会话开始聊天</div>
       <div class="small dim" style="margin-top: 6px">右键消息可引用 / 转发 / 撤回 / 多选</div>
     </div>

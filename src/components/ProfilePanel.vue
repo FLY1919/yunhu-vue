@@ -10,7 +10,7 @@
  * 好友判断：通讯录里有就是好友 → 显示「发消息」；否则显示「添加好友」；
  * 看自己资料时显示「这是你自己」。点板块 chip 会跳到控制台板块页并进入该板块。
  */
-import { inject, ref, computed, watch } from 'vue'
+import { inject, ref, computed, watch, onUnmounted, nextTick } from 'vue'
 import { resUrl } from '../core/res'
 import { fallbackAvatar, fmtTime } from '../core/util'
 
@@ -23,16 +23,38 @@ const cm = ctx.community
 /** 该用户创建的板块（点谁的头像就看谁的，不再固定显示「我的」） */
 const userBas = ref<any[]>([])
 const basLoading = ref(false)
+const createdPacks = ref<any[]>([]), packsLoading = ref(false), packsError = ref('')
+let packsRequest: AbortController | undefined
+let profileVersion = 0
+async function loadPacks(id: string) {
+  packsRequest?.abort()
+  const request = new AbortController(); packsRequest = request
+  createdPacks.value = []; packsError.value = ''; packsLoading.value = true
+  try {
+    const response = await fetch('/sticker-directory?' + new URLSearchParams({ author_id: id }), { signal: request.signal })
+    const result = await response.json()
+    if (!response.ok || !Array.isArray(result.data)) throw new Error(result.error?.message || '目录返回格式不正确')
+    if (packsRequest === request) createdPacks.value = result.data.filter(p => Number.isSafeInteger(Number(p.id)) && Number(p.id) > 0 && String(p.author?.user_id) === id)
+  } catch (e: any) { if (!request.signal.aborted && packsRequest === request) packsError.value = e.message }
+  finally { if (packsRequest === request) packsLoading.value = false }
+}
+async function gotoPack(pack: any) {
+  g.closeProfile(); ctx.console?.goto?.('/')
+  await nextTick()
+  await ctx.stickers?.openPackOf?.({ packId: Number(pack.id) })
+}
+onUnmounted(() => { profileVersion++; packsRequest?.abort() })
 
 async function loadBas(id: string) {
   if (!id) { userBas.value = []; return }
   basLoading.value = true
   try {
-    userBas.value = await ctx.api.baListByCreate(id)
+    const result = await ctx.api.baListByCreate(id)
+    if (String(g.state.profileUser?.id) === id) userBas.value = result
   } catch {
     // 接口失败时，如果是自己就退回本地缓存的「我的板块」
-    userBas.value = String(id) === String(ctx.auth?.state?.user?.id || '') ? (cm?.state?.mine || []) : []
-  } finally { basLoading.value = false }
+    if (String(g.state.profileUser?.id) === id) userBas.value = String(id) === String(ctx.auth?.state?.user?.id || '') ? (cm?.state?.mine || []) : []
+  } finally { if (String(g.state.profileUser?.id) === id) basLoading.value = false }
 }
 
 /** 点板块 → 跳到控制台「板块」页并定位到这个板块 */
@@ -85,41 +107,32 @@ async function toggleBlack() {
 
 async function load() {
   const u = g.state.profileUser
+  const version = ++profileVersion
   if (!u) { data.value = null; return }
-  loading.value = true
+  loading.value = true; data.value = null
   try {
-    data.value = await api.getUser(u.id)
+    const result = u.isBot ? await api.botInfo(u.id) : await api.getUser(u.id)
+    if (version === profileVersion) data.value = { ...result, id: String(result.id || u.id), isBot: !!u.isBot }
   } catch (e: any) {
-    // 机器人不是「用户」（get-user 返回「该用户不存在」），改走 /v1/bot/bot-info
-    if (u.isBot || /不存在/.test(e.message)) {
-      try {
-        data.value = await api.botInfo(u.id)
-        loading.value = false
-        return
-      } catch (e2: any) {
-        data.value = { id: u.id, name: u.name || u.id, avatar: u.avatar, isBot: true, _note: '机器人资料加载失败：' + e2.message }
-        loading.value = false
-        return
-      }
-    }
-    ui.toast('资料加载失败：' + e.message, 'error')
-    data.value = null
-  } finally { loading.value = false }
+    if (version === profileVersion) data.value = { ...u, _note: (u.isBot ? '机器人' : '用户') + '资料加载失败：' + e.message }
+  } finally { if (version === profileVersion) loading.value = false }
 }
 
 watch(() => g.state.profileUser, (u) => {
   load()
+  userBas.value = []; createdPacks.value = []; packsError.value = ''; packsRequest?.abort(); packsLoading.value = false
   // 看谁的资料就拉谁的板块
-  if (u?.id) loadBas(String(u.id))
+  if (u?.id && !u.isBot) { loadBas(String(u.id)); loadPacks(String(u.id)) }
   if (u && !(cm?.state?.mine || []).length) cm?.mine?.()
-})
+}, { immediate: true })
 
 /** 和 TA 聊天：切到该用户的私聊会话 */
 function chatWith() {
   const u = data.value || g.state.profileUser
-  const conv = chat.state.conversations.find((c: any) => c.id === u.id)
-  if (conv) { chat.open(conv); g.closeProfile() }
-  else ui.toast('还没有和 TA 的会话', 'warn')
+  const type = u.isBot ? 3 : 1
+  let conv = chat.state.conversations.find((c: any) => String(c.id) === String(u.id) && c.type === type)
+  if (!conv) { conv = { id: String(u.id), type, name: u.name, avatar: u.avatar, preview: '', unread: 0, ts: Date.now() }; chat.state.conversations.unshift(conv) }
+  ctx.console?.goto?.('/'); chat.open(conv); g.closeProfile()
 }
 
 function copyId() {
@@ -211,6 +224,13 @@ function copyId() {
           </div>
         </div>
 
+        <section v-if="!data.isBot" class="pf-ba pf-packs" aria-label="已创建的表情包">
+          <div class="lab">已创建的表情包 <span v-if="createdPacks.length">（{{ createdPacks.length }} 个）</span></div>
+          <p v-if="packsLoading" class="dim small" role="status">正在查询表情包目录…</p>
+          <p v-else-if="packsError" class="small" role="alert">{{ packsError }} <button class="ghost small" @click="loadPacks(String(data.id))">重试</button></p>
+          <div v-else-if="createdPacks.length" class="ba-list"><button v-for="p in createdPacks" :key="p.id" class="ba-chip" :title="'查看表情包 ' + p.id" @click="gotoPack(p)">{{ p.name || ('表情包 ' + p.id) }}</button></div>
+          <p v-else class="dim small">目录暂未收录该用户创建的表情包。</p>
+        </section>
         <div class="pf-actions">
           <!-- 好友才能直接发消息；非好友只能加好友 -->
           <template v-if="isMe">
@@ -258,7 +278,7 @@ function copyId() {
 .pf-intro { margin-top: 14px; }
 .pf-intro .lab { font-size: 12.5px; color: var(--fg2); margin-bottom: 4px; }
 .pf-intro p { margin: 0; font-size: 13px; white-space: pre-wrap; background: var(--card2); padding: 10px; border-radius: 8px; }
-.pf-actions { display: flex; gap: 8px; margin-top: 18px; }
+.pf-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 18px; }
 .pf-ba { margin-top: 16px; }
 .pf-ba .lab { font-size: 12.5px; color: var(--fg2); margin-bottom: 6px; }
 .ba-list { display: flex; flex-wrap: wrap; gap: 6px; }

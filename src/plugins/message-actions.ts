@@ -7,6 +7,7 @@
  *   chat.action(id, { action })    实现动作
  * 卸载本插件，所有菜单条目与动作会一起消失（副作用绑定在调用方上下文）。
  */
+import { downloadMedia, revealMedia } from '../core/media'
 import { reactive } from 'vue'
 import type { Context } from '../core/context'
 import ForwardDialog from '../components/ForwardDialog.vue'
@@ -83,7 +84,7 @@ export const messageActionsPlugin = {
       },
       { id: 'msg.select', label: '多选', icon: 'check', order: 40 },
       {
-        // 非文本消息（文件/视频/音频）：去群文件面板定位高亮（「在文件夹中打开」）
+        // Reveal the attachment using the system file manager.
         id: 'msg.locate', label: '在文件夹中打开', icon: 'folder', order: 45,
         when: (p: any) => !!p?.msg && ['file', 'video', 'audio'].some((t) =>
           (p.msg.elements || []).some((e: any) => e.type === t)),
@@ -114,16 +115,21 @@ export const messageActionsPlugin = {
       action: ({ msg }: any) => { state.editingId = msg.id },
     }, ctx)
 
-    /** 在文件夹中打开：非文本消息 → 群文件面板定位高亮 */
+    /** Save-as and reveal are distinct operations. */
+    chat.menu('message', [{ id: 'msg.save', label: '下载文件 / 视频', icon: 'download', order: 65,
+      when: (p: any) => !!p?.msg?.elements?.some((e: any) => ['file', 'video', 'audio'].includes(e.type)) }], ctx)
+    chat.action('msg.save', { action: async ({ msg }: any) => {
+      const media = msg.elements.find((e: any) => ['file', 'video', 'audio'].includes(e.type))
+      try { await downloadMedia(media); ui.toast('已保存', 'success') }
+      catch (e: any) { if (e?.name !== 'AbortError') ui.toast('保存失败：' + e.message, 'error') }
+    } }, ctx)
+
     chat.action('msg.locate', {
-      action: ({ msg }: any) => {
+      action: async ({ msg }: any) => {
         const el = (msg.elements || []).find((e: any) => ['file', 'video', 'audio'].includes(e.type))
         if (!el) return
-        const name = el.attrs?.name || String(el.attrs?.src || '').split('/').pop() || ''
-        const g = (ctx as any).group
-        if (!g) return ui.toast('群文件面板不可用', 'warn')
-        g.setDockTab('disk')
-        g.locateFile?.(name)
+        try { await revealMedia(el) }
+        catch (e: any) { ui.toast('打开文件位置失败：' + (e?.message || String(e)), 'error') }
       },
     }, ctx)
 
@@ -137,7 +143,7 @@ export const messageActionsPlugin = {
           ui.toast('已复制到剪贴板', 'success')
         } catch {
           // 非安全上下文没有 clipboard API，退化成 prompt
-          await navigator.clipboard.writeText(text).then(() => ui.toast('已复制到剪贴板', 'success')).catch(() => ui.toast('复制失败', 'error'))
+          ui.toast('复制失败，请检查系统剪贴板权限', 'error')
         }
       },
     }, ctx)

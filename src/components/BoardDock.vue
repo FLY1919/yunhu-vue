@@ -412,7 +412,7 @@ function boardHtmlOf(b: any) { return b?.content ? renderRich(b.content) : '' }
           <button class="ghost small" @click="g.loadDisk()">刷新</button>
           <span class="dim small">
             用户名填群 ID <b>{{ chat.state.current?.id }}</b>，密码填你的 token ·
-            第三方网盘挂载会在根目录里以「🔗 名称」列出来，可直接点进去
+            第三方网盘挂载会在根目录里以「<Icon name="link" :size="14" class="inline-icon" aria-hidden="true" /> 名称」列出来，可直接点进去
           </span>
         </div>
 

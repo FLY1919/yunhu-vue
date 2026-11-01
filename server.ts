@@ -1,3 +1,4 @@
+import { handleAiBridge, handleAiProof } from './ai-bridge'
 /**
  * 云湖客户端服务端（Node 24 可直接运行 TS：node server.ts）
  *   · 托管 ./dist 静态资源（SPA fallback）
@@ -9,9 +10,10 @@
  * 运行： HOST=:: PORT=8902 node server.ts
  */
 import http from 'node:http'
+import { stickerDirectory } from './sticker-directory.ts'
 import https from 'node:https'
 import { readFile, writeFile, unlink } from 'node:fs/promises'
-import { execFileSync, execFile } from 'node:child_process'
+import { execFileSync, execFile, spawn } from 'node:child_process'
 import { mkdirSync, readFileSync } from 'node:fs'
 import { existsSync } from 'node:fs'
 import { extname, join, normalize } from 'node:path'
@@ -37,7 +39,7 @@ const CONFIG_FILE: string = join(BASE, 'yunhu.config.yml')
  * 只允许白名单内的文件名，防止路径穿越写到任意位置。
  */
 const DATA_DIR_FILE = join(homedir(), '.yhchat-dir')
-const DATA_ALLOW = new Set(['session', 'cache', 'pin', 'lock', 'relay'])
+const DATA_ALLOW = new Set(['session', 'accounts', 'cache', 'pin', 'lock', 'relay', 'recall'])
 const DATA_MAX_BYTES = 2 * 1024 * 1024   // 会话快照可能较大，限 2MB 足够且防滥用
 const JSON_HDR = { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' }
 
@@ -155,7 +157,8 @@ function follow(target: string, req: http.IncomingMessage, res: http.ServerRespo
      */
     const h: Record<string, any> = {
       'content-type': safeHeader(up.headers['content-type']) || 'application/octet-stream',
-      'cache-control': cacheControl,
+      // Newly uploaded objects can briefly return 403/404. Never cache that failure for a day.
+      'cache-control': (up.statusCode || 502) >= 200 && (up.statusCode || 502) < 300 ? cacheControl : 'no-store',
       'access-control-allow-origin': '*',
       'access-control-expose-headers': 'content-range, content-length, accept-ranges',
     }
@@ -369,6 +372,39 @@ async function handleFileDir(req: http.IncomingMessage, res: http.ServerResponse
   res.writeHead(405).end('method not allowed')
 }
 
+/** Save the editor's raster export to the configured file folder, always as a new copy. */
+async function handleSaveImage(req: http.IncomingMessage, res: http.ServerResponse, search: string): Promise<void> {
+  if (req.method !== 'POST') { res.writeHead(405, JSON_HDR).end(JSON.stringify({ ok: false, msg: '需要 POST 请求' })); return }
+  const origin = req.headers.origin
+  if (!req.headers.token || (origin && new URL(origin).host !== req.headers.host)) {
+    res.writeHead(403, JSON_HDR).end(JSON.stringify({ ok: false, msg: '仅允许客户端保存图片' })); return
+  }
+  const type = String(req.headers['content-type'] || '').split(';')[0]
+  if (!['image/png', 'image/jpeg', 'image/gif'].includes(type)) { res.writeHead(415, JSON_HDR).end(JSON.stringify({ ok: false, msg: '仅支持 PNG、JPG 或 GIF 图片' })); return }
+  const chunks: Buffer[] = []; let length = 0
+  for await (const chunk of req) {
+    length += chunk.length
+    if (length > 40 * 1024 * 1024) { res.writeHead(413, JSON_HDR).end(JSON.stringify({ ok: false, msg: '图片超过 40 MB' })); return }
+    chunks.push(chunk)
+  }
+  const data = Buffer.concat(chunks)
+  const valid = type === 'image/png' ? data.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))
+    : type === 'image/gif' ? /^GIF8[79]a$/.test(data.subarray(0, 6).toString('ascii'))
+      : data.length >= 3 && data[0] === 255 && data[1] === 216 && data[2] === 255
+  if (!valid) { res.writeHead(415, JSON_HDR).end(JSON.stringify({ ok: false, msg: '图片内容格式不正确' })); return }
+  const requested = new URLSearchParams(search).get('name') || 'image_edited'
+  const base = requested.split(/[\\/]/).pop()!.replace(/[<>:"|?*\x00-\x1f]/g, '_').replace(/\.[^.]*$/, '').slice(0, 120) || 'image_edited'
+  const extension = type === 'image/png' ? '.png' : type === 'image/gif' ? '.gif' : '.jpg'
+  mkdirSync(FILE_DIR, { recursive: true })
+  let dest = ''
+  for (let attempt = 0; attempt < 20; attempt++) {
+    dest = join(FILE_DIR, base + (attempt ? '-' + Date.now() + '-' + attempt : '') + extension)
+    try { await writeFile(dest, data, { flag: 'wx' }); break }
+    catch (error: any) { if (error.code !== 'EEXIST' || attempt === 19) throw error }
+  }
+  res.writeHead(200, JSON_HDR).end(JSON.stringify({ ok: true, path: dest }))
+}
+
 /**
  * GET /pick-dir —— 弹出系统原生「选择文件夹」对话框，返回用户选中的绝对路径。
  * 供「数据目录 / 文件保存目录」的「浏览…」按钮用（也可直接粘贴路径，两者互补）。
@@ -415,6 +451,7 @@ async function handlePickDir(_req: http.IncomingMessage, res: http.ServerRespons
  * 然后调系统资源管理器定位选中（Windows: explorer /select,xxx；其它平台打开目录）。
  * url 限本站 /res 代理或云湖数据床域名，防任意下载。
  */
+const localDownloads = new Map<string, string>()
 async function handleLocalOpen(req: http.IncomingMessage, res: http.ServerResponse, search: string): Promise<void> {
   if (req.method !== 'GET') { res.writeHead(405, JSON_HDR).end(JSON.stringify({ ok: false, msg: 'use GET with ?url=&name=' })); return }
   const q0 = new URLSearchParams(search || '')
@@ -424,28 +461,44 @@ async function handleLocalOpen(req: http.IncomingMessage, res: http.ServerRespon
     const u = new URL(url, 'http://localhost')
     const allowed = u.pathname.startsWith('/res/') || RES_HOST_RE.test(u.hostname) || u.hostname === 'localhost' || u.hostname === '127.0.0.1'
     if (!allowed) { res.writeHead(403, JSON_HDR).end(JSON.stringify({ ok: false, msg: 'url not allowed' })); return }
-    mkdirSync(FILE_DIR, { recursive: true })
-    const dest = join(FILE_DIR, name)
-    // 下载（http/https 都支持：/res 走本站代理）
-    const target = u.hostname === 'localhost' || u.hostname === '127.0.0.1'
-      ? `http://127.0.0.1:${PORT}${u.pathname}${u.search}`
-      : url
-    const data = await new Promise<Buffer>((resolve, reject) => {
-      const mod = target.startsWith('https') ? https : http
-      mod.get(target, { headers: u.pathname.startsWith('/res/') ? { referer: RES_REFERER } : {} }, (up) => {
-        if ((up.statusCode || 0) >= 400) { up.resume(); reject(new Error('HTTP ' + up.statusCode)); return }
-        const chunks: Buffer[] = []
-        up.on('data', (c) => chunks.push(c))
-        up.on('end', () => resolve(Buffer.concat(chunks)))
-        up.on('error', reject)
-      }).on('error', reject)
-    })
-    await writeFile(dest, data)
+    const directory = FILE_DIR, cacheKey = directory + '\n' + url
+    mkdirSync(directory, { recursive: true })
+    let dest = localDownloads.get(cacheKey) || ''
+    if (!dest || !existsSync(dest)) {
+      // 下载（http/https 都支持：/res 走本站代理）
+      const target = u.hostname === 'localhost' || u.hostname === '127.0.0.1'
+        ? `http://127.0.0.1:${PORT}${u.pathname}${u.search}`
+        : url
+      const data = await new Promise<Buffer>((resolve, reject) => {
+        const mod = target.startsWith('https') ? https : http
+        const download = mod.get(target, { headers: { referer: RES_REFERER } }, (up) => {
+          if ((up.statusCode || 0) < 200 || (up.statusCode || 0) >= 300) { up.resume(); reject(new Error('下载失败 HTTP ' + up.statusCode)); return }
+          const chunks: Buffer[] = []
+          up.on('data', (c) => chunks.push(c))
+          up.on('end', () => resolve(Buffer.concat(chunks)))
+          up.on('error', reject)
+        }).on('error', reject)
+        download.setTimeout(30000, () => download.destroy(new Error('文件下载超时')))
+      })
+      const extension = extname(name), base = name.slice(0, name.length - extension.length)
+      for (let attempt = 0; attempt < 20; attempt++) {
+        dest = join(directory, attempt ? `${base}-${Date.now()}-${attempt}${extension}` : name)
+        try { await writeFile(dest, data, { flag: 'wx' }); break }
+        catch (error: any) { if (error.code !== 'EEXIST' || attempt === 19) throw error }
+      }
+      localDownloads.set(cacheKey, dest)
+      if (localDownloads.size > 200) localDownloads.delete(localDownloads.keys().next().value)
+    }
     // 系统资源管理器定位（⚠️ 不能加 windowsHide：会把资源管理器窗口一起藏掉）
     if (process.platform === 'win32') {
-      execFileSync('explorer.exe', ['/select,' + dest], { stdio: 'ignore' })
+      await new Promise<void>((resolve, reject) => {
+        // A file-manager window may outlive this request; never wait for it or kill it on a timeout.
+        const explorer = spawn('explorer.exe', ['/select,' + dest], { detached: true, stdio: 'ignore' })
+        explorer.once('error', reject)
+        explorer.once('spawn', () => { explorer.unref(); resolve() })
+      })
     } else {
-      execFileSync(process.platform === 'darwin' ? 'open' : 'xdg-open', [FILE_DIR], { stdio: 'ignore' })
+      await new Promise<void>((resolve, reject) => execFile(process.platform === 'darwin' ? 'open' : 'xdg-open', [directory], { timeout: 10000 }, error => error ? reject(error) : resolve()))
     }
     res.writeHead(200, JSON_HDR).end(JSON.stringify({ ok: true, path: dest }))
   } catch (e: any) {
@@ -496,6 +549,8 @@ function serverApp(req: any, res: any) {
     }).end()
     return
   }
+  if (pathname === '/bot-ai/request') { void handleAiBridge(req, res, process.env.YH_BOT_BRIDGE_SECRET || ''); return }
+  if (pathname === '/bot-ai/proof') { handleAiProof(req, res, process.env.YH_BOT_BRIDGE_SECRET || '', new URLSearchParams(search).get('nonce') || ''); return }
   if (pathname === '/config') { handleConfig(req, res); return }
   // 用户数据落盘（登录态/会话缓存/PIN/锁/扫码中继）
   const dataM = pathname.match(/^\/data\/([a-z]+)$/)
@@ -503,6 +558,8 @@ function serverApp(req: any, res: any) {
   if (pathname === '/data-dir') { handleDataDir(req, res).catch(e => { res.writeHead(500, JSON_HDR).end(JSON.stringify({ ok: false, msg: e.message })) }); return }
   if (pathname === '/update-check' && req.method === 'GET') { handleUpdateCheck(res).catch(e => { res.writeHead(502, JSON_HDR).end(JSON.stringify({ ok: false, msg: e.message })) }); return }
   if (pathname === '/local-open' && req.method === 'GET') { handleLocalOpen(req, res, search).catch(e => { res.writeHead(500, JSON_HDR).end(JSON.stringify({ ok: false, msg: e.message })) }); return }
+  if (pathname === '/sticker-directory') { void stickerDirectory(req, res, search); return }
+  if (pathname === '/local-save-image') { handleSaveImage(req, res, search).catch(e => { res.writeHead(500, JSON_HDR).end(JSON.stringify({ ok: false, msg: e.message })) }); return }
   if (pathname === '/file-dir') { handleFileDir(req, res).catch(e => { res.writeHead(500, JSON_HDR).end(JSON.stringify({ ok: false, msg: e.message })) }); return }
   if (pathname === '/pick-dir' && req.method === 'GET') { handlePickDir(req, res); return }
   if (pathname === '/local-read' && req.method === 'GET') { handleLocalRead(req, res, search).catch(e => { res.writeHead(500, JSON_HDR).end(JSON.stringify({ ok: false, msg: e.message })) }); return }

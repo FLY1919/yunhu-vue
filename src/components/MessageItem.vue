@@ -3,9 +3,13 @@
  * 单条消息：头像 + 元信息 + 元素树
  * 交互：右键/长按/「⋯」呼出上下文菜单；多选态下显示勾选框并支持点击选中
  */
+import { vResourceMedia } from '../core/resource-media'
 import { inject, computed, ref, watch } from 'vue'
 import { fmtTime, fmtFullTime, fallbackAvatar } from '../core/util'
 import { resUrl } from '../core/res'
+import { groupTagStyle, messageGroupTags } from '../core/group-tag'
+import { showRetainedRecall } from '../core/recall-display'
+import { hasRecallBody } from '../core/recall-cache'
 import { parse } from '../satori/element'
 import type { Element } from '../satori/element'
 import MessageElements from './MessageElements.vue'
@@ -20,7 +24,9 @@ const ctx = inject<any>('ctx')
 const chat = ctx.chat
 
 const elements = computed<Element[]>(() => {
-  if (props.msg.elements?.length) return props.msg.elements
+  // Older snapshots can contain an empty parsed element alongside valid original content.
+  // Reparse the saved content in that case so the retained label never masks a blank body.
+  if (props.msg.elements?.length && (!props.msg.recalled || hasRecallBody({ elements: props.msg.elements }))) return props.msg.elements
   return parse(props.msg.content || {}, props.msg.type)
 })
 
@@ -56,8 +62,9 @@ watch([() => props.msg.quoteId || props.msg.content?.quote_msg_id, () => chat.st
   if (!stale) remoteQuote.value = summary
 }, { immediate: true })
 
+const showRetained = computed(() => showRetainedRecall(props.msg, chat.preferences.antiRecall))
 const isTip = computed(() => props.msg.type === 9 && !props.msg.recalled)
-/** 搜索定位目标：持续色块指示（引用式高亮框），直到回最新/切会话 */
+/** 定位高亮：点击目标以外、按 Escape、回最新或切会话时清除。 */
 const isLocated = computed(() => ctx.chat?.state?.locateId === props.msg.id)
 /**
  * 消息头顶的头衔。
@@ -66,7 +73,9 @@ const isLocated = computed(() => ctx.chat?.state?.locateId === props.msg.id)
  * ② 没有才退回到按用户 id 查的群标签。
  */
 const senderTags = computed<any[]>(() => {
-  const own = (props.msg as any).tags
+  const current = chat.state.current
+  if (current?.type !== 2) return []
+  const own = messageGroupTags(props.msg.tags, current)
   if (Array.isArray(own) && own.length) {
     return own.map((t: any) => ({ id: t.id || t.text, tag: t.text || t.tag, color: t.color }))
   }
@@ -122,13 +131,13 @@ function onA2uiAction(a: any) {
 <template>
   <div v-if="isTip" class="sys">{{ msg.content?.text || msg.content?.tip }}</div>
 
-  <div v-else class="row" :data-mid="msg.id"
-       :class="{ right: msg.right, picked: selected, selecting, recalled: msg.recalled, locate: isLocated }"
+  <div v-else class="row message-row" :data-mid="msg.id"
+       :class="{ right: msg.right, picked: selected, selecting, recalled: msg.recalled && !showRetained, locate: isLocated }"
        @contextmenu="onContextMenu" @click="onClick">
     <span v-if="selecting" class="pick" :class="{ on: selected }">{{ selected ? '✓' : '' }}</span>
 
     <!-- 头像：点一下看 TA 的主页 -->
-    <img class="av" :src="msg.avatar ? resUrl(msg.avatar) : fallbackAvatar(msg.sender)" alt=""
+    <img class="av" v-resource-media="{ src: msg.avatar ? resUrl(msg.avatar) : fallbackAvatar(msg.sender), animated: true, width: 34, height: 34 }" alt=""
          title="查看 TA 的主页" @click.stop="openProfile"
          @error="(e: any) => (e.target.src = fallbackAvatar(msg.sender))" />
 
@@ -136,7 +145,7 @@ function onA2uiAction(a: any) {
       <!-- 发送者在本群的标签（显示在消息头顶，多了可以横向滑动） -->
       <div class="mtags" v-if="senderTags.length">
         <span v-for="t in senderTags" :key="t.id" class="mtag"
-              :style="{ background: (t.color || '#888') + '22', color: t.color || '#888' }">{{ t.tag }}</span>
+              :style="groupTagStyle(t.color)">{{ t.tag }}</span>
       </div>
       <div class="meta">
         <span class="who" title="查看 TA 的主页" @click.stop="openProfile">{{ msg.sender }}</span>
@@ -144,10 +153,11 @@ function onA2uiAction(a: any) {
         <span v-if="msg.edited" class="flag">已编辑</span>
       </div>
       <!-- 撤回：QQ 式居中灰色胶囊，不占气泡 -->
-      <div v-if="msg.recalled" class="recall-capsule">
+      <div v-if="msg.recalled && !showRetained" class="recall-capsule">
         {{ msg.right ? '你' : (msg.sender || '对方') }}撤回了一条消息
       </div>
       <div v-else class="bubble" :class="'t' + msg.type">
+        <span v-if="showRetained" class="retained-label">已撤回 · 本地保留</span>
         <MessageElements :elements="elements" :quote="quote" :msg="msg"
                          @a2ui-action="onA2uiAction" @quote-jump="id => emit('quote-jump', id)" />
       </div>
@@ -158,7 +168,13 @@ function onA2uiAction(a: any) {
 </template>
 
 <style scoped>
-.msg-wrap { min-width: 0; }
+.message-row { flex-wrap: nowrap !important; align-items: flex-start; width: fit-content; min-width: 0; }
+.message-row .msg-wrap { min-width: 0; max-width: calc(100% - 42px); flex: 0 1 auto; }
+.message-row .bubble { min-width: 0; max-width: 100%; box-sizing: border-box; }
+.message-row .meta { align-items: baseline; flex-wrap: nowrap; max-width: 100%; line-height: 1.4; }
+.message-row .meta .who { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.message-row .meta .t { flex: 0 0 auto; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.retained-label { text-align: center; overflow-wrap: anywhere; white-space: normal; display: block; font-size: 11px; color: var(--warn); margin-bottom: 4px; }
 .meta { font-size: 11px; color: var(--fg2); margin-bottom: 3px; display: flex; gap: 6px; }
 .meta .t { cursor: pointer; user-select: none; }
 .meta .t:hover { color: var(--acc); }
@@ -180,13 +196,14 @@ function onA2uiAction(a: any) {
 .meta .who:hover { color: var(--acc); text-decoration: underline; }
 .row img.av { cursor: pointer; }
 /* 撤回：整行居中灰色胶囊（QQ 式），隐藏头像/昵称/时间 */
-.row.recalled { justify-content: center; }
+.message-row.recalled { width: 100%; max-width: 100%; box-sizing: border-box; justify-content: center; align-self: stretch; margin-inline: 0; }
 .row.recalled .av, .row.recalled .pick { display: none; }
 .row.recalled .msg-wrap { display: contents; }
 .row.recalled .meta, .row.recalled .mtags { display: none; }
 .recall-capsule {
   font-size: 12px; color: var(--fg2); background: var(--card2);
   border-radius: 999px; padding: 3px 12px; margin: 2px 0;
+  min-width: 0; max-width: 100%; box-sizing: border-box; text-align: center; white-space: normal; overflow-wrap: anywhere;
 }
 
 .row.selecting { cursor: pointer; }

@@ -6,12 +6,17 @@ on:
     paths:
       - 'src/**'
       - 'server.ts'
+      - 'sticker-directory.ts'
       - 'webdav.ts'
       - 'satori.ts'
       - 'satori-ws.ts'
       - 'src-tauri/**'
       - 'scripts/build-server-bundle.mjs'
+      - 'scripts/verify-windows-assets.mjs'
+      - 'scripts/windows-runtime.json'
+      - 'scripts/test-windows-assets.mjs'
       - 'package.json'
+      - 'package-lock.json'
       - '.github/workflows/build-tauri.yml'
   workflow_dispatch:
 
@@ -32,7 +37,7 @@ jobs:
       - name: 安装 Node
         uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 22.23.4
           cache: npm
 
       - name: 安装 Rust
@@ -45,6 +50,13 @@ jobs:
 
       - name: 安装前端依赖
         run: npm ci --no-audit --no-fund
+
+      - name: 类型与功能回归检查
+        run: |
+          npm run typecheck
+          npm run test:chat
+          npm run test:settings
+          npm run test:features
 
       - name: 构建前端 + server bundle
         run: |
@@ -61,6 +73,8 @@ jobs:
           # node.exe 从 runner 自带 node 复制（版本与 setup-node 一致）
           NODE_EXE=$(which node.exe || where node | head -1)
           cp "$NODE_EXE" src-tauri/resources/node.exe
+          node scripts/verify-windows-assets.mjs --runtime-only src-tauri/resources
+          npm run test:windows-assets
           ls -la src-tauri/resources/
 
       - name: 构建 Tauri（NSIS）
@@ -77,7 +91,8 @@ jobs:
           $ErrorActionPreference = 'Stop'
           $ver = (Get-Content package.json -Raw | ConvertFrom-Json).version
           $rel = 'src-tauri/target/release'
-          $stage = "portable/yunhulaoda-$ver-windows-x64-tauri-portable"
+          # 产物命名按发布规范：软件名-版本-平台.扩展名，不带构建框架后缀
+          $stage = "portable/yunhulaoda-$ver-windows-x64-portable"
           New-Item -ItemType Directory -Force -Path $stage | Out-Null
           Get-ChildItem $rel -File | Where-Object { $_.Extension -in '.exe','.dll' } | Copy-Item -Destination $stage
           # 资源目录布局兼容：release 根 或 release/resources
@@ -86,7 +101,7 @@ jobs:
             if (Test-Path "$rel/$f") { Copy-Item "$rel/$f" "$stage/" }
           }
           if (Test-Path "$rel/dist") { Copy-Item -Recurse "$rel/dist" "$stage/dist" }
-          Compress-Archive -Path "$stage/*" -DestinationPath "portable/yunhulaoda-$ver-windows-x64-tauri-portable.zip" -Force
+          Compress-Archive -Path "$stage/*" -DestinationPath "portable/yunhulaoda-$ver-windows-x64-portable.zip" -Force
           Get-ChildItem portable/
 
       - name: 上传产物
@@ -121,13 +136,37 @@ jobs:
           # download-artifact 的 merge-multiple 会保留 LCA 相对目录结构，
           # 产物可能在 artifacts/src-tauri/... 或 artifacts/portable/... 下 —— 递归找
           EXE=$(find artifacts -type f -name '*.exe' | head -1 || true)
-          ZIP=$(find artifacts -type f -name '*-tauri-portable.zip' | head -1 || true)
+          ZIP=$(find artifacts -type f -name '*-portable.zip' | head -1 || true)
           echo "found exe: $EXE"
           echo "found zip: $ZIP"
-          [ -n "$EXE" ] && cp "$EXE" "out/yunhulaoda-$VER-windows-x64-tauri-setup.exe"
-          [ -n "$ZIP" ] && cp "$ZIP" out/
+          # 统一命名：软件名-版本-平台.扩展名
+          [ -n "$EXE" ] && cp "$EXE" "out/yunhulaoda-$VER-windows-x64-setup.exe"
+          [ -n "$ZIP" ] && cp "$ZIP" "out/yunhulaoda-$VER-windows-x64-portable.zip"
           ls -la out/
           [ -n "$EXE" ] || { echo "::error::no exe in artifacts"; exit 1; }
+          [ -n "$ZIP" ] || { echo "::error::no portable zip in artifacts"; exit 1; }
+
+      - name: 从 CHANGELOG.md 抽取本版更新日志
+        run: |
+          set -e
+          VER=$(node -p "require('./package.json').version")
+          # 取 "## v$VER" 到下一个 "## v" 之间的内容；抽不到就退回指针说明，不让 Release 无正文
+          # 先去掉行尾 \r：runner 检出若带 CRLF，精确行匹配会失败
+          awk -v ver="v$VER" '
+            { sub(/\r$/, "") }
+            $0 == "## " ver { f=1; next }
+            f && /^## v/ { exit }
+            f { print }
+          ' CHANGELOG.md > notes.md
+          if [ ! -s notes.md ]; then
+            echo "本版更新日志见仓库 CHANGELOG.md 的 v$VER 段落。" > notes.md
+            echo "::warning::CHANGELOG.md 中未抽到 v$VER 段落，已用指针说明兜底"
+          fi
+          # 维护者署名固定写进 Release 正文
+          printf '\n---\n\n本版本由社区维护者 [@DontFPCKMe](https://github.com/DontFPCKMe)（云湖用户名 @TunRat）维护交付，感谢他的长期投入。\n' >> notes.md
+          echo "--- Release notes 预览 ---"
+          head -20 notes.md
+          echo "...(共 $(wc -l < notes.md) 行)"
 
       - name: 发布到 Release（存在则覆盖上传，不删不重建）
         env:
@@ -137,7 +176,9 @@ jobs:
           VER=$(node -p "require('./package.json').version")
           TAG="v$VER"
           if ! gh release view "$TAG" >/dev/null 2>&1; then
-            gh release create "$TAG" out/* --title "云湖牢大版 v$VER" --notes "见 docs/release-$VER.md"
+            gh release create "$TAG" out/* --title "云湖牢大版 v$VER" --notes-file notes.md
           else
             gh release upload "$TAG" out/* --clobber
+            gh release edit "$TAG" --title "云湖牢大版 v$VER" --notes-file notes.md
           fi
+          echo "Release 页面：https://github.com/${{ github.repository }}/releases/tag/$TAG"

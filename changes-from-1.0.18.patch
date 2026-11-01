@@ -1,0 +1,1373 @@
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index e463919..16f664f 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -1,3 +1,7 @@
++# 1.0.19 — 板块界面与操作流程改版
++
++板块列表与阅读区分栏；实际容器窄屏适配；分类与本地筛选；创建和管理对话框；头像占位与资源代理；修复请求串板、分页跳页、重复关注、编辑上传及失败丢草稿。移除缺失绑定接口的虚假成功反馈，保留关联群聊查看。详见 RELEASE_NOTES_1.0.19.md。
++
+ # 1.0.18 — Bot 模式、安全设置与占用优化
+ 
+ 撤回提示响应式居中；移除昵称旁在线点；新增 Bot / 会话 AI 开关和管理模式；无需 AI 的规则自动化；高级设置折叠与一键草稿；安全分类统一 PIN、启动锁定与反截屏；锁定暂停消息通知，失焦允许当前会话通知。默认节省资源模式：可见范围媒体加载、动图悬停播放、缩减缓存、避免重复轮询渲染、降低 WebView 内存目标。详见 RELEASE_NOTES_1.0.18.md。
+diff --git a/RELEASE_NOTES_1.0.19.md b/RELEASE_NOTES_1.0.19.md
+new file mode 100644
+index 0000000..d3f6c82
+--- /dev/null
++++ b/RELEASE_NOTES_1.0.19.md
+@@ -0,0 +1,56 @@
++# YH LaoDa 1.0.19 — 板块界面与操作流程改版
++
++修改基线：`yunhu-richkobe-1.0.18-complete-source.zip`。完整检查该版本的板块页面、服务层、API、控制台布局和资源管理后增量修改，未登录或推送 GitHub 账号。
++
++## 界面与操作
++
++- 宽窗口采用“板块列表 + 内容阅读区”，文章不再用遮盖列表的固定弹层展示。当前板块有清晰选中态；窄窗口按实际内容区宽度切换单栏，并提供返回入口。
++- 顶部统一热门 / 关注 / 我的 / 全部四个分类；增加名称或 ID 的本地筛选和刷新。搜索明确只筛选已加载内容，支持全角字符归一化。
++- 列表保留一个阅读入口和一个关注按钮。关联群聊、编辑与权限管理集中在所选板块内；管理入口仅对自己创建的板块出现。名称与 ID 允许换行，减少按钮拥挤。
++- 阅读区重新排版头像、标题、文章数、群聊数及文章摘要。文章详情支持返回当前列表、重试，继续复用原有 Markdown 净化与资源代理。
++- 创建 / 管理 / 关联群聊使用浏览器原生模态对话框，支持键盘焦点约束、Escape 关闭及关闭后归还焦点；提交期间阻止重复操作与误关。失败保留表单输入。
++- 创建入口不再常驻占据一张大卡片。编辑头像上传关联到正在编辑的草稿；列表、阅读区、弹窗中的头像统一使用资源代理、加载失败文字占位和已有节省资源指令。
++- 沿用全站深浅色变量，提供短交互过渡并尊重减少动态效果偏好。本次未添加 UI 库或生产依赖，也没有修改已有节省资源开关。
++
++## 逻辑修复
++
++- 分类、板块、文章和群聊请求均检查归属，快速切换、返回列表或关闭弹窗后，迟到的响应不能覆盖当前内容。
++- 切换板块立即清空旧统计和旧正文；板块资料与文章分别请求，统计接口失败不阻塞阅读。
++- 板块、文章及群聊有加载、空结果、错误和重试状态，支持分页加载。成功后才推进页码，按 ID 去重；失败重试原页，不跳页；到末页不再无限加载。
++- 关注按钮按板块串行提交，失败保留原状态；取消关注会同步更新关注分类。后台刷新不会覆盖正在提交的关注状态。我的板块与关注身份列表分页获取。
++- 编辑成功同步列表与当前阅读区，不再强行跳到“我的”分类；权限使用独立提交，打开编辑框不会更改权限。
++- 旧版服务层调用的 `bindBaGroup` 在当前 API 中不存在，并且旧逻辑仍会提示成功。本版修复误报：保留关联群聊查看；当前官方适配未提供绑定方法时，界面提示去云湖官方客户端新增关联，不展示无效提交表单。若有插件提供真实绑定方法，则继续支持绑定、失败反馈和刷新。
++- 账号登录 / 退出会清理板块私有缓存并使旧读取请求失效，防止前一账号的内容迟到回写；账号切换后旧写操作的结果也不会写入新账号界面。
++
++## 验证
++
++- 184 项离线测试通过：板块 10、聊天 / 通知 97、设置 11、功能 13、Bot 38、安全 2、撤回 13。
++- 真实 Vue 页面与真实板块服务的浏览器检查通过，使用虚拟数据验证：30 + 1 篇分页、正文净化与返回、编辑头像上传、失败保留草稿、管理 / 绑定入口归属、名称 / ID 归一化、原生对话框 Escape / 焦点恢复、错误重试及空列表。
++- 深浅色在 1280 / 980 / 740 / 600 / 390 / 320px 检查；另外验证 1100px 窗口内实际内容区只有 640 / 264px 时的容器适配，避免只依据窗口宽度造成遮挡和溢出。板块页面的深浅色、桌面与窄屏截图已人工检查。
++- Vue 类型检查、preflight、Vite 生产构建与 Node sidecar 打包通过。生产构建仍有既有的大 chunk 提示，无构建错误。
++- Windows x64 安装器使用 NSIS 在本机重新编译，并解包核对全部前端产物与 sidecar。此次没有原生 Rust 功能变更，原生主程序、WebView2Loader、Node 和官方 WebView2 安装器沿用 1.0.18 安装包中的对应文件；没有重新编译 Rust 主程序。
++- 未在真实 Windows 桌面运行，也未使用真实账号执行关注、创建、编辑、权限或群聊操作。离线接口行为验证不等同于服务端在线验收；本次不宣称 Windows 总内存达到 150MB。
++
++## 源码与构建
++
++源码包包含完整应用源码、更新后的前端 / sidecar 产物、本说明、浏览器测试入口和 `changes-from-1.0.18.patch`。不包含 node_modules、Rust target、安装器、测试截图、账号信息或 Windows Node 运行时。
++
++```bash
++npm ci
++npm run typecheck
++npm run test:community
++npm run test:chat
++npm run test:settings
++npm run test:features
++npm run test:userbot
++npm run test:security
++npm run test:recall
++npm run build
++node scripts/build-server-bundle.mjs
++# UI 测试另行安装 Playwright；不需要真实账号。
++CHROMIUM_EXECUTABLE=/path/to/chromium npm run test:ui-community
++# 如需从源码重建原生主程序：
++cargo build --manifest-path src-tauri/Cargo.toml --release --target x86_64-pc-windows-gnu
++# 准备好主程序、WebView2Loader、Node、官方 WebView2 安装器后：
++WEBVIEW2_BOOTSTRAPPER=/path/MicrosoftEdgeWebview2Setup.exe bash scripts/package-windows-local.sh
++```
+diff --git a/package-lock.json b/package-lock.json
+index b94ed2e..16febd0 100644
+--- a/package-lock.json
++++ b/package-lock.json
+@@ -1,12 +1,12 @@
+ {
+   "name": "yunhu-vue",
+-  "version": "1.0.18",
++  "version": "1.0.19",
+   "lockfileVersion": 3,
+   "requires": true,
+   "packages": {
+     "": {
+       "name": "yunhu-vue",
+-      "version": "1.0.18",
++      "version": "1.0.19",
+       "dependencies": {
+         "@capacitor/core": "^8.5.2",
+         "@jodit/image-editor": "0.2.5",
+diff --git a/package.json b/package.json
+index a7e3725..f675724 100644
+--- a/package.json
++++ b/package.json
+@@ -1,7 +1,7 @@
+ {
+   "name": "yunhu-vue",
+   "private": true,
+-  "version": "1.0.18",
++  "version": "1.0.19",
+   "type": "module",
+   "description": "云湖牢大版 · Vue3 + 真 cordis 插件内核 + Satori 协议 + WebDAV 网关（仅供学习交流）",
+   "scripts": {
+@@ -36,7 +36,9 @@
+     "test:ui-group": "node scripts/test-ui-group-create.mjs",
+     "test:security": "node scripts/test-security.mjs",
+     "test:ui-security": "node scripts/test-ui-security-layout.mjs",
+-    "test:ui-resources": "node scripts/test-ui-resources.mjs"
++    "test:ui-resources": "node scripts/test-ui-resources.mjs",
++    "test:community": "node scripts/test-community.mjs",
++    "test:ui-community": "node scripts/test-ui-community.mjs"
+   },
+   "dependencies": {
+     "@capacitor/core": "^8.5.2",
+diff --git a/scripts/test-community.mjs b/scripts/test-community.mjs
+new file mode 100644
+index 0000000..c02adbb
+--- /dev/null
++++ b/scripts/test-community.mjs
+@@ -0,0 +1,70 @@
++import { test, after } from 'node:test'
++import assert from 'node:assert/strict'
++import { build } from 'esbuild'
++import { mkdtemp, rm } from 'node:fs/promises'
++import { join, resolve } from 'node:path'
++import { pathToFileURL } from 'node:url'
++const temp = await mkdtemp(join(resolve('node_modules'), '.community-test-'))
++const bundle = join(temp, 'community.mjs')
++await build({ entryPoints: ['src/plugins/community.ts'], outfile: bundle, bundle: true, platform: 'node', format: 'esm', packages: 'external', plugins: [{ name: 'stub-ui', setup(b) { b.onLoad({ filter: /\.vue$/ }, () => ({ contents: 'export default {}', loader: 'js' })) } }] })
++const { communityPlugin } = await import(pathToFileURL(bundle))
++after(() => rm(temp, { recursive: true, force: true }))
++const deferred = () => { let resolve, reject; const promise = new Promise((a,b) => { resolve=a; reject=b }); return {promise,resolve,reject} }
++const tick = () => new Promise(resolve => setImmediate(resolve))
++function fixture(overrides = {}) {
++  const events = new Map(), toasts = [], calls = []
++  const api = { baList: async typ => typ === 3 ? [{id:'1',name:'我的'}] : [], baInfo: async id => ({id,postNum:id}), baPosts: async () => [], baPostDetail: async id => ({post:{id,title:'全文',content:'正文'}}), baGroups: async () => [], baCreate: async () => 9, baEdit: async (...v) => calls.push(['edit',...v]), baManage: async (...v) => calls.push(['manage',...v]), followBoard: async () => {}, unfollowBoard: async () => {}, ...overrides }
++  const ctx = { api, ui: { toast: (...args) => toasts.push(args) }, console: { addEntry() {} }, set: (key,value) => ctx[key]=value, on: (key,fn) => events.set(key,fn), setTimeout() {} }
++  communityPlugin.apply(ctx)
++  return { cm:ctx.community, s:ctx.community.state, api,toasts,calls,events }
++}
++await test('late categories cannot replace a newer tab or its loading state', async () => {
++  const a=deferred(), b=deferred(), f=fixture({baList:typ=>typ===2?a.promise:typ===4?b.promise:Promise.resolve([])})
++  const first=f.cm.load(2), next=f.cm.load(4)
++  b.resolve([{id:4}]); await next; a.resolve([{id:2}]); await first
++  assert.equal(f.s.listType,4); assert.deepEqual(f.s.list.map(x=>x.id),[4]); assert.equal(f.s.loading,false)
++})
++await test('switching boards invalidates stale info, posts and an open article detail',async()=>{
++  const a=deferred(), infoA=deferred(), detail=deferred(), f=fixture({baInfo:id=>id===1?infoA.promise:Promise.resolve({id}),baPosts:id=>id===1?a.promise:Promise.resolve([{id:22}]),baPostDetail:()=>detail.promise})
++  const first=f.cm.enter({id:1}); const oldDetail=f.cm.openPost({id:11}); const next=f.cm.enter({id:2}); await next
++  a.resolve([{id:11}]); infoA.resolve({id:1}); detail.resolve({title:'旧文章',content:'旧正文'}); await first; await oldDetail; await tick()
++  assert.equal(f.s.viewing.id,2); assert.equal(f.s.info.id,2); assert.deepEqual(f.s.posts.map(x=>x.id),[22]); assert.equal(f.s.postDetail,null)
++})
++await test('closing an article prevents a late detail from reopening it',async()=>{
++  const d=deferred(), f=fixture({baPostDetail:()=>d.promise}); await f.cm.enter({id:1}); const p=f.cm.openPost({id:11});f.cm.backToPosts();d.resolve({title:'迟到'});await p
++  assert.equal(f.s.postDetail,null);assert.equal(f.s.loadingDetail,false)
++})
++await test('failed next page retries the same page, deduplicates items and stops at the end',async()=>{
++  let fail=true;const pages=[],f=fixture({baPosts:async(_id,{page})=>{pages.push(page);if(page===1)return Array.from({length:30},(_,id)=>({id}));if(fail){fail=false;throw Error('断网')}return [{id:29},{id:30}]}})
++  await f.cm.enter({id:1});await f.cm.loadMorePosts();assert.equal(f.s.postPage,1);assert.match(f.s.postsError,/断网/)
++  await f.cm.loadMorePosts();assert.deepEqual(pages,[1,2,2]);assert.equal(f.s.posts.length,31);assert.equal(f.s.postPage,2);assert.equal(f.s.hasMorePosts,false);await f.cm.loadMorePosts();assert.equal(pages.length,3)
++})
++await test('group responses are scoped to their dialog and missing bind API cannot report success',async()=>{
++  const d=deferred(),f=fixture({baGroups:id=>id===1?d.promise:Promise.resolve([{groupId:2}])});await tick()
++  const old=f.cm.loadGroups({id:1});await f.cm.loadGroups({id:2});d.resolve([{groupId:1}]);await old
++  assert.equal(f.s.groups[0].groupId,2);await f.cm.loadGroups({id:1});assert.equal(await f.cm.bindGroup(1,'33'),false);assert.match(f.toasts.at(-1)[0],/不支持/)
++  f.cm.closeGroups();assert.equal(f.s.groupsOf,null)
++})
++await test('failed creation preserves avatar and validation prevents blank or oversized submissions',async()=>{
++  let calls=0;const f=fixture({baCreate:async()=>{calls++;throw Error('失败')}});f.s.newAvatar='keep.png'
++  assert.equal(await f.cm.createWithAvatar('  '),false);assert.equal(await f.cm.create('一'.repeat(11)),false);assert.equal(calls,0)
++  assert.equal(await f.cm.createWithAvatar('有效名称'),false);assert.equal(f.s.newAvatar,'keep.png');assert.equal(f.s.creating,false)
++})
++await test('only owned boards may be edited; successful edit updates selected board without changing category',async()=>{
++  const f=fixture();await tick();assert.equal(f.cm.owns(1),true);f.s.list=[{id:1,name:'旧名称'}];f.s.viewing={id:1,name:'旧名称'};f.s.listType=2
++  assert.equal(await f.cm.edit(2,{name:'无权限'}),false);assert.equal(await f.cm.manage(2,0,0),false);assert.equal(f.calls.length,0)
++  assert.equal(await f.cm.edit(1,{name:'新名称',avatar:'new.png'}),true);assert.equal(f.s.viewing.name,'新名称');assert.equal(f.s.list[0].avatar,'new.png');assert.equal(f.s.listType,2)
++})
++await test('avatar upload writes to the shared editing draft and rejects invalid file types',async()=>{
++  const f=fixture({uploadFile:async()=>({key:'avatar.png'})});f.s.editing={id:1,avatar:''}
++  const event={target:{files:[{type:'image/png',size:64}],value:'file'}};assert.equal(await f.cm.uploadAvatar(event,'edit'),true);assert.match(f.s.editing.avatar,/avatar.png$/);assert.equal(event.target.value,'')
++  event.target.files[0].type='text/plain';assert.equal(await f.cm.uploadAvatar(event,'new'),false)
++})
++await test('double follow clicks are serialized, failures keep existing follow state',async()=>{
++  let count=0;const d=deferred(),f=fixture({unfollowBoard:()=>{count++;return d.promise}});f.s.followReady=true;f.s.followIds=[1]
++  const first=f.cm.toggleFollow({id:1});assert.equal(await f.cm.toggleFollow({id:1}),false);assert.equal(count,1);d.reject(Error('断网'));await first
++  assert.equal(f.cm.isFollowed(1),true);assert.deepEqual(f.s.following,[])
++})
++await test('logout invalidates pending read requests and clears private board data',async()=>{
++ const d=deferred(),f=fixture({baPosts:()=>d.promise});const p=f.cm.enter({id:1});f.events.get('auth/logout')();d.resolve([{id:1}]);await p;assert.equal(f.s.viewing,null);assert.deepEqual(f.s.posts,[]);assert.deepEqual(f.s.myIds,[])
++})
+diff --git a/scripts/test-ui-community.mjs b/scripts/test-ui-community.mjs
+new file mode 100644
+index 0000000..7d50ae7
+--- /dev/null
++++ b/scripts/test-ui-community.mjs
+@@ -0,0 +1,103 @@
++import assert from 'node:assert/strict'
++import { createServer } from 'vite'
++import vue from '@vitejs/plugin-vue'
++const { chromium } = await import(process.env.PLAYWRIGHT_MODULE || 'playwright')
++const server = await createServer({root:process.cwd(),configFile:false,plugins:[vue()],server:{host:'127.0.0.1',port:0},logLevel:'error'})
++await server.listen()
++const browser=await chromium.launch({headless:true,executablePath:process.env.CHROMIUM_EXECUTABLE||undefined,args:['--no-sandbox','--disable-dev-shm-usage','--disable-gpu']})
++const page=await browser.newPage({viewport:{width:1280,height:850}}), errors=[]
++page.on('pageerror',e=>errors.push(e.message))
++try {
++  await page.goto(`http://127.0.0.1:${server.httpServer.address().port}/scripts/ui-fixture/community.html`)
++  await page.getByRole('button',{name:'进入板块 笔记 / 随感',exact:true}).waitFor()
++  assert.equal(await page.locator('.board-row').count(),5)
++  await page.waitForFunction(()=>document.querySelectorAll('.community-avatar img').length===4)
++  await page.getByRole('button',{name:'进入板块 笔记 / 随感',exact:true}).click()
++  await page.locator('.post-card').first().waitFor()
++  assert.equal(await page.locator('.post-card').count(),30)
++  assert.equal(await page.locator('.community-dialog[open]').count(),0)
++  if(process.env.COMMUNITY_QA_DIR) await page.screenshot({animations:'disabled',path:process.env.COMMUNITY_QA_DIR+'/community-dark.png'})
++  await page.evaluate(()=>document.documentElement.dataset.theme='light')
++  if(process.env.COMMUNITY_QA_DIR) await page.screenshot({animations:'disabled',path:process.env.COMMUNITY_QA_DIR+'/community-light.png'})
++  await page.getByRole('button',{name:'加载更多文章',exact:true}).click()
++  await page.waitForFunction(()=>document.querySelectorAll('.post-card').length===31)
++  await page.getByText('已显示全部文章',{exact:true}).waitFor()
++  await page.locator('.post-card').first().click()
++  await page.locator('.article-detail h1').filter({hasText:'物理光学：从观察开始'}).waitFor()
++  assert.equal(await page.evaluate(()=>window.evil),undefined)
++  assert.equal(await page.locator('.article-prose script, .article-prose [onerror]').count(),0)
++  await page.getByRole('button',{name:'文章列表',exact:true}).click()
++  assert.equal(await page.locator('.post-card').count(),31)
++  await page.getByRole('button',{name:'管理',exact:true}).click()
++  await page.getByRole('dialog',{name:'管理板块'}).waitFor()
++  await page.getByLabel('板块名称',{exact:true}).fill('新的笔记')
++  await page.locator('input[type=file]').setInputFiles({name:'avatar.png',mimeType:'image/png',buffer:Buffer.from('fake image')})
++  await page.waitForFunction(()=>window.__community.ctx.community.state.uploading===false)
++  await page.evaluate(()=>window.__community.fail.edit=true)
++  await page.getByRole('button',{name:'保存信息',exact:true}).click()
++  await page.waitForFunction(()=>window.__community.ctx.community.state.saving===false)
++  assert.equal(await page.getByLabel('板块名称',{exact:true}).inputValue(),'新的笔记')
++  assert.equal(await page.getByRole('dialog',{name:'管理板块'}).isVisible(),true)
++  await page.evaluate(()=>window.__community.fail.edit=false)
++  await page.getByRole('button',{name:'保存信息',exact:true}).click()
++  await page.getByRole('dialog').waitFor({state:'hidden'})
++  await page.locator('.reader-title h3').filter({hasText:'新的笔记'}).waitFor()
++  await page.getByRole('button',{name:'关联群聊',exact:true}).click()
++  await page.getByText('物理学习交流',{exact:true}).waitFor()
++  await page.getByLabel('绑定群聊',{exact:true}).fill('888')
++  await page.getByRole('button',{name:'绑定',exact:true}).click()
++  await page.waitForFunction(()=>window.__community.calls.some(x=>x[0]==='bind'&&x[2]==='888'))
++  await page.waitForFunction(()=>!window.__community.ctx.community.state.binding)
++  await page.keyboard.press('Escape');await page.getByRole('dialog').waitFor({state:'hidden'})
++  await page.getByRole('button',{name:'进入板块 物理研习室',exact:true}).click()
++  await page.locator('.post-card').first().waitFor()
++  assert.equal(await page.getByRole('button',{name:'管理',exact:true}).count(),0)
++  await page.getByRole('button',{name:'关联群聊',exact:true}).click()
++  assert.equal(await page.getByLabel('绑定群聊',{exact:true}).count(),0)
++  await page.keyboard.press('Escape')
++  await page.getByRole('button',{name:'热门',exact:true}).click()
++  await page.waitForFunction(()=>!window.__community.ctx.community.state.loading)
++  await page.getByLabel('筛选已加载板块').fill('９２５')
++  assert.equal(await page.locator('.board-row').count(),1)
++  await page.getByRole('button',{name:'清空板块搜索',exact:true}).click()
++  await page.getByRole('button',{name:'创建板块',exact:true}).click()
++  await page.getByRole('dialog',{name:'创建板块'}).waitFor()
++  await page.getByLabel('板块名称',{exact:true}).fill('保留草稿')
++  await page.evaluate(()=>window.__community.fail.create=true)
++  await page.getByRole('dialog').getByRole('button',{name:'创建板块',exact:true}).click()
++  await page.waitForFunction(()=>!window.__community.ctx.community.state.creating)
++  assert.equal(await page.getByLabel('板块名称',{exact:true}).inputValue(),'保留草稿')
++  await page.keyboard.press('Escape')
++  assert.equal(await page.getByRole('button',{name:'创建板块',exact:true}).evaluate(e=>e===document.activeElement),true)
++  // 短窗口、手机和应用侧栏挤压后的容器宽度都不能依赖整个窗口断点。
++  for(const theme of ['dark','light']) for(const width of [1280,980,740,600,390,320]) {
++    await page.setViewportSize({width,height:700});await page.evaluate(theme=>document.documentElement.dataset.theme=theme,theme)
++    await page.getByRole('button',{name:'进入板块 物理研习室',exact:true}).click()
++    await page.waitForFunction(()=>!window.__community.ctx.community.state.loadingPosts)
++    const measurement=await page.evaluate(()=>({doc:document.documentElement.scrollWidth,win:innerWidth,content:document.querySelector('.reader-title').getBoundingClientRect().width,reader:document.querySelector('.board-reader').getBoundingClientRect().width,library:getComputedStyle(document.querySelector('.board-library')).display}))
++    assert.ok(measurement.doc<=width,JSON.stringify({theme,width,measurement}));assert.ok(measurement.content>0)
++    if(width<=740)assert.equal(measurement.library,'none')
++    if(process.env.COMMUNITY_QA_DIR&&width===390&&theme==='dark')await page.screenshot({animations:'disabled',path:process.env.COMMUNITY_QA_DIR+'/community-mobile.png'})
++    if(width<=740)await page.getByRole('button',{name:'返回板块列表',exact:true}).click()
++    else await page.getByRole('button',{name:'关闭板块',exact:true}).click()
++    await page.getByRole('button',{name:'创建板块',exact:true}).click()
++    const box=await page.getByRole('dialog').boundingBox();assert.ok(box.x>=0&&box.x+box.width<=width+1)
++    await page.keyboard.press('Escape')
++  }
++  await page.setViewportSize({width:1100,height:780})
++  for (const containerWidth of [640,264]) {
++  await page.evaluate(w=>document.querySelector('#app').style.width=w+'px',containerWidth)
++  await page.getByRole('button',{name:'进入板块 物理研习室',exact:true}).click()
++  assert.equal(await page.locator('.board-library').evaluate(e=>getComputedStyle(e).display),'none')
++  assert.ok(await page.locator('.community-toolbar').evaluate(e=>e.scrollWidth<=e.clientWidth), 'toolbar must fit the actual page area')
++  await page.getByRole('button',{name:'返回板块列表',exact:true}).click()
++  }
++  await page.evaluate(()=>window.__community.fail.posts=true)
++  await page.getByRole('button',{name:'进入板块 可恶。',exact:true}).click()
++  await page.getByRole('alert').filter({hasText:'网络连接中断'}).waitFor()
++  await page.evaluate(()=>window.__community.fail.posts=false)
++  await page.getByRole('button',{name:'重试文章列表',exact:true}).click()
++  await page.getByText('这个板块还没有文章',{exact:true}).waitFor()
++  assert.deepEqual(errors,[])
++  console.log('PASS: real page/service; 30+1 pagination, sanitized article/back navigation, upload/edit failure recovery, create draft recovery, own-only management/bind, NFKC filter, native dialog Escape/focus return, dark/light at 1280/980/740/600/390/320, constrained container, and error/retry/empty states')
++} finally {await browser.close();await server.close()}
+diff --git a/scripts/ui-fixture/community.html b/scripts/ui-fixture/community.html
+new file mode 100644
+index 0000000..15c29b2
+--- /dev/null
++++ b/scripts/ui-fixture/community.html
+@@ -0,0 +1 @@
++<!doctype html><html lang="zh-CN" data-theme="dark"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>板块界面验证</title></head><body><div id="app"></div><script type="module" src="./community.ts"></script></body></html>
+diff --git a/scripts/ui-fixture/community.ts b/scripts/ui-fixture/community.ts
+new file mode 100644
+index 0000000..bdd63e7
+--- /dev/null
++++ b/scripts/ui-fixture/community.ts
+@@ -0,0 +1,41 @@
++// 真实板块服务和页面，使用虚拟数据；不读取账号，不访问外部服务。
++import { createApp, reactive } from 'vue'
++import CommunityPage from '../../src/console/pages/CommunityPage.vue'
++import { communityPlugin } from '../../src/plugins/community'
++import '../../src/styles.css'
++import '../../src/styles-m3.css'
++const calls: any[] = [], errors: string[] = [], timers: any[] = []
++const picture = 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64"><rect width="64" height="64" rx="16" fill="#41405f"/><path d="M16 20h32v26H16z" fill="none" stroke="#c9c2ff" stroke-width="3"/><path d="M22 28h20M22 35h14" stroke="#c9c2ff" stroke-width="2"/></svg>')
++const boards = [
++  { id: 925, name: '笔记 / 随感', avatar: picture, desc: '记录学习路上的一点想法' },
++  { id: 1009, name: '可恶。', avatar: '/scripts/ui-fixture/missing.png' },
++  { id: 1218, name: '物理研习室', avatar: picture },
++  { id: 2034, name: '日常碎片', avatar: picture },
++  { id: 3201, name: '开源与创造', avatar: picture },
++]
++const makePosts = (id: number) => Array.from({length:id===925?30:id===1009?0:4},(_,i)=>({id:id*100+i,title:['物理光学','物理电学','物理声学','给未来的自己'][i%4],senderName:'TR',createTime:Date.now()-i*3600000,likeNum:i*3,commentNum:i,content:i%2?'从一个小问题出发，把看似复杂的现象重新理解一遍。':'学习不止于记住结论，也在于发现问题、记录想法，与同好分享。'}))
++const fail = reactive({ create: false, edit: false, posts: false, groups: false, detail: false })
++const delay = (ms: number) => new Promise(resolve => setTimeout(resolve,ms))
++const ctx: any = {
++  api: {
++    baList: async (type: number, opts: any) => { calls.push(['list',type,opts]); await delay(25); return type===3?boards.filter(b=>b.id===925):type===1?[boards[2]]:boards.map(b=>({...b})) },
++    baInfo: async (id: number) => ({id,postNum:id===925?32:id===1009?0:4,groupNum:2,visibleRange:0,publishAuthority:1}),
++    baPosts: async (id: number, opts: any) => { calls.push(['posts',id,opts]); await delay(40);if(fail.posts)throw Error('网络连接中断');return opts.page===1?makePosts(id):[{id:id*100+30,title:'最后一篇文章',senderName:'TR',content:'最后一篇'}] },
++    baPostDetail: async (id: number) => { await delay(30);if(fail.detail)throw Error('详情接口失败');return {post:{id,title:'物理光学：从观察开始',content:'## 从一个问题开始\n\n光为什么会折射？从观察到推理，我们可以一步一步理解它。\n\n> 记录过程，也记录每次灵光一现。\n\n```js\nconst curious = true\n```\n\n<script>window.evil=true</script><img src=x onerror="window.evil=true">'}} },
++    baGroups: async () => { await delay(20);if(fail.groups)throw Error('群聊接口失败');return [{groupId:'g1',name:'物理学习交流',avatar:picture,introduction:'一起记录和讨论'},{groupId:'g2',name:'学习打卡',avatar:''}] },
++    baCreate: async (...args: any[]) => {calls.push(['create',...args]);await delay(70);if(fail.create)throw Error('创建失败');return 6000},
++    baEdit: async (...args: any[]) => {calls.push(['edit',...args]);await delay(50);if(fail.edit)throw Error('保存失败')},
++    baManage: async (...args: any[]) => {calls.push(['manage',...args]);await delay(50)},
++    followBoard: async (...args: any[]) => {calls.push(['follow',...args]);await delay(80)}, unfollowBoard: async (...args: any[]) => {calls.push(['unfollow',...args]);await delay(80)},
++    bindBaGroup: async (...args: any[]) => {calls.push(['bind',...args]);await delay(50)},
++    uploadFile: async () => {await delay(30);return {url:picture}},
++  },
++  ui: { toast: (message: string) => errors.push(message) },
++  console: { state: reactive({ slots:[],menus:{} }), addEntry() {} },
++  on() {}, setTimeout(fn: any,ms: number) {const id=setTimeout(fn,ms);timers.push(id);return id}, set(key: string,value: any) {ctx[key]=value},
++}
++communityPlugin.apply(ctx)
++const app=createApp(CommunityPage).provide('ctx',ctx)
++app.mount('#app')
++;(window as any).__community={ctx,calls,fail,errors}
++window.addEventListener('beforeunload',()=>{app.unmount();for(const id of timers)clearTimeout(id)})
+diff --git a/src-tauri/Cargo.lock b/src-tauri/Cargo.lock
+index 38065a8..adc920d 100644
+--- a/src-tauri/Cargo.lock
++++ b/src-tauri/Cargo.lock
+@@ -4833,7 +4833,7 @@ dependencies = [
+ 
+ [[package]]
+ name = "yunhulaoda-desktop"
+-version = "1.0.18"
++version = "1.0.19"
+ dependencies = [
+  "base64 0.22.1",
+  "serde",
+diff --git a/src-tauri/Cargo.toml b/src-tauri/Cargo.toml
+index fc0f30b..97f1630 100644
+--- a/src-tauri/Cargo.toml
++++ b/src-tauri/Cargo.toml
+@@ -1,6 +1,6 @@
+ [package]
+ name = "yunhulaoda-desktop"
+-version = "1.0.18"
++version = "1.0.19"
+ description = "云湖牢大版桌面客户端（Tauri 壳 + Node sidecar 服务）"
+ authors = ["yibanm"]
+ edition = "2021"
+diff --git a/src-tauri/tauri.conf.json b/src-tauri/tauri.conf.json
+index 7be82d7..d161174 100644
+--- a/src-tauri/tauri.conf.json
++++ b/src-tauri/tauri.conf.json
+@@ -1,7 +1,7 @@
+ {
+   "$schema": "https://schema.tauri.app/config/2",
+   "productName": "YunhuLaoda",
+-  "version": "1.0.18",
++  "version": "1.0.19",
+   "identifier": "com.richkobe.yunhulaoda",
+   "build": {
+     "beforeBuildCommand": "",
+diff --git a/src/console/components/CommunityAvatar.vue b/src/console/components/CommunityAvatar.vue
+new file mode 100644
+index 0000000..cc6cbaf
+--- /dev/null
++++ b/src/console/components/CommunityAvatar.vue
+@@ -0,0 +1,18 @@
++<script setup lang="ts">
++import { ref, watch } from 'vue'
++import { resUrl } from '../../core/res'
++import { vResourceMedia } from '../../core/resource-media'
++const props = defineProps<{ name?: string; src?: string }>()
++const failed = ref(false)
++watch(() => props.src, () => { failed.value = false })
++</script>
++<template>
++  <span class="community-avatar" aria-hidden="true">
++    <img v-if="src && !failed" v-resource-media="{ src: resUrl(src), animated: true, width: 48, height: 48 }" alt="" decoding="async" @error="failed = true" />
++    <span v-else>{{ [...(name || '板')][0] }}</span>
++  </span>
++</template>
++<style scoped>
++.community-avatar { width: 44px; height: 44px; flex: 0 0 auto; border-radius: 14px; display: grid; place-items: center; overflow: hidden; background: var(--acc-soft); color: var(--fg); font-size: 19px; font-weight: 600; }
++.community-avatar img { width: 100%; height: 100%; object-fit: cover; }
++</style>
+diff --git a/src/console/components/Icon.vue b/src/console/components/Icon.vue
+index d3302cb..2086b81 100644
+--- a/src/console/components/Icon.vue
++++ b/src/console/components/Icon.vue
+@@ -21,6 +21,8 @@ const PATHS = {
+   bolt: 'M13 2L4 14h6l-1 8 9-12h-6z',
+   logout: 'M16 17l5-5-5-5M21 12H9M12 19H6a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h6',
+   menu: 'M3 6h18M3 12h18M3 18h18',
++  chevronLeft: 'M15 18l-6-6 6-6',
++  chevronRight: 'M9 6l6 6-6 6',
+   refresh: 'M21 12a9 9 0 1 1-3-6.7L21 8M21 3v5h-5',
+   send: 'M22 2 11 13M22 2l-7 20-4-9-9-4z',
+   search: 'M11 19a8 8 0 1 0 0-16 8 8 0 0 0 0 16zM21 21l-4.3-4.3',
+diff --git a/src/console/pages/CommunityPage.vue b/src/console/pages/CommunityPage.vue
+index 150b20f..b55823b 100644
+--- a/src/console/pages/CommunityPage.vue
++++ b/src/console/pages/CommunityPage.vue
+@@ -1,231 +1,323 @@
+ <script setup lang="ts">
+-/**
+- * 板块页（community 插件注册）
+- * 「板块」= 云湖的文章分区（/v1/community/ba/*）
+- *   列表（关注/热门/我的/全部）、创建、编辑、管理（可见范围/发帖权限）、看绑定的群聊
+- */
+-import { inject, ref, onMounted } from 'vue'
++import { computed, inject, ref, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'
+ import KLayout from '../components/KLayout.vue'
+-import KCard from '../components/KCard.vue'
+-import { resUrl } from '../../core/res'
+-import { fmtTime, fallbackAvatar } from '../../core/util'
++import Icon from '../components/Icon.vue'
++import CommunityAvatar from '../components/CommunityAvatar.vue'
++import { fmtTime } from '../../core/util'
+ import { renderMarkdown } from '../../core/render'
++import { fixResourceUrls } from '../../core/res'
+ 
+-const ctx = inject<any>('ctx')
+-const cm = ctx.community
+-const s = cm.state
+-
+-const tab = ref<'mine' | 'all' | 'hot' | 'follow'>('hot')
+-const newBa = ref({ name: '', avatar: '' })
+-/** 文章正文按 markdown 渲染 */
+-const md = (t: string) => renderMarkdown(t || '')
+-const editing = ref<any>(null)
+-
+-const TABS: Array<[string, number]> = [['我的', 3], ['全部', 4], ['热门', 2], ['关注', 1]]
+-/** 当前页签对应的列表类型（刷新按钮用，避免在「热门」页却刷新成「全部」） */
+-const TAB_TYPE: Record<'mine' | 'all' | 'hot' | 'follow', number> = { mine: 3, all: 4, hot: 2, follow: 1 }
+-
+-// 默认「热门」页（用户要求）：进页面即拉热门列表
+-onMounted(() => { cm.load(2); cm.loadFollows?.() })
+-
+-const isFollowed = (id: number) => !!cm.isFollowed?.(id)
+-async function toggleFollow(b: any) { await cm.toggleFollow?.(b) }
+-
+-async function switchTab(t: any) {
+-  tab.value = t[0] === '我的' ? 'mine' : t[0] === '全部' ? 'all' : t[0] === '热门' ? 'hot' : 'follow'
+-  const hit = TABS.find((x) => x[0] === t[0])
+-  await cm.load(hit ? hit[1] : 4)
++const ctx = inject<any>('ctx'), cm = ctx.community, s = cm.state
++const TABS = [{ key: 2, label: '热门' }, { key: 1, label: '关注' }, { key: 3, label: '我的' }, { key: 4, label: '全部' }]
++const search = ref(''), postSearch = ref(''), creating = ref(false), newName = ref('')
++const dialog = ref<HTMLDialogElement>(), articleBody = ref<HTMLElement>()
++const dialogType = computed(() => creating.value ? 'create' : s.editing ? 'edit' : s.groupsOf ? 'groups' : '')
++const dialogTitle = computed(() => ({ create: '创建板块', edit: '管理板块', groups: '关联群聊' }[dialogType.value] || ''))
++const busy = computed(() => s.creating || s.saving || s.managing || s.binding || s.uploading)
++const norm = (t: any) => String(t ?? '').normalize('NFKC').toLocaleLowerCase()
++const boards = computed(() => s.list.filter((b: any) => norm(`${b.name} ${b.id}`).includes(norm(search.value.trim()))))
++const posts = computed(() => s.posts.filter((p: any) => norm(`${p.title} ${p.senderName || p.senderId}`).includes(norm(postSearch.value.trim()))))
++const owns = (b: any) => cm.owns(b)
++const followed = (b: any) => cm.isFollowed(b.id)
++const followBusy = (b: any) => s.following.includes(Number(b.id))
++const articleHtml = computed(() => renderMarkdown(String(s.postDetail?.content || '')))
++const canBind = typeof ctx.api?.bindBaGroup === 'function'
++const permission = ref('')
++const permissionChoices = [
++  { value: '0:0', label: '公开 · 所有人可发文章' },
++  { value: '0:1', label: '公开 · 仅我可发文章' },
++  { value: '1:2', label: '仅自己可见' },
++]
++const preview = (p: any) => String(p.content || '').replace(/<[^>]*>/g, ' ').replace(/!\[[^\]]*\]\([^)]*\)/g, '[图片]').replace(/[#*`>]/g, '').slice(0, 100)
++function openCreate() { s.newAvatar = ''; newName.value = ''; creating.value = true }
++function editBoard(b: any) {
++  if (!owns(b)) return
++  s.editing = { ...b }
++  const info = Number(s.info?.id) === Number(b.id) ? s.info : b
++  permission.value = info.visibleRange != null && info.publishAuthority != null ? `${info.visibleRange}:${info.publishAuthority}` : ''
++}
++function closeDialog() {
++  if (busy.value) return
++  creating.value = false; s.editing = null; cm.closeGroups(); s.newAvatar = ''
+ }
+-async function create() {
+-  if (!newBa.value.name.trim()) return ctx.ui.toast('板块名称不能为空', 'warn')
+-  if (newBa.value.name.trim().length > 10) return ctx.ui.toast('板块名称最多 10 个字', 'warn')
+-  await cm.create(newBa.value.name.trim(), newBa.value.avatar)
+-  newBa.value = { name: '', avatar: '' }
++async function submitCreate() { if (await cm.createWithAvatar(newName.value)) { creating.value = false; newName.value = ''; search.value = '' } }
++async function saveEdit() {
++  const b = s.editing
++  if (await cm.edit(b.id, { name: b.name, avatar: b.avatar })) s.editing = null
+ }
++async function savePermissions() {
++  if (!permission.value || !s.editing) return
++  const [visible, publish] = permission.value.split(':').map(Number)
++  await cm.manage(s.editing.id, visible, publish)
++}
++function selectTab(type: number) { search.value = ''; void cm.load(type) }
++function selectBoard(b: any) { postSearch.value = ''; void cm.enter(b) }
++function resetSearch() { search.value = '' }
++function refresh() { void cm.load(s.listType); void cm.loadFollows() }
++watch(dialogType, async type => {
++  await nextTick()
++  if (type && !dialog.value?.open) dialog.value?.showModal()
++  else if (!type && dialog.value?.open) dialog.value.close()
++})
++watch(() => s.viewing?.id, () => { postSearch.value = '' })
++watch(articleHtml, async () => { await nextTick(); fixResourceUrls(articleBody.value) })
++onMounted(() => { void cm.load(s.listType || 2); void cm.mine(); void cm.loadFollows() })
++onBeforeUnmount(() => { creating.value = false; s.editing = null; cm.closeGroups() })
+ </script>
+ 
+ <template>
+-  <KLayout ns="community" title="板块" desc="云湖文章分区：创建 / 管理 / 绑定群聊">
++  <KLayout class="community-page" ns="community" title="板块" desc="发现值得读的内容，找到同好。">
+     <template #actions>
+-      <button v-for="t in TABS" :key="t[0]" class="ghost small"
+-              :class="{ on: (tab === 'mine' && t[0] === '我的') || (tab === 'all' && t[0] === '全部') || (tab === 'hot' && t[0] === '热门') || (tab === 'follow' && t[0] === '关注') }"
+-              @click="switchTab(t)">{{ t[0] }} {{ cm.countOf(t[1]) }}</button>
+-      <button class="ghost small" @click="cm.load(TAB_TYPE[tab])">刷新</button>
++      <button class="create-button" @click="openCreate"><Icon name="plus" :size="16" />创建板块</button>
+     </template>
+ 
+-    <KCard title="创建板块">
+-      <div class="row">
+-        <input v-model="newBa.name" placeholder="板块名称（最多 10 字）" maxlength="10" />
+-        <span class="acts-inline">
+-        <label class="ghost small file">
+-          <input type="file" accept="image/*" hidden @change="(e: any) => cm.uploadAvatar(e, 'new')" />上传头像
+-        </label>
+-        <img v-if="s.newAvatar" :src="s.newAvatar" class="pre" alt="" />
+-        <span v-else-if="newBa.avatar" class="dim small">已填 URL</span>
+-        <button class="small" @click="cm.createWithAvatar(newBa.name.trim())">创建</button>
+-        </span>
++    <div class="community-toolbar">
++      <nav class="community-tabs" aria-label="板块分类">
++        <button v-for="t in TABS" :key="t.key" :aria-current="s.listType === t.key ? 'page' : undefined" :class="{ active: s.listType === t.key }" @click="selectTab(t.key)">{{ t.label }}</button>
++      </nav>
++      <div class="toolbar-search">
++        <label class="search-box"><Icon name="search" :size="17" /><input v-model="search" aria-label="筛选已加载板块" placeholder="搜索名称或 ID" /><button v-if="search" class="icon-button" aria-label="清空板块搜索" @click="resetSearch"><Icon name="close" :size="14" /></button></label>
++        <button class="icon-button refresh-button" :disabled="s.loading" aria-label="刷新板块" title="刷新板块" @click="refresh"><Icon name="refresh" :size="17" /></button>
+       </div>
+-      <p class="dim small">名称最多 10 字；头像可以直接上传图片（不填也行）。</p>
+-    </KCard>
++    </div>
+ 
+-    <KCard class="mt" :pad="false">
+-      <div class="list">
+-        <div class="item" v-for="b in s.list" :key="b.id">
+-          <!-- 头像统一走 resUrl 代理（防盗链），空/加载失败兜底首字母块（fallbackAvatar） -->
+-          <img :src="b.avatar ? resUrl(b.avatar) : fallbackAvatar(b.name)" alt=""
+-               @error="(e: any) => (e.target.src = fallbackAvatar(b.name))" />
+-          <div class="imain">
+-            <div class="iname">
+-              {{ b.name }}
+-              <em v-if="s.myIds.includes(b.id)">我创建的</em>
+-            </div>
+-            <div class="dim small">
+-              ID {{ b.id }}
+-              <span v-if="b.createTime"> · 建 {{ fmtTime(b.createTime) }}</span>
+-              <span v-if="b.lastActive"> · 活跃 {{ fmtTime(b.lastActive) }}</span>
+-            </div>
+-          </div>
+-          <!-- 手机上一行放不下：这组按钮单独一个容器，横向可滑，不再被压扁 -->
+-          <div class="acts">
+-            <button class="small" @click="cm.enter(b)">进入板块</button>
+-            <button class="ghost small" :class="{ on: isFollowed(b.id) }" @click="toggleFollow(b)">
+-              {{ isFollowed(b.id) ? '已关注' : '关注' }}
++    <div class="community-workspace" :class="{ 'has-selection': s.viewing }">
++      <aside class="board-library" aria-label="板块列表" :aria-busy="s.loading">
++        <div class="section-label"><span>{{ TABS.find(t => t.key === s.listType)?.label }}板块</span><span>{{ s.list.length }} 个已加载</span></div>
++        <div class="board-list">
++          <p v-if="search" class="search-note">仅筛选已加载的板块</p>
++          <div v-if="s.loading && !s.list.length" class="empty-state" role="status"><Icon name="layers" :size="28" /><b>正在寻找好内容</b><span>板块加载中…</span></div>
++          <div v-for="b in boards" :key="b.id" class="board-row" :class="{ selected: Number(s.viewing?.id) === Number(b.id) }">
++            <button class="board-open" :aria-label="`进入板块 ${b.name}`" :aria-pressed="Number(s.viewing?.id) === Number(b.id)" @click="selectBoard(b)">
++              <CommunityAvatar :src="b.avatar" :name="b.name" />
++              <span class="board-copy"><span class="board-name">{{ b.name }}<em v-if="owns(b)">我创建的</em></span><span class="board-id">ID {{ b.id }}<span v-if="b.lastActive"> · {{ fmtTime(b.lastActive) }} 活跃</span></span></span>
+             </button>
+-            <button class="ghost small" @click="cm.loadGroups(b)">绑定群聊</button>
+-            <button class="ghost small" @click="editing = { ...b }">编辑</button>
+-            <button class="ghost small" @click="cm.manage(b.id, 0, 0)">设为公开</button>
++            <button class="follow-quick icon-button" :class="{ followed: followed(b) }" :aria-label="`${followed(b) ? '取消关注' : '关注'} ${b.name}`" :aria-pressed="followed(b)" :disabled="followBusy(b)" :title="followed(b) ? '取消关注' : '关注板块'" @click="cm.toggleFollow(b)"><Icon :name="followed(b) ? 'check' : 'plus'" :size="16" /></button>
+           </div>
++          <div v-if="s.listError" class="error-state" role="alert"><b>板块加载失败</b><p>{{ s.listError }}</p><button class="secondary" :disabled="s.loading" @click="cm.load(s.listType, s.list.length > 0)">重试</button></div>
++          <div v-else-if="!boards.length && !s.loading" class="empty-state"><Icon name="layers" :size="28" /><b>{{ search ? '没有匹配的板块' : '这里还没有板块' }}</b><span>{{ search ? '换一个名称或 ID，或继续加载' : '试试热门分类，或创建自己的板块' }}</span><button v-if="search" class="secondary" @click="resetSearch">清除筛选</button></div>
++          <button v-if="s.hasMore" class="load-more secondary" :disabled="s.loading" @click="cm.load(s.listType, true)">{{ s.loading ? '加载中…' : '加载更多板块' }}</button>
+         </div>
+-        <p v-if="!s.list.length" class="dim center">{{ s.loading ? '加载中…' : '这个分类下还没有板块' }}</p>
+-      </div>
+-    </KCard>
++      </aside>
+ 
+-    <!-- 编辑 + 管理 -->
+-    <div v-if="editing" class="mask" @click.self="editing = null">
+-      <KCard title="编辑板块" style="width: 460px; max-width: 92vw">
+-        <div class="col">
+-          <label>名称<input v-model="editing.name" maxlength="10" /></label>
+-          <label>头像
+-            <div class="row">
+-              <input v-model="editing.avatar" placeholder="URL" />
+-              <label class="ghost small file">
+-                <input type="file" accept="image/*" hidden @change="(e: any) => cm.uploadAvatar(e, 'edit')" />上传
+-              </label>
+-              <img v-if="editing.avatar" :src="editing.avatar" class="pre" alt="" />
+-            </div>
+-          </label>
+-          <div class="row">
+-            <button class="small" @click="cm.edit(editing.id, { name: editing.name, avatar: editing.avatar }); editing = null">保存</button>
+-            <button class="ghost small" @click="editing = null">取消</button>
+-          </div>
+-          <div class="sep"></div>
+-          <div class="dim small">可见范围 / 发帖权限：</div>
+-          <div class="row">
+-            <div class="acts">
+-              <button class="ghost small" @click="cm.manage(editing.id, 0, 0)">公开·所有人可发</button>
+-              <button class="ghost small" @click="cm.manage(editing.id, 0, 1)">公开·仅我可发</button>
+-              <button class="ghost small" @click="cm.manage(editing.id, 1, 2)">仅自己可见</button>
+-            </div>
+-          </div>
++      <section class="board-reader" aria-label="板块内容">
++        <div v-if="!s.viewing" class="reader-welcome">
++          <span class="welcome-icon"><Icon name="layers" :size="32" /></span>
++          <span class="eyebrow">COMMUNITY</span><h3>从一个兴趣开始</h3><p>选择左侧板块，阅读文章、关注更新，<br />或看看有哪些同好群聊。</p><button class="secondary" @click="openCreate"><Icon name="plus" :size="16" />创建我的板块</button>
+         </div>
+-      </KCard>
+-    </div>
+-
+-    <!-- 进入板块：文章列表 + 详情 -->
+-    <div v-if="s.viewing" class="mask" @click.self="cm.exitBoard()">
+-      <div class="board">
+-        <header>
+-          <img v-if="s.viewing.avatar" :src="s.viewing.avatar" class="bav" alt="" />
+-          <div>
+-            <b>{{ s.viewing.name }}</b>
+-            <div class="dim small">
+-              板块 {{ s.viewing.id }}
+-              <span v-if="s.info"> · {{ s.info.postNum ?? '?' }} 篇文章 · {{ s.info.groupNum ?? '?' }} 个群</span>
+-            </div>
++        <template v-else>
++          <header class="reader-header">
++            <button class="mobile-back icon-button" aria-label="返回板块列表" @click="cm.exitBoard()"><Icon name="chevronLeft" :size="20" /></button>
++            <CommunityAvatar :src="s.viewing.avatar" :name="s.viewing.name" />
++            <div class="reader-title"><span class="eyebrow">板块 / {{ s.viewing.id }}</span><h3>{{ s.viewing.name }}</h3><div class="reader-stats"><span>{{ s.info?.postNum ?? '—' }} 篇文章</span><span>{{ s.info?.groupNum ?? '—' }} 个群聊</span></div></div>
++            <button class="icon-button reader-close" aria-label="关闭板块" title="关闭板块" @click="cm.exitBoard()"><Icon name="close" :size="18" /></button>
++          </header>
++          <div class="reader-actions">
++            <button class="follow-button" :class="{ 'secondary followed': followed(s.viewing) }" :disabled="followBusy(s.viewing)" :aria-pressed="followed(s.viewing)" @click="cm.toggleFollow(s.viewing)"><Icon :name="followed(s.viewing) ? 'check' : 'plus'" :size="15" />{{ followBusy(s.viewing) ? '处理中…' : followed(s.viewing) ? '已关注' : '关注板块' }}</button>
++            <button class="secondary" @click="cm.loadGroups(s.viewing)"><Icon name="contacts" :size="15" />关联群聊</button>
++            <button v-if="owns(s.viewing)" class="secondary" @click="editBoard(s.viewing)"><Icon name="sliders" :size="15" />管理</button>
++            <button class="icon-button reader-refresh" :disabled="s.loadingPosts || s.loadingDetail" aria-label="刷新文章" title="刷新文章" @click="s.postDetail ? cm.openPost(s.postDetail) : cm.enter(s.viewing)"><Icon name="refresh" :size="16" /></button>
+           </div>
+-          <span class="grow"></span>
+-          <button class="ghost small" @click="cm.enter(s.viewing)">刷新</button>
+-          <button class="bx" @click="cm.exitBoard()">×</button>
+-        </header>
+-        <div class="bbody">
+-          <div v-if="s.postDetail" class="post-detail">
+-            <button class="ghost small" @click="s.postDetail = null">← 返回列表</button>
+-            <h3>{{ s.postDetail.title || (s.postDetail.post && s.postDetail.post.title) || '无标题' }}</h3>
+-            <div class="pd-meta dim small">
+-              {{ s.postDetail.senderName || '' }} · 赞 {{ s.postDetail.likeNum ?? 0 }} · 评论 {{ s.postDetail.commentNum ?? 0 }}
+-            </div>
+-            <div class="pd-body" v-html="md(s.postDetail.content || (s.postDetail.post && s.postDetail.post.content) || '')"></div>
++          <div class="reader-scroll">
++            <template v-if="s.postDetail">
++              <div class="article-navigation"><button class="text-button" @click="cm.backToPosts()"><Icon name="chevronLeft" :size="16" />文章列表</button><span>文章详情</span></div>
++              <article class="article-detail">
++                <h1>{{ s.postDetail.title || '无标题文章' }}</h1>
++                <div class="post-meta"><span>{{ s.postDetail.senderName || s.postDetail.senderId || '匿名作者' }}</span><time v-if="s.postDetail.createTime">{{ fmtTime(s.postDetail.createTime) }}</time></div>
++                <p v-if="s.loadingDetail" class="loading-note" role="status">正在加载完整文章…</p>
++                <div v-if="s.detailError" class="error-state" role="alert"><p>{{ s.detailError }}</p><button class="secondary" @click="cm.openPost(s.postDetail)">重试文章</button></div>
++                <div ref="articleBody" class="article-prose" v-html="articleHtml"></div>
++                <div class="article-footer">{{ s.postDetail.likeNum ?? 0 }} 赞<span>·</span>{{ s.postDetail.commentNum ?? 0 }} 评论</div>
++              </article>
++            </template>
++            <template v-else>
++              <div class="posts-heading"><h4>文章<span>{{ s.posts.length }}</span></h4><label v-if="s.posts.length || postSearch" class="search-box post-search"><Icon name="search" :size="15" /><input v-model="postSearch" placeholder="筛选已加载文章" aria-label="筛选已加载文章" /></label></div>
++              <div v-if="s.loadingPosts && !s.posts.length" class="empty-state" role="status"><Icon name="page" :size="28" /><b>文章加载中…</b></div>
++              <button v-for="p in posts" :key="p.id" class="post-card" @click="cm.openPost(p)">
++                <span class="post-meta"><span>{{ p.senderName || p.senderId || '匿名作者' }}</span><time v-if="p.createTime">{{ fmtTime(p.createTime) }}</time></span>
++                <strong>{{ p.title || '无标题文章' }}</strong><span v-if="p.content" class="post-excerpt">{{ preview(p) }}</span><span class="post-footer"><span>{{ p.likeNum ?? 0 }} 赞<span class="meta-dot">·</span>{{ p.commentNum ?? 0 }} 评论</span><span class="read-link">阅读全文 <Icon name="chevronRight" :size="14" /></span></span>
++              </button>
++              <div v-if="s.postsError" class="error-state" role="alert"><b>文章加载失败</b><p>{{ s.postsError }}</p><button class="secondary" :disabled="s.loadingPosts" @click="s.posts.length ? cm.loadMorePosts() : cm.enter(s.viewing)">重试文章列表</button></div>
++              <div v-else-if="!posts.length && !s.loadingPosts" class="empty-state"><Icon name="page" :size="28" /><b>{{ postSearch ? '没有匹配的文章' : '这个板块还没有文章' }}</b><span>{{ postSearch ? '试试其他标题或作者名' : '关注板块，之后再来看看吧' }}</span></div>
++              <button v-if="s.hasMorePosts" class="load-more secondary" :disabled="s.loadingPosts" @click="cm.loadMorePosts()">{{ s.loadingPosts ? '加载中…' : '加载更多文章' }}</button>
++              <p v-else-if="s.posts.length && !s.loadingPosts && !s.postsError" class="end-note">已显示全部文章</p>
++            </template>
+           </div>
+-          <template v-else>
+-            <div class="post" v-for="p in s.posts" :key="p.id" @click="cm.openPost(p)">
+-              <b>{{ p.title || '(无标题)' }}</b>
+-              <div class="dim small">
+-                {{ p.senderName || p.senderId }} · {{ fmtTime(p.createTime) }} · 赞 {{ p.likeNum }} · 评论 {{ p.commentNum }}
+-              </div>
+-            </div>
+-            <div v-if="s.posts.length" class="row" style="justify-content:center">
+-          <button class="ghost small" :disabled="s.loadingPosts" @click="cm.loadMorePosts()">加载更多文章</button>
+-        </div>
+-        <p v-if="!s.posts.length" class="dim center">{{ s.loadingPosts ? '加载中…' : '这个板块还没有文章' }}</p>
+-          </template>
+-        </div>
+-      </div>
++        </template>
++      </section>
+     </div>
+ 
+-    <!-- 绑定群聊 -->
+-    <div v-if="s.groupsOf" class="mask" @click.self="s.groupsOf = null">
+-      <KCard :title="`绑定的群聊 · ${s.groupsOf.name}`" style="width: 520px; max-width: 92vw">
+-        <div class="list" style="max-height: 46vh">
+-          <div class="item" v-for="g in s.groups" :key="g.groupId">
+-            <div class="imain">
+-              <div class="iname">{{ g.name }}</div>
+-              <div class="dim small">ID {{ g.groupId }} · {{ g.introduction || '无简介' }}</div>
+-            </div>
++    <Teleport to="body">
++      <dialog ref="dialog" class="community-dialog" :aria-label="dialogTitle" @cancel.prevent="closeDialog" @click="e => { if (e.target === dialog) closeDialog() }">
++        <template v-if="dialogType">
++          <header class="dialog-header"><div><span class="eyebrow">{{ dialogType === 'groups' ? s.groupsOf?.name : 'COMMUNITY' }}</span><h3>{{ dialogTitle }}</h3></div><button class="icon-button" aria-label="关闭对话框" :disabled="busy" @click="closeDialog"><Icon name="close" :size="20" /></button></header>
++          <form v-if="creating" class="dialog-content" @submit.prevent="submitCreate">
++            <p class="dialog-hint">一个名字，一群同好。为你的板块选个名字吧。</p>
++            <div class="avatar-field"><CommunityAvatar :name="newName" :src="s.newAvatar" /><label class="secondary upload-label"><Icon name="image" :size="16" />{{ s.uploading ? '上传中…' : '上传头像' }}<input type="file" accept="image/*" :disabled="busy" hidden @change="cm.uploadAvatar($event, 'new')" /></label><button v-if="s.newAvatar" type="button" class="text-button" :disabled="busy" @click="s.newAvatar = ''">移除</button></div>
++            <label class="field-label">板块名称<input v-model="newName" autofocus maxlength="10" placeholder="例如：物理研习室" :disabled="busy" /></label><span class="field-help">{{ [...newName].length }} / 10 字 · 头像可选，图片不超过 10MB</span>
++            <footer class="dialog-footer"><button type="button" class="secondary" :disabled="busy" @click="closeDialog">取消</button><button type="submit" :disabled="busy || !newName.trim()">{{ s.creating ? '创建中…' : '创建板块' }}</button></footer>
++          </form>
++          <div v-else-if="s.editing" class="dialog-content">
++            <form @submit.prevent="saveEdit">
++              <div class="avatar-field"><CommunityAvatar :src="s.editing.avatar" :name="s.editing.name" /><label class="secondary upload-label"><Icon name="image" :size="16" />{{ s.uploading ? '上传中…' : '更换头像' }}<input type="file" accept="image/*" :disabled="busy" hidden @change="cm.uploadAvatar($event, 'edit')" /></label></div>
++              <label class="field-label">板块名称<input v-model="s.editing.name" maxlength="10" :disabled="busy" /></label>
++              <label class="field-label">头像地址<input v-model="s.editing.avatar" placeholder="可选，也可以直接上传图片" :disabled="busy" /></label>
++              <div class="form-actions"><button type="submit" :disabled="busy || !s.editing.name.trim()">{{ s.saving ? '保存中…' : '保存信息' }}</button></div>
++            </form>
++            <section class="permission-section"><h4><Icon name="lock" :size="16" />访问与发帖权限</h4><p class="dialog-hint">单独保存权限。未获取到当前值时，请先选择。</p><label class="field-label">权限方案<select v-model="permission" :disabled="busy"><option disabled value="">选择权限方案</option><option v-for="p in permissionChoices" :key="p.value" :value="p.value">{{ p.label }}</option></select></label><button class="secondary" :disabled="busy || !permission" @click="savePermissions">{{ s.managing ? '更新中…' : '更新权限' }}</button></section>
+           </div>
+-        </div>
+-        <p v-if="!s.groups.length" class="dim center">这个板块还没绑定群聊</p>
+-        <div class="row mt">
+-          <input v-model="s.bindGroupId" placeholder="要绑定的群 ID" />
+-          <button class="small" @click="cm.bindGroup(s.groupsOf.id, s.bindGroupId)">绑定</button>
+-        </div>
+-      </KCard>
+-    </div>
++          <div v-else-if="s.groupsOf" class="dialog-content">
++            <p class="dialog-hint">{{ owns(s.groupsOf) ? '查看关联群聊，或通过群 ID 绑定新的群聊。' : '查看这个板块关联的群聊。' }}</p>
++            <div class="group-list" :aria-busy="s.loadingGroups"><div v-for="g in s.groups" :key="g.groupId || g.id" class="group-row"><CommunityAvatar :src="g.avatar || g.avatarUrl" :name="g.name" /><div><b>{{ g.name || '未命名群聊' }}</b><span>ID {{ g.groupId || g.id }}</span><p v-if="g.introduction">{{ g.introduction }}</p></div></div><p v-if="s.loadingGroups" class="loading-note" role="status">正在加载群聊…</p><div v-if="s.groupsError" class="error-state" role="alert"><p>{{ s.groupsError }}</p><button class="secondary" @click="cm.loadGroups(s.groupsOf, s.groups.length > 0)">重试群聊</button></div><div v-else-if="!s.groups.length && !s.loadingGroups" class="empty-state"><Icon name="contacts" :size="26" /><b>暂时没有关联群聊</b></div><button v-if="s.hasMoreGroups" class="load-more secondary" :disabled="s.loadingGroups" @click="cm.loadGroups(s.groupsOf, true)">加载更多群聊</button></div>
++            <p v-if="owns(s.groupsOf) && !canBind" class="binding-help">新增关联群聊请在云湖官方客户端操作。</p>
++            <form v-if="owns(s.groupsOf) && canBind" class="bind-form" @submit.prevent="cm.bindGroup(s.groupsOf.id, s.bindGroupId)"><label class="field-label">绑定群聊<input v-model="s.bindGroupId" placeholder="输入你有权管理的群 ID" :disabled="busy" /></label><button type="submit" :disabled="busy || !s.bindGroupId.trim()">{{ s.binding ? '绑定中…' : '绑定' }}</button></form>
++          </div>
++        </template>
++      </dialog>
++    </Teleport>
+   </KLayout>
+ </template>
+ 
+ <style scoped>
+-.row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+-.row input { flex: 1; min-width: 130px; }
+-.col { display: flex; flex-direction: column; gap: 10px; }
+-.col label { display: flex; flex-direction: column; gap: 4px; font-size: 12.5px; color: var(--fg2); }
+-.sep { height: 1px; background: var(--line); }
+-.list { max-height: 52vh; overflow: auto; }
+-.item { display: flex; gap: 10px; align-items: center; padding: 8px 12px; border-bottom: 1px dashed var(--line); flex-wrap: wrap; }
+-/* 操作按钮组：手机上横向可滑，不挤压不拉伸 */
+-.acts { display: flex; gap: 6px; flex: 1 0 100%; margin-top: 4px;
+-        overflow-x: auto; flex-wrap: nowrap; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
+-.acts::-webkit-scrollbar { display: none; }
+-.acts > * { flex: 0 0 auto; }
+-.acts-inline { display: inline-flex; gap: 8px; align-items: center; }
+-.item img, .ic { width: 34px; height: 34px; border-radius: 9px; object-fit: cover; background: var(--card2); display: flex; align-items: center; justify-content: center; font-weight: 600; }
+-.imain { flex: 1; min-width: 0; }
+-.iname { font-size: 13.5px; display: flex; gap: 6px; align-items: center; }
+-.iname em { font-style: normal; font-size: 10.5px; padding: 0 5px; border-radius: 4px; background: var(--acc-soft); color: var(--acc); }
+-.tabs .on, .ghost.on { background: var(--acc); color: #fff; border-color: transparent; }
+-.center { text-align: center; padding: 16px 0; }
+-.pre { width: 26px; height: 26px; border-radius: 7px; object-fit: cover; }
+-.file { display: inline-flex; align-items: center; cursor: pointer; padding: 3px 10px; font-size: 12px; border-radius: 7px; border: 1px solid var(--line); }
+-.board { width: 720px; max-width: 94vw; max-height: 82vh; display: flex; flex-direction: column; background: var(--card); border: 1px solid var(--line); border-radius: 14px; overflow: hidden; box-shadow: var(--shadow); }
+-.board > header { display: flex; align-items: center; gap: 10px; padding: 12px 16px; border-bottom: 1px solid var(--line); }
+-.board .bav { width: 32px; height: 32px; border-radius: 8px; object-fit: cover; }
+-.board .grow { flex: 1; }
+-.bx { background: transparent; color: var(--fg2); font-size: 20px; line-height: 1; padding: 0 8px; }
+-.bbody { overflow: auto; padding: 12px 16px; }
+-.post { padding: 10px 4px; border-bottom: 1px dashed var(--line); cursor: pointer; }
+-.post:hover b { color: var(--acc); }
+-.post-detail h3 { margin: 12px 0 4px; font-size: 16px; }
+-.pd-meta { margin-bottom: 10px; }
+-.pd-body { font-size: 13.5px; line-height: 1.65; }
+-.mask { position: fixed; inset: 0; background: rgba(0, 0, 0, .45); z-index: 200; display: flex; align-items: center; justify-content: center; }
+-.mt { margin-top: 12px; }
++.community-page { height: 100%; min-height: 0; container-type: inline-size; }
++.community-page :deep(.k-header) { position: static; padding: 22px 28px 18px; border-bottom: 0; }
++.community-page :deep(.k-title h2) { font-size: 25px; font-weight: 700; letter-spacing: -.6px; }
++.community-page :deep(.k-title p) { margin-top: 4px; color: var(--fg2); }
++.community-page :deep(.k-body) { flex: 1; min-height: 0; padding: 0 28px 24px; gap: 18px; overflow: hidden; }
++button, .secondary { display: inline-flex; align-items: center; justify-content: center; gap: 7px; flex-shrink: 0; }
++button:focus-visible, .upload-label:focus-within { outline: 2px solid var(--acc); outline-offset: 3px; }
++.create-button { border-radius: 12px; padding: 10px 16px; font-size: 13px; }
++.community-toolbar { display: flex; justify-content: space-between; gap: 16px; align-items: center; }
++.community-tabs { display: flex; padding: 4px; border: 1px solid var(--line); border-radius: 13px; background: var(--card); gap: 3px; }
++.community-tabs button { padding: 7px 17px; background: transparent; color: var(--fg2); border-radius: 9px; font-size: 13px; }
++.community-tabs button:hover { color: var(--fg); background: var(--card2); }
++.community-tabs button.active { background: var(--acc-soft); color: var(--fg); font-weight: 650; }
++.toolbar-search { display: flex; gap: 8px; align-items: center; min-width: 0; }
++.search-box { display: flex; align-items: center; gap: 8px; padding: 0 11px; height: 38px; background: var(--card); border: 1px solid var(--line); border-radius: 11px; min-width: 0; color: var(--fg2); }
++.search-box:focus-within { border-color: var(--acc); }
++.search-box input { border: 0; box-shadow: none; padding: 0; width: 190px; min-width: 0; background: transparent; font-size: 12px; }
++.search-box .icon-button { width: 22px; height: 24px; }
++.icon-button { width: 34px; height: 34px; padding: 0; background: transparent; border-radius: 10px; color: var(--fg2); }
++.icon-button:hover { background: var(--card2); color: var(--fg); }
++.community-workspace { flex: 1; min-height: 0; display: grid; grid-template-columns: 300px minmax(0, 1fr); gap: 18px; }
++.board-library, .board-reader { min-width: 0; min-height: 0; border: 1px solid var(--line); background: var(--card); border-radius: 18px; display: flex; flex-direction: column; overflow: hidden; }
++.section-label { display: flex; justify-content: space-between; gap: 8px; padding: 17px 17px 12px; font-size: 12px; color: var(--fg2); }
++.section-label > span:first-child { color: var(--fg); font-weight: 600; }
++.board-list { overflow: auto; padding: 0 8px 10px; flex: 1; scrollbar-gutter: stable; }
++.board-row { display: flex; align-items: center; gap: 4px; padding-right: 8px; border-radius: 12px; margin: 3px 0; border: 1px solid transparent; transition: background .16s; }
++.board-row:hover { background: var(--card2); }
++.board-row.selected { background: var(--acc-soft); border-color: color-mix(in srgb, var(--acc) 24%, transparent); }
++.board-open { flex: 1; min-width: 0; padding: 13px 9px; border-radius: 12px; text-align: left; justify-content: flex-start; gap: 11px; color: var(--fg); background: transparent; }
++.board-open:hover { background: transparent; }
++.board-open .community-avatar { width: 40px; height: 40px; border-radius: 12px; }
++.board-copy { min-width: 0; display: flex; flex-direction: column; gap: 4px; }
++.board-name { font-size: 14px; font-weight: 600; display: flex; align-items: center; gap: 5px; flex-wrap: wrap; overflow-wrap: anywhere; line-height: 1.5; }
++.board-name em { font-size: 9px; font-style: normal; padding: 1px 5px; border-radius: 4px; background: var(--card2); color: var(--fg2); font-weight: 400; white-space: nowrap; }
++.board-id { font-size: 11px; color: var(--fg2); overflow-wrap: anywhere; }
++.follow-quick { width: 27px; height: 27px; border-radius: 50%; border: 1px solid var(--line); }
++.followed { color: var(--fg); }
++.reader-welcome { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 30px 18px; }
++.welcome-icon { width: 76px; height: 76px; border-radius: 26px; background: var(--acc-soft); color: var(--acc); display: grid; place-items: center; margin-bottom: 24px; }
++.eyebrow { font-size: 10px; color: var(--fg2); letter-spacing: 1.6px; }
++.reader-welcome h3 { font-size: 23px; margin: 10px 0; font-weight: 650; }
++.reader-welcome p { color: var(--fg2); font-size: 13px; margin: 0 0 24px; line-height: 1.9; }
++.secondary { background: var(--card2); border: 1px solid var(--line); color: var(--fg); padding: 8px 12px; border-radius: 10px; font-size: 12px; }
++.secondary:hover { background: var(--acc-soft); }
++.reader-header { display: flex; align-items: center; padding: 22px 24px 14px; gap: 13px; }
++.reader-header > .community-avatar { width: 52px; height: 52px; border-radius: 16px; }
++.reader-title { flex: 1; min-width: 0; }
++.reader-title h3 { font-size: 21px; line-height: 1.4; margin: 2px 0 6px; overflow-wrap: anywhere; }
++.reader-stats { display: flex; gap: 12px; flex-wrap: wrap; color: var(--fg2); font-size: 11px; }
++.reader-actions { display: flex; align-items: center; gap: 8px; padding: 0 24px 19px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
++.follow-button { padding: 8px 13px; font-size: 12px; border: 1px solid transparent; border-radius: 10px; }
++.reader-refresh { margin-left: auto; }
++.reader-scroll { padding: 0 24px 20px; overflow: auto; min-height: 0; flex: 1; scrollbar-gutter: stable; }
++.posts-heading { display: flex; align-items: center; gap: 12px; padding: 20px 0 12px; }
++.posts-heading h4 { margin: 0; display: flex; gap: 8px; align-items: center; font-size: 13px; flex: 1; }
++.posts-heading h4 span { color: var(--fg2); font-weight: 400; font-size: 11px; }
++.post-search { height: 31px; max-width: 55%; background: var(--card2); }
++.post-search input { width: 135px; }
++.post-card { display: flex; flex-direction: column; align-items: stretch; gap: 8px; padding: 18px 0; border-radius: 0; border-bottom: 1px solid var(--line); text-align: left; width: 100%; background: transparent; color: var(--fg); }
++.post-card:hover { background: transparent; }
++.post-card:hover strong, .post-card:hover .read-link { color: var(--acc); }
++.post-card strong { font-size: 17px; font-weight: 600; line-height: 1.5; overflow-wrap: anywhere; transition: color .16s; }
++.post-meta { display: flex; gap: 10px; font-size: 11px; color: var(--fg2); font-weight: 400; flex-wrap: wrap; overflow-wrap: anywhere; }
++.post-excerpt { font-size: 12px; color: var(--fg2); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; line-height: 1.7; font-weight: 400; }
++.post-footer { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: 11px; color: var(--fg2); font-weight: 400; }
++.meta-dot { padding: 0 8px; }
++.read-link { display: inline-flex; align-items: center; gap: 3px; white-space: nowrap; }
++.load-more { margin: 14px auto 4px; display: flex; }
++.empty-state { min-height: 200px; padding: 30px 16px; display: flex; flex-direction: column; align-items: center; text-align: center; gap: 11px; color: var(--fg2); font-size: 12px; overflow-wrap: anywhere; }
++.empty-state b { font-size: 14px; color: var(--fg); font-weight: 500; }
++.error-state { border: 1px solid color-mix(in srgb, var(--err) 25%, var(--line)); border-radius: 10px; padding: 14px; margin: 12px 0; font-size: 12px; color: var(--fg); overflow-wrap: anywhere; }
++.error-state p { color: var(--fg2); margin: 6px 0 12px; }
++.loading-note, .search-note, .end-note { text-align: center; font-size: 11px; color: var(--fg2); margin: 16px 0; }
++.article-navigation { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 17px 0; font-size: 11px; color: var(--fg2); }
++.text-button { background: transparent; color: var(--fg2); padding: 4px 0; font-size: 12px; }
++.text-button:hover { background: transparent; color: var(--acc); }
++.article-detail h1 { font-size: 25px; line-height: 1.45; margin: 12px 0 14px; overflow-wrap: anywhere; }
++.article-prose { font-size: 14px; line-height: 1.9; overflow-wrap: anywhere; padding: 20px 0; }
++.article-prose :deep(img), .article-prose :deep(video) { max-width: 100%; height: auto; border-radius: 10px; }
++.article-prose :deep(pre) { max-width: 100%; overflow: auto; padding: 14px; background: var(--card2); border-radius: 10px; }
++.article-prose :deep(table) { display: block; max-width: 100%; overflow: auto; }
++.article-prose :deep(blockquote) { margin: 12px 0; border-left: 3px solid var(--acc); padding-left: 16px; color: var(--fg2); }
++.article-footer { display: flex; gap: 10px; border-top: 1px solid var(--line); padding: 18px 0; color: var(--fg2); font-size: 12px; }
++.mobile-back { display: none; }
++.community-dialog { width: min(480px, calc(100vw - 28px)); max-height: min(80dvh, 720px); border: 1px solid var(--line); border-radius: 22px; background: var(--card); color: var(--fg); padding: 0; box-shadow: var(--shadow); overflow: auto; }
++.community-dialog[open] { animation: community-in .16s ease-out; }
++.community-dialog::backdrop { background: rgba(0,0,0,.5); }
++.dialog-header { padding: 22px 24px 16px; display: flex; justify-content: space-between; align-items: center; gap: 12px; border-bottom: 1px solid var(--line); }
++.dialog-header h3 { margin: 3px 0 0; font-size: 19px; }
++.dialog-content { padding: 20px 24px 24px; }
++.dialog-hint { margin: 0 0 18px; color: var(--fg2); font-size: 12px; }
++.avatar-field { display: flex; align-items: center; gap: 12px; margin: 0 0 20px; flex-wrap: wrap; }
++.upload-label { cursor: pointer; display: inline-flex; gap: 6px; align-items: center; }
++.upload-label:has(input:disabled) { opacity: .5; cursor: wait; }
++.field-label { display: flex; flex-direction: column; gap: 7px; color: var(--fg); font-size: 12px; margin: 12px 0; }
++.field-label input, .field-label select { width: 100%; min-width: 0; font-size: 13px; }
++.field-help { color: var(--fg2); font-size: 11px; }
++.dialog-footer { display: flex; justify-content: flex-end; gap: 8px; margin-top: 24px; }
++.form-actions { display: flex; justify-content: flex-end; margin-top: 16px; }
++.permission-section { border-top: 1px solid var(--line); margin-top: 24px; padding-top: 16px; }
++.permission-section h4 { display: flex; align-items: center; gap: 6px; font-size: 13px; margin: 0 0 8px; }
++.permission-section .dialog-hint { margin-bottom: 8px; }
++.group-list { max-height: 36vh; overflow: auto; }
++.group-row { display: flex; gap: 12px; padding: 12px 0; border-bottom: 1px solid var(--line); }
++.group-row > div { min-width: 0; overflow-wrap: anywhere; }
++.group-row b { display: block; font-size: 13px; font-weight: 600; }
++.group-row span, .group-row p { font-size: 11px; color: var(--fg2); margin: 3px 0 0; }
++.binding-help { color: var(--fg2); font-size: 12px; border-top: 1px solid var(--line); padding-top: 16px; }
++.bind-form { display: flex; gap: 10px; align-items: flex-end; border-top: 1px solid var(--line); margin-top: 20px; padding-top: 12px; }
++.bind-form label { flex: 1; min-width: 0; margin: 0; }
++.bind-form button { height: 39px; }
++@keyframes community-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
++@container (max-width: 960px) {
++  .community-workspace { grid-template-columns: 250px minmax(0,1fr); gap: 12px; }
++  .community-page :deep(.k-body) { padding: 0 18px 18px; }
++  .community-page :deep(.k-header) { padding: 18px; }
++  .reader-header { padding: 18px 18px 14px; }
++  .reader-actions { padding: 0 18px 16px; gap: 6px; }
++  .reader-scroll { padding: 0 18px 16px; }
++}
++@container (max-width: 740px) {
++  .community-toolbar { align-items: stretch; flex-direction: column; gap: 12px; }
++  .community-tabs { width: fit-content; max-width: 100%; }
++  .community-tabs button { flex: 1; min-width: 0; padding: 6px clamp(10px, 2.5cqw, 18px); }
++  .toolbar-search .search-box { flex: 1; }
++  .toolbar-search input { width: 100%; }
++  .community-workspace { grid-template-columns: minmax(0, 1fr); }
++  .board-reader { display: none; }
++  .has-selection .board-library { display: none; }
++  .has-selection .board-reader { display: flex; }
++  .mobile-back { display: flex; }
++  .reader-close { display: none; }
++  .board-list { padding: 0 10px 10px; }
++  .reader-title h3 { font-size: 18px; }
++  .community-page :deep(.k-header) { gap: 8px; }
++  .community-page :deep(.k-title h2) { font-size: 22px; }
++  .community-page :deep(.k-title p) { font-size: 11px; max-width: 165px; }
++  .create-button { padding: 9px 11px; font-size: 12px; }
++}
++@media (max-width: 400px) { .dialog-header { padding: 18px; } .dialog-content { padding: 18px; } }
++@media (prefers-reduced-motion: reduce) { .community-dialog[open] { animation: none; } .board-row, .post-card strong { transition: none; } }
+ </style>
+diff --git a/src/plugins/community.ts b/src/plugins/community.ts
+index 52a6f8a..a733f08 100644
+--- a/src/plugins/community.ts
++++ b/src/plugins/community.ts
+@@ -1,228 +1,240 @@
+-/**
+- * community 插件 —— 板块（云湖的「文章分区」/v1/community/ba/*）
+- *
+- *   ctx.community.load(typ)         typ 1关注 2热门 3我的 4全部
+- *   ctx.community.mine()            我的板块（个人资料页也会用）
+- *   ctx.community.create(name, av)  创建板块
+- *   ctx.community.edit(id, patch)   改名称/头像
+- *   ctx.community.manage(id, vis, pub)  可见范围 / 发帖权限
+- *   ctx.community.loadGroups(ba)    看这个板块绑定了哪些群
+- *   ctx.community.bindGroup(id, gid) 把群绑到板块
+- *
+- * 注册控制台页面「板块」。
+- */
++/** 板块服务：按请求归属接收结果，避免快速切换时串板、丢页和重复提交。 */
+ import Schema from 'schemastery'
+ import { reactive } from 'vue'
+ import type { Context } from '../core/context'
+ import CommunityPage from '../console/pages/CommunityPage.vue'
+ 
+ export const name = 'community'
+-
+-export interface CommunityCfg {
+-  pageSize: number
+-  autoLoadMine: boolean
+-}
+-
++export interface CommunityCfg { pageSize: number; autoLoadMine: boolean }
+ export const communityConfig: Schema<CommunityCfg> = Schema.object({
+   pageSize: Schema.number().default(20).description('板块文章每页条数'),
+   autoLoadMine: Schema.boolean().default(true).description('启动时自动加载我的板块'),
+ })
+-
+ export const communityPlugin = {
+-  Config: communityConfig,
+-  name: 'community',
+-  inject: ['api', 'ui', 'console'],
+-  provide: ['community'],
+-
++  Config: communityConfig, name: 'community', inject: ['api', 'ui', 'console'], provide: ['community'],
+   apply(ctx: Context) {
+-    const api: any = ctx.api
+-    const ui: any = ctx.ui
+-
++    const api: any = ctx.api, ui: any = ctx.ui
++    const PAGE_SIZE = 30
+     const state = reactive({
+-      list: [] as any[],
+-      mine: [] as any[],
+-      myIds: [] as number[],
+-      followIds: [] as number[],
+-      loading: false,
+-      groups: [] as any[],
+-      groupsOf: null as any,
+-      bindGroupId: '',
+-      viewing: null as any,       // 正在浏览的板块
+-      posts: [] as any[],
+-      postPage: 1,         // 该板块的文章
+-      postDetail: null as any,    // 文章详情
+-      loadingPosts: false,
+-      info: null as any,
+-      newAvatar: '',              // 创建板块时先上传的头像
+-      editing: null as any,       // 编辑中的板块（带 avatar）
++      list: [] as any[], mine: [] as any[], myIds: [] as number[], followIds: [] as number[],
++      listType: 2, listPage: 1, hasMore: false, loading: false, listError: '',
++      groups: [] as any[], groupsOf: null as any, bindGroupId: '', groupPage: 1,
++      hasMoreGroups: false, loadingGroups: false, groupsError: '', binding: false,
++      viewing: null as any, posts: [] as any[], postPage: 1, hasMorePosts: false,
++      postDetail: null as any, loadingPosts: false, loadingDetail: false,
++      postsError: '', detailError: '', info: null as any,
++      newAvatar: '', editing: null as any, creating: false, saving: false, managing: false,
++      uploading: false, following: [] as number[], followReady: false,
+     })
+-
+-    /** 按类型拉列表；顺手缓存「我的板块」 */
+-    async function load(typ = 4) {
+-      state.loading = true
++    let listRequest = 0, boardRequest = 0, detailRequest = 0, groupRequest = 0, identityRequest = 0, followsVersion = 0
++    const idOf = (x: any) => Number(x?.id ?? x)
++    const owns = (b: any) => state.myIds.includes(idOf(b))
++    const unique = (items: any[]) => [...new Map(items.map(x => [String(x.id), x])).values()]
++    const fail = (message: string, e: any) => { ui.toast(message + (e?.message || '请稍后重试'), 'error'); return false }
++
++    async function load(typ = state.listType, more = false) {
++      if (more && (state.loading || !state.hasMore)) return false
++      const request = ++listRequest, page = more ? state.listPage + 1 : 1
++      state.listType = typ; state.loading = true; state.listError = ''
++      if (!more) { state.list = []; state.hasMore = false }
+       try {
+-        const list = await api.baList(typ, { size: 30, page: 1 })
+-        state.list = list
+-        if (typ === 3) {
+-          state.mine = list
+-          state.myIds = list.map((b: any) => b.id)
+-        }
+-      } catch (e: any) {
+-        ui.toast('板块列表加载失败：' + e.message, 'error')
+-      } finally { state.loading = false }
++        const list = await api.baList(typ, { size: PAGE_SIZE, page })
++        if (request !== listRequest) return false
++        state.list = unique(more ? [...state.list, ...list] : list)
++        state.listPage = page; state.hasMore = list.length >= PAGE_SIZE
++        if (typ === 3) { state.mine = state.list; state.myIds = [...new Set([...state.myIds, ...state.list.map(idOf)])] }
++        if (typ === 1) { state.followIds = [...new Set([...state.followIds, ...list.map(idOf)])]; state.followReady = true }
++        return true
++      } catch (e: any) { if (request === listRequest) state.listError = e?.message || '加载失败'; return false }
++      finally { if (request === listRequest) state.loading = false }
++    }
++    async function readIdentityList(type: number, identity: number) {
++      const all: any[] = [], seen = new Set<string>()
++      for (let page = 1; ; page++) {
++        const batch = await api.baList(type, { size: PAGE_SIZE, page })
++        if (identity !== identityRequest) return null
++        let added = 0
++        for (const b of batch) if (!seen.has(String(b.id))) { seen.add(String(b.id)); all.push(b); added++ }
++        if (batch.length < PAGE_SIZE || !added) return all
++      }
+     }
+-
+     async function mine() {
++      const request = identityRequest
+       try {
+-        const list = await api.baList(3, { size: 30, page: 1 })
+-        state.mine = list
+-        state.myIds = list.map((b: any) => b.id)
+-        return list
++        const list = await readIdentityList(3, request)
++        if (list && request === identityRequest) { state.mine = list; state.myIds = list.map(idOf) }
++        return list || []
+       } catch { return [] }
+     }
+-
+     function countOf(typ: number) { return typ === 3 ? state.myIds.length : '' }
+-
+     async function create(name: string, avatar = '') {
++      name = name.trim()
++      if (!name || [...name].length > 10) { ui.toast('板块名称应为 1～10 个字', 'warn'); return false }
++      if (state.creating) return false
++      state.creating = true
++      const identity = identityRequest
+       try {
+         const id = await api.baCreate(name, avatar)
+-        ui.toast(id ? `板块已创建（ID ${id}）` : '板块已创建', 'success')
+-        await mine()
+-        await load(3)
+-      } catch (e: any) { ui.toast('创建失败：' + e.message, 'error') }
++        if (identity !== identityRequest) return false
++        state.newAvatar = ''; ui.toast(id ? `板块已创建（ID ${id}）` : '板块已创建', 'success')
++        await mine(); await load(3)
++        return true
++      } catch (e) { return fail('创建失败：', e) }
++      finally { state.creating = false }
+     }
+-
+-    async function edit(baId: number, patch: any) {
+-      try {
+-        await api.baEdit(baId, patch)
+-        ui.toast('已保存', 'success')
+-        await load(3)
+-      } catch (e: any) { ui.toast('保存失败：' + e.message, 'error') }
++    function updateBoard(id: number, patch: any) {
++      for (const list of [state.list, state.mine]) for (const b of list) if (idOf(b) === Number(id)) Object.assign(b, patch)
++      for (const b of [state.viewing, state.info, state.groupsOf]) if (b && idOf(b) === Number(id)) Object.assign(b, patch)
+     }
+-
+-    /** visibleRange 0-公开 1-仅自己；publishAuthority 0/1/2 */
+-    async function manage(baId: number, visibleRange = 0, publishAuthority = 0) {
+-      try {
+-        await api.baManage(baId, visibleRange, publishAuthority)
+-        ui.toast('权限已更新', 'success')
+-      } catch (e: any) { ui.toast('更新失败：' + e.message, 'error') }
++    async function edit(id: number, patch: any) {
++      if (!owns(id) || state.saving) return false
++      const name = String(patch.name || '').trim()
++      if (!name || [...name].length > 10) { ui.toast('板块名称应为 1～10 个字', 'warn'); return false }
++      state.saving = true
++      const identity = identityRequest
++      try { await api.baEdit(id, { ...patch, name }); if (identity !== identityRequest) return false; updateBoard(id, { ...patch, name }); ui.toast('板块信息已保存', 'success'); return true }
++      catch (e) { return fail('保存失败：', e) }
++      finally { state.saving = false }
+     }
+-
+-    async function loadGroups(ba: any) {
+-      state.groupsOf = ba
+-      state.groups = []
+-      try { state.groups = await api.baGroups(ba.id, { size: 30, page: 1 }) }
+-      catch (e: any) { ui.toast('群聊列表加载失败：' + e.message, 'error') }
++    async function manage(id: number, visibleRange = 0, publishAuthority = 0) {
++      if (!owns(id) || state.managing) return false
++      state.managing = true
++      const identity = identityRequest
++      try { await api.baManage(id, visibleRange, publishAuthority); if (identity !== identityRequest) return false; updateBoard(id, { visibleRange, publishAuthority }); ui.toast('权限已更新', 'success'); return true }
++      catch (e) { return fail('更新失败：', e) }
++      finally { state.managing = false }
+     }
+-
++    async function loadGroups(ba: any, more = false) {
++      if (!ba || (more && (state.loadingGroups || !state.hasMoreGroups))) return false
++      const request = ++groupRequest, page = more ? state.groupPage + 1 : 1
++      state.groupsOf = ba; state.groupsError = ''; state.loadingGroups = true
++      if (!more) { state.groups = []; state.hasMoreGroups = false; state.bindGroupId = '' }
++      try {
++        const groups = await api.baGroups(ba.id, { size: PAGE_SIZE, page })
++        if (request !== groupRequest) return false
++        const merged = more ? [...state.groups, ...groups] : groups
++        state.groups = [...new Map(merged.map(g => [String(g.groupId ?? g.id), g])).values()]
++        state.groupPage = page; state.hasMoreGroups = groups.length >= PAGE_SIZE
++        return true
++      } catch (e: any) { if (request === groupRequest) state.groupsError = e?.message || '群聊加载失败'; return false }
++      finally { if (request === groupRequest) state.loadingGroups = false }
++    }
++    function closeGroups() { ++groupRequest; state.groupsOf = null; state.groups = []; state.loadingGroups = false }
+     async function bindGroup(baId: number, groupId: string) {
+-      if (!groupId) return ui.toast('要填群 ID', 'warn')
++      groupId = String(groupId || '').trim()
++      if (!groupId) { ui.toast('请填写群 ID', 'warn'); return false }
++      if (!owns(baId) || state.binding) return false
++      if (typeof api.bindBaGroup !== 'function') { ui.toast('当前 API 不支持绑定群聊', 'error'); return false }
++      state.binding = true
++      const ba = state.groupsOf, identity = identityRequest
+       try {
+-        await api.bindBaGroup ? await api.bindBaGroup(baId, groupId) : null
+-        ui.toast('已提交绑定', 'success')
+-        await loadGroups(state.groupsOf)
+-      } catch (e: any) { ui.toast('绑定失败：' + e.message, 'error') }
++        await api.bindBaGroup(baId, groupId); if (identity !== identityRequest) return false; ui.toast('群聊已绑定', 'success')
++        if (state.groupsOf === ba) await loadGroups(ba)
++        return true
++      } catch (e) { return fail('绑定失败：', e) }
++      finally { state.binding = false }
+     }
+-
+-    /* ---------------- 进入板块：文章列表 / 详情 ---------------- */
+-
+     async function enter(ba: any) {
+-      state.viewing = ba
+-      state.posts = []
+-      state.postDetail = null
+-      state.postPage = 1
+-      state.loadingPosts = true
++      if (!ba) return false
++      const request = ++boardRequest; ++detailRequest
++      state.viewing = ba; state.info = null; state.posts = []; state.postDetail = null
++      state.postPage = 1; state.hasMorePosts = false; state.loadingPosts = true
++      state.loadingDetail = false; state.postsError = ''; state.detailError = ''
++      // 资料失败不阻塞文章，也不把上一个板块的统计留在标题里。
++      void api.baInfo(ba.id).then(info => { if (request === boardRequest) state.info = info }).catch(() => {})
+       try {
+-        state.info = await api.baInfo(ba.id).catch(() => null)
+-        state.posts = await api.baPosts(ba.id, { size: 30, page: 1 })
+-      } catch (e: any) {
+-        ui.toast('文章加载失败：' + e.message, 'error')
+-      } finally { state.loadingPosts = false }
++        const posts = await api.baPosts(ba.id, { size: PAGE_SIZE, page: 1 })
++        if (request !== boardRequest) return false
++        state.posts = unique(posts); state.hasMorePosts = posts.length >= PAGE_SIZE
++        return true
++      } catch (e: any) { if (request === boardRequest) state.postsError = e?.message || '文章加载失败'; return false }
++      finally { if (request === boardRequest) state.loadingPosts = false }
+     }
+-    function exitBoard() { state.viewing = null; state.posts = []; state.postDetail = null }
+-
++    function backToPosts() { ++detailRequest; state.postDetail = null; state.loadingDetail = false; state.detailError = '' }
++    function exitBoard() { ++boardRequest; backToPosts(); state.viewing = null; state.posts = []; state.info = null; state.loadingPosts = false }
+     async function openPost(p: any) {
++      if (!state.viewing) return false
++      const request = ++detailRequest, board = boardRequest
++      state.postDetail = p; state.loadingDetail = true; state.detailError = ''
+       try {
+         const d = await api.baPostDetail(p.id)
+-        // 详情可能嵌套在 post 里；都没有则回退列表项自带 content
+-        const detail = d?.post ? { ...d, content: d.post.content ?? d.content, title: d.post.title ?? d.title } : d
+-        state.postDetail = detail?.content || detail?.title ? detail : (p.content || p.title ? p : detail)
++        if (request !== detailRequest || board !== boardRequest) return false
++        if (!d) throw new Error('服务端未返回文章内容')
++        state.postDetail = { ...p, ...d, ...(d.post || {}) }
++        return true
+       } catch (e: any) {
+-        // 详情接口失败时回退列表项内容，不让用户看空弹窗
+-        if (p.content || p.title) { state.postDetail = p; ui.toast('详情接口失败，显示列表缓存内容', 'warn') }
+-        else ui.toast('文章打不开：' + e.message, 'error')
+-      }
++        if (request === detailRequest && board === boardRequest) state.detailError = '完整文章加载失败：' + (e?.message || '请重试')
++        return false
++      } finally { if (request === detailRequest && board === boardRequest) state.loadingDetail = false }
+     }
+-
+-    /** 板块文章分页加载更多 */
+     async function loadMorePosts() {
+-      const ba = state.viewing
+-      if (!ba || state.loadingPosts) return
+-      state.postPage = (state.postPage || 1) + 1
+-      state.loadingPosts = true
++      if (!state.viewing || state.loadingPosts || !state.hasMorePosts) return false
++      const request = boardRequest, ba = state.viewing, page = state.postPage + 1
++      state.loadingPosts = true; state.postsError = ''
+       try {
+-        const more = await api.baPosts(ba.id, { size: 30, page: state.postPage })
+-        const ids = new Set(state.posts.map((x: any) => x.id))
+-        state.posts = [...state.posts, ...more.filter((x: any) => !ids.has(x.id))]
+-      } catch (e: any) { ui.toast('加载更多失败：' + e.message, 'error') }
+-      finally { state.loadingPosts = false }
++        const more = await api.baPosts(ba.id, { size: PAGE_SIZE, page })
++        if (request !== boardRequest) return false
++        state.posts = unique([...state.posts, ...more]); state.postPage = page; state.hasMorePosts = more.length >= PAGE_SIZE
++        return true
++      } catch (e: any) { if (request === boardRequest) state.postsError = e?.message || '加载更多失败'; return false }
++      finally { if (request === boardRequest) state.loadingPosts = false }
+     }
+-
+-    /** 上传板块头像：选图 → 上传 → 回填 URL（比手输 URL 友好） */
+     async function uploadAvatar(ev: any, target: 'new' | 'edit') {
+-      const f = ev?.target?.files?.[0]
+-      if (!f) return
++      const f = ev?.target?.files?.[0], editing = state.editing
++      if (!f || state.uploading) return false
++      if (!f.type.startsWith('image/') || f.size > 10 * 1024 * 1024) { ui.toast('请选择 10MB 以内的图片', 'warn'); ev.target.value = ''; return false }
++      state.uploading = true
++      const identity = identityRequest
+       try {
+-        const res: any = await api.uploadFile(f, 'image')
+-        const key = typeof res === 'string' ? res : res?.key
+-        const url = (res?.url) || `https://chat-img.jwznb.com/${key}`
++        const res = await api.uploadFile(f, 'image'), key = typeof res === 'string' ? res : res?.key
++        if (identity !== identityRequest) return false
++        if (!res?.url && !key) throw new Error('未返回图片地址')
++        const url = res?.url || (/^https?:\/\//.test(key) ? key : `https://chat-img.jwznb.com/${key}`)
+         if (target === 'new') state.newAvatar = url
+-        else if (state.editing) state.editing.avatar = url
+-        ui.toast('头像已上传', 'success')
+-      } catch (e: any) { ui.toast('上传失败：' + e.message, 'error') }
+-      ev.target.value = ''
++        else if (state.editing === editing && editing) editing.avatar = url
++        return true
++      } catch (e) { return fail('上传失败：', e) }
++      finally { state.uploading = false; ev.target.value = '' }
+     }
+-
+-    /** 直接创建（带上已上传的头像） */
+-    async function createWithAvatar(name: string) {
+-      return create(name, state.newAvatar || '')
+-    }
+-
+-    /** 从别处（用户资料）跳过来时：定位到这个板块并直接进入浏览 */
++    const createWithAvatar = (name: string) => create(name, state.newAvatar || '')
+     function focus(ba: any) {
+       if (!ba) return
+-      state.list = state.list.some((b: any) => b.id === ba.id) ? state.list : [ba, ...state.list]
+-      ctx.setTimeout(() => { enter(ba) }, 300)
++      if (!state.list.some(b => idOf(b) === idOf(ba))) state.list = [ba, ...state.list]
++      void enter(ba)
+     }
+-
+-    /* ---- 关注（/v1/community/ba/user-follow-ba / unfollow） ---- */
+     async function loadFollows() {
++      const request = identityRequest, version = followsVersion
+       try {
+-        const list = await api.baList(1, { size: 50, page: 1 })
+-        state.followIds = list.map((b: any) => b.id)
+-      } catch { state.followIds = [] }
++        const list = await readIdentityList(1, request)
++        if (list && request === identityRequest && version === followsVersion && !state.following.length) { state.followIds = list.map(idOf); state.followReady = true }
++      } catch { /* 失败不把已知关注状态清空，避免误操作。 */ }
+     }
+-    function isFollowed(id: number) { return state.followIds.includes(id) }
++    const isFollowed = (id: number) => state.followIds.includes(Number(id))
+     async function toggleFollow(b: any) {
++      const id = idOf(b)
++      if (!state.followReady) { await loadFollows(); if (!state.followReady) { ui.toast('关注状态未加载，请重试', 'warn'); return false } }
++      if (state.following.includes(id)) return false
++      state.following.push(id); ++followsVersion
++      const identity = identityRequest
+       try {
+-        if (isFollowed(b.id)) { await api.unfollowBoard(b.id); state.followIds = state.followIds.filter((x: number) => x !== b.id); ui.toast('已取消关注', 'success') }
+-        else { await api.followBoard(b.id); state.followIds = [...state.followIds, b.id]; ui.toast('已关注', 'success') }
+-      } catch (e: any) { ui.toast('操作失败：' + e.message, 'error') }
++        if (isFollowed(id)) { await api.unfollowBoard(id); if (identity !== identityRequest) return false; state.followIds = state.followIds.filter(x => x !== id); if (state.listType === 1) state.list = state.list.filter(x => idOf(x) !== id) }
++        else { await api.followBoard(id); if (identity !== identityRequest) return false; state.followIds = [...state.followIds, id] }
++        return true
++      } catch (e) { return fail('关注操作失败：', e) }
++      finally { state.following = state.following.filter(x => x !== id) }
++    }
++    ctx.set('community', { state, load, mine, countOf, owns, create, createWithAvatar, edit, manage, loadGroups, closeGroups, bindGroup, enter, exitBoard, backToPosts, openPost, uploadAvatar, focus, loadFollows, isFollowed, toggleFollow, loadMorePosts })
++    function resetAccount() {
++      ++identityRequest; ++listRequest; ++followsVersion; exitBoard(); closeGroups()
++      state.list = []; state.mine = []; state.myIds = []; state.followIds = []; state.followReady = false
++      state.following = []; state.editing = null; state.newAvatar = ''; state.loading = false; state.listError = ''
+     }
+-
+-    ctx.set('community', { state, load, mine, countOf, create, createWithAvatar, edit, manage, loadGroups, bindGroup, enter, exitBoard, openPost, uploadAvatar, focus, loadFollows, isFollowed, toggleFollow, loadMorePosts })
+-
+-    // 插件装载时可能还没登录完，接口会失败 → 服务就绪后补拉一次（不然「我的板块」一直是空的）
+     ctx.on('auth/ready' as any, () => mine())
+-    ctx.on('auth/login' as any, () => mine())
++    ctx.on('auth/login' as any, () => { resetAccount(); void mine() })
++    ctx.on('auth/logout' as any, resetAccount)
+     mine()
+     ctx.setTimeout(() => { if (!state.mine.length) mine() }, 3000)
+     ctx.setTimeout(() => { if (!state.mine.length) mine() }, 8000)
+-
+-    ctx.logger?.info('community 插件已加载（板块 / 文章分区）')
+-
+-    ctx.console.addEntry((cc: any) => {
+-      cc.page({ name: '板块', path: '/community', icon: 'layers', order: 170, component: CommunityPage })
+-    })
++    ctx.console.addEntry((cc: any) => { cc.page({ name: '板块', path: '/community', icon: 'layers', order: 170, component: CommunityPage }) })
+   },
+ }

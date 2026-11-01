@@ -10,6 +10,10 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod notifications;
+mod desktop_endpoint;
+mod userbot_security;
+mod ai_panel;
+mod privacy;
 
 use std::net::TcpStream;
 use std::path::PathBuf;
@@ -30,7 +34,24 @@ use tauri::{
     AppHandle, Manager, Url, WebviewUrl, WebviewWindowBuilder,
 };
 
-const PORT: u16 = 8902;
+fn app_port() -> u16 {
+    static VALUE: std::sync::OnceLock<u16> = std::sync::OnceLock::new();
+    *VALUE.get_or_init(|| {
+        // Keep the same WebView origin on later launches, preserving local preferences.
+        #[cfg(windows)]
+        let registry = winreg::RegKey::predef(winreg::enums::HKEY_CURRENT_USER)
+            .create_subkey(r"Software\YunhuLaoda").ok().map(|(key, _)| key);
+        #[cfg(windows)]
+        let preferred = registry.as_ref().and_then(|key| key.get_value::<u32, _>("DesktopPort").ok())
+            .filter(|port| (1024..=65535).contains(port)).unwrap_or(8902) as u16;
+        #[cfg(not(windows))]
+        let preferred = 8902;
+        let selected = desktop_endpoint::select_port(preferred).unwrap_or(preferred);
+        #[cfg(windows)]
+        if let Some(key) = registry { let _ = key.set_value("DesktopPort", &(selected as u32)); }
+        selected
+    })
+}
 
 /// sidecar 子进程句柄：用全局 static 持有，避开 Tauri State 在
 /// on_window_event 闭包里的生命周期问题（E0597）
@@ -74,12 +95,16 @@ fn open_external_url(url: String) -> Result<(), String> {
 
 /// 前端 invoke('restart_sidecar')：杀旧 sidecar 重新拉起，返回是否已持有新句柄
 #[tauri::command]
-fn restart_sidecar() -> bool {
+async fn restart_sidecar() -> bool {
+    tauri::async_runtime::spawn_blocking(restart_sidecar_impl).await.unwrap_or(false)
+}
+
+fn restart_sidecar_impl() -> bool {
     kill_sidecar();
     let res = RES_DIR.get().cloned().unwrap_or_else(|| PathBuf::from("."));
     // 端口可能还被旧进程占着：先等它释放（最多 3s）
     for _ in 0..15 {
-        if TcpStream::connect(("127.0.0.1", PORT)).is_err() {
+        if TcpStream::connect(("127.0.0.1", app_port())).is_err() {
             break;
         }
         std::thread::sleep(Duration::from_millis(200));
@@ -103,6 +128,11 @@ fn kill_sidecar() {
 ///    全部重定向到 %TEMP%/yunhulaoda-sidecar.log（追加），崩溃时能看死因。
 ///    首行额外写一条壳侧启动记录（node/bundle/YH_ROOT 实际路径），路径类崩溃可直接对账。
 fn spawn_sidecar(res: &std::path::Path) -> bool {
+    let Ok(mut slot) = sidecar_slot().lock() else { return false };
+    if let Some(child) = slot.as_mut() {
+        if matches!(child.try_wait(), Ok(None)) { return true; }
+    }
+    *slot = None;
     let node = res.join("node.exe");
     let bundle = res.join("server-bundle.mjs");
     if !node.exists() || !bundle.exists() {
@@ -125,18 +155,20 @@ fn spawn_sidecar(res: &std::path::Path) -> bool {
     let err = std::fs::OpenOptions::new().create(true).append(true).open(&log);
     match (out, err) {
         (Ok(f), Ok(f2)) => match Command::new(&node)
+            .arg("--optimize-for-size").arg("--max-semi-space-size=4")
             .arg(&bundle)
             .env("YH_ROOT", res)
-            .env("PORT", PORT.to_string())
+            .env("PORT", app_port().to_string())
+            .env("HOST", "127.0.0.1")
+            .env("HTTPS_PORT", "0")
+            .env("YH_BOT_BRIDGE_SECRET", userbot_security::bridge_secret())
             .stdout(f)
             .stderr(f2)
             .creation_flags(CREATE_NO_WINDOW)
             .spawn()
         {
             Ok(child) => {
-                if let Ok(mut guard) = sidecar_slot().lock() {
-                    *guard = Some(child);
-                }
+                *slot = Some(child);
                 true
             }
             Err(e) => {
@@ -145,18 +177,20 @@ fn spawn_sidecar(res: &std::path::Path) -> bool {
             }
         },
         _ => match Command::new(&node)
+            .arg("--optimize-for-size").arg("--max-semi-space-size=4")
             .arg(&bundle)
             .env("YH_ROOT", res)
-            .env("PORT", PORT.to_string())
+            .env("PORT", app_port().to_string())
+            .env("HOST", "127.0.0.1")
+            .env("HTTPS_PORT", "0")
+            .env("YH_BOT_BRIDGE_SECRET", userbot_security::bridge_secret())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .creation_flags(CREATE_NO_WINDOW)
             .spawn()
         {
             Ok(child) => {
-                if let Ok(mut guard) = sidecar_slot().lock() {
-                    *guard = Some(child);
-                }
+                *slot = Some(child);
                 true
             }
             Err(e) => {
@@ -217,7 +251,7 @@ fn error_html(msg: &str) -> String {
 </body>
 </html>"#,
         msg = html_escape(msg),
-        port = PORT
+        port = app_port()
     )
 }
 
@@ -259,7 +293,7 @@ fn spawn_sidecar_monitor(app: AppHandle, res: PathBuf) {
                             true
                         }
                         // 无子进程：复用外部实例的场景——端口还通就继续观察，不通则补拉起
-                        None => !wait_port(PORT, Duration::from_millis(400)),
+                        None => true,
                     }
                 }
                 Err(_) => return, // 锁中毒：panic=abort 下几乎不会发生，保守停止
@@ -269,15 +303,10 @@ fn spawn_sidecar_monitor(app: AppHandle, res: PathBuf) {
                 continue;
             }
             eprintln!("[tauri] 监控发现后端不在，自动补拉起 sidecar");
-            if spawn_sidecar(&res) {
+            if spawn_sidecar(&res) && wait_port(app_port(), Duration::from_secs(20))
+                && userbot_security::verify_sidecar().is_ok() {
                 respawn_fail = 0;
-                // 等新实例就绪（最多 20s），就绪则继续观察
-                if !wait_port(PORT, Duration::from_secs(20)) {
-                    respawn_fail += 1;
-                }
-            } else {
-                respawn_fail += 1;
-            }
+            } else { respawn_fail += 1; }
             if respawn_fail >= 3 {
                 let app2 = app.clone();
                 let _ = app.run_on_main_thread(move || {
@@ -294,10 +323,14 @@ fn main() {
         // 外链（消息/文章里的 http(s) 链接）交系统默认浏览器：
         // WebView2 对 target=_blank 的新窗口导航默认拦截，表现为「点网址没反应」
         .plugin(tauri_plugin_opener::init())
-        .invoke_handler(tauri::generate_handler![restart_sidecar, open_external_url,
+        .invoke_handler(tauri::generate_handler![restart_sidecar, open_external_url, privacy::set_privacy,
+            ai_panel::open_ai_panel, ai_panel::close_ai_panel, ai_panel::ai_panel_action,
+            userbot_security::secure_read, userbot_security::secure_write, userbot_security::secure_delete,
+            userbot_security::ai_bridge_token,
             notifications::native_notifications_supported, notifications::show_message_notification,
             notifications::dismiss_message_notification, notifications::clear_message_notifications])
         .setup(|app| {
+            notifications::initialize();
             // 先 clone handle 再进闭包/线程，避免借用冲突
             let handle = app.handle().clone();
 
@@ -326,19 +359,9 @@ fn main() {
             let bundle = res.join("server-bundle.mjs");
             let resources_ok = node.exists() && bundle.exists();
 
-            // 拉起 sidecar（端口已被占用时复用现有实例，避免双开冲突）
-            if !wait_port(PORT, Duration::from_millis(300)) {
-                if resources_ok {
-                    spawn_sidecar(&res);
-                } else {
-                    eprintln!(
-                        "[tauri] 缺少运行文件：node={} bundle={}（存在={}）",
-                        node.display(),
-                        bundle.display(),
-                        resources_ok
-                    );
-                }
-            }
+            // Allocate our own free loopback port; an older sidecar is never reused.
+            let _ = app_port();
+            if resources_ok { spawn_sidecar(&res); }
             // 监控无条件启动：既管「自己拉的子进程中途退出」，也管「复用了外部实例、
             // 外部实例后来死了」——后者端口不通时自动补拉起自己的 sidecar
             spawn_sidecar_monitor(handle.clone(), res.clone());
@@ -349,17 +372,17 @@ fn main() {
             // 重试拉起一次 sidecar 再等 20s → 仍失败才显示错误页（带真实原因）。
             let win_handle = handle.clone();
             std::thread::spawn(move || {
-                let mut ready = wait_port(PORT, Duration::from_secs(45));
+                let mut ready = wait_port(app_port(), Duration::from_secs(45)) && userbot_security::verify_sidecar().is_ok();
                 if !ready && resources_ok {
                     eprintln!("[tauri] sidecar 45s 未就绪，重试拉起一次");
                     spawn_sidecar(&res);
-                    ready = wait_port(PORT, Duration::from_secs(20));
+                    ready = wait_port(app_port(), Duration::from_secs(20)) && userbot_security::verify_sidecar().is_ok();
                 }
                 let inner = win_handle.clone();
                 let _ = win_handle.run_on_main_thread(move || {
                     // 就绪→加载 sidecar；未就绪→about:blank（都是必然可解析的字面量）。
                     let target = if ready {
-                        format!("http://127.0.0.1:{PORT}").parse::<Url>().ok()
+                        format!("http://127.0.0.1:{}", app_port()).parse::<Url>().ok()
                     } else {
                         "about:blank".parse::<Url>().ok()
                     };
@@ -378,19 +401,25 @@ fn main() {
                         "main",
                         WebviewUrl::External(target),
                     )
+                    .on_navigation(|url| {
+                        url.as_str() == "about:blank" || (url.scheme() == "http"
+                            && url.host_str() == Some("127.0.0.1") && url.port_or_known_default() == Some(app_port()))
+                    })
                     .title(title)
+                    .zoom_hotkeys_enabled(true)
                     .inner_size(1280.0, 820.0)
                     .min_inner_size(900.0, 600.0);
 
                     match builder.build() {
                         Ok(win) => {
+                            privacy::reduce_webview_memory(&win);
                             let _ = win.show();
                             let _ = win.set_focus();
                             if !ready {
                                 let msg = if resources_ok {
                                     format!(
-                                        "后端服务未能在 65 秒内启动（端口 {PORT}，已自动重试一次）。\
-                                         可能是首次启动较慢、端口被占用或被安全软件拦截，请点击重试。"
+                                        "后端服务未能在 65 秒内启动（端口 {}，已自动重试一次）。\
+                                         可能是首次启动较慢、端口被占用或被安全软件拦截，请点击重试。", app_port()
                                     )
                                 } else {
                                     format!(
@@ -454,8 +483,24 @@ fn main() {
 
             Ok(())
         })
-        .on_window_event(|_window, event| {
+        .on_window_event(|window, event| {
+            // Floating assistant windows must never stop the sidecar or change main-window visibility.
+            if window.label() != "main" { return; }
+            if matches!(event, tauri::WindowEvent::Resized(_) | tauri::WindowEvent::Focused(_)) {
+                if let Some(webview) = window.get_webview_window("main") {
+                    if let tauri::WindowEvent::Focused(focused) = event {
+                        let _ = webview.eval(if *focused { "window.dispatchEvent(new CustomEvent('yh-window-focused',{detail:true}))" } else { "window.dispatchEvent(new CustomEvent('yh-window-focused',{detail:false}))" });
+                    }
+                    let script = if window.is_minimized().unwrap_or(false) {
+                        "window.dispatchEvent(new CustomEvent('yh-window-minimized',{detail:true}))"
+                    } else {
+                        "window.dispatchEvent(new CustomEvent('yh-window-minimized',{detail:false}))"
+                    };
+                    let _ = webview.eval(script);
+                }
+            }
             if let tauri::WindowEvent::Destroyed = event {
+                if let Some(panel) = window.get_webview_window("ai-reply") { let _ = panel.close(); }
                 notifications::clear();
                 // 主窗口关闭 = 清理 sidecar（kill_sidecar 幂等，托盘退出路径已 take 过则为空操作）
                 kill_sidecar();

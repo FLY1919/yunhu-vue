@@ -4,6 +4,8 @@
  * 消息统一走 Satori 元素树，不再直接碰云湖的 content_type
  * 依赖：api、auth；可选使用 adapter 提供的 ctx.bots
  */
+import { resourceMode } from '../core/resource-mode'
+import { samePollMessage } from '../core/message-equality'
 import { reactive, watch , toRaw } from 'vue'
 import Schema from 'schemastery'
 import type { Context, Disposer } from '../core/context'
@@ -12,6 +14,8 @@ import ChatPage from '../console/pages/ChatPage.vue'
 import StatusUnread from '../console/components/StatusUnread.vue'
 import { createComposerDrafts } from '../core/composer-drafts'
 import { messagePreview, messageQuote } from '../core/message-preview'
+import { rankSearchResults } from '../core/search'
+import { createRecallCache, hasRecallBody } from '../core/recall-cache'
 
 export interface MenuItem {
   id: string
@@ -56,7 +60,7 @@ export const chatPlugin = {
     const auth = ctx.auth
     const storage = (ctx as any).storage
     const pollMs = config.pollMs ?? 4000
-    const maxMessages = config.maxMessages ?? 200
+    const messageLimit = () => config.maxMessages ?? (resourceMode.economy ? 80 : 200)
     const drafts = createComposerDrafts()
     let viewVersion = 0
     let messageRequest = 0
@@ -65,8 +69,13 @@ export const chatPlugin = {
     let locateRequest = 0
     let disposed = false
     let accountVersion = 0
+    let liveVersion = 0
+    let windowMinimized = false
+    let windowFocused = true
+    const liveRevisions = new Map<string, number>()
+    const conversationRevisions = new Map<string, number>()
     const reconcileTimers = new Map<string, ReturnType<typeof setTimeout>>()
-    const inView = (cur: any, version: number) => !disposed && state.current === cur && viewVersion === version
+    const inView = (cur: any, version: number) => !disposed && toRaw(state.current) === toRaw(cur) && viewVersion === version
     function scheduleReconcile(cur: any) {
       const version = viewVersion
       const key = `${cur.type}:${cur.id}`
@@ -102,6 +111,72 @@ export const chatPlugin = {
       /* ---- 上下文菜单当前目标消息 id ---- */
       menuFor: null as string | null,
     })
+    // A selected conversation is only read while its chat page is actually visible in the foreground.
+    const viewingConversation = () => !!state.current && !document.hidden && !windowMinimized && windowFocused && document.hasFocus?.() !== false
+      && !(ctx as any).lock?.isLocked
+      && (!ctx.console || ctx.console.state.currentPage === '/')
+    // 仅前台且有焦点时静音当前会话；失焦后允许通知，锁定时在投递层统一禁用。
+    const showingConversation = (channel: any) => state.current?.id === channel.id && state.current?.type === channel.type
+      && (!ctx.console || ctx.console.state.currentPage === '/') && !document.hidden && !windowMinimized && windowFocused && document.hasFocus?.() !== false && !(ctx as any).lock?.isLocked
+    function readCurrent() {
+      if (!viewingConversation()) return
+      const cur = state.current
+      const hit = state.conversations.find(c => c.id === cur.id && c.type === cur.type)
+      if (hit) { hit.unread = 0; hit.at = false }
+      scheduleDismiss(cur.id)
+    }
+    ctx.on('app/unlock' as any, readCurrent)
+
+    const preferences = reactive({ antiRecall: localStorage.getItem('yh.chat.antiRecall') === 'true' })
+    const recallCache = createRecallCache(storage, () => auth.state.user?.id || '', () => preferences.antiRecall)
+    // History loaded after enabling is not itself a newly received message.
+    let recallCaptureSince = preferences.antiRecall ? Date.now() : Infinity
+    function captureFromPoll(m: any) {
+      const ts = Number(m?.ts)
+      const millis = ts > 0 && ts < 1e12 ? ts * 1000 : ts
+      return Number.isFinite(millis) && millis >= recallCaptureSince
+    }
+    const messageWindows = new Map<string, any[]>()
+    const channelKey = (c: any) => `${c.type}:${c.id}`
+    function rememberWindow() {
+      if (!state.current) return
+      messageWindows.set(channelKey(state.current), state.messages.slice(-messageLimit()))
+      while (messageWindows.size > (resourceMode.economy ? 6 : 30)) messageWindows.delete(messageWindows.keys().next().value)
+    }
+    function hasBody(content: any) {
+      return ['text', 'image_url', 'image', 'video_url', 'audio_url', 'file_url', 'form', 'post_id', 'post_content', 'tip']
+        .some(k => content?.[k] !== undefined && content[k] !== null && String(content[k]).length > 0)
+    }
+    function mergeMessage(m: any, channel = state.current, previous?: any, capture = false) {
+      const contentPresent = hasBody(m.content) || (m.elements?.length && !m.content)
+      const next = previous ? { ...previous, ...m,
+        ...(contentPresent ? {} : { content: previous.content, elements: previous.elements }),
+        recalled: !!(m.recalled || previous.recalled),
+        sender: m.sender || previous.sender, senderId: m.senderId || previous.senderId,
+        avatar: m.avatar || previous.avatar, ts: m.ts || previous.ts,
+        tags: m.tags?.length ? m.tags : previous.tags,
+        quoteId: m.quoteId || previous.quoteId,
+      } : m
+      return recallCache.merge(channel, withElements(next), capture)
+    }
+    function setAntiRecall(value: boolean) {
+      if (value && !preferences.antiRecall) recallCaptureSince = Date.now()
+      preferences.antiRecall = value
+      localStorage.setItem('yh.chat.antiRecall', String(value))
+      if (value && auth.state.user?.id) void recallCache.ready()
+    }
+    async function clearRecallCache() {
+      await recallCache.clear()
+      for (const m of state.messages) m.retainedRecall = false
+      for (const messages of messageWindows.values()) for (const m of messages) m.retainedRecall = false
+    }
+    ctx.on('auth/login', () => {
+      recallCaptureSince = preferences.antiRecall ? Date.now() : Infinity
+      if (preferences.antiRecall) void recallCache.ready()
+    })
+    if (preferences.antiRecall && auth.state.user?.id) void recallCache.ready()
+    ctx.on('auth/logout', () => { recallCaptureSince = Infinity; recallCache.reset(); messageWindows.clear() })
+    ctx.effect(() => () => recallCache.dispose())
 
     /* ---------------- 菜单 & 动作注册表 ----------------
      * 与 ctx.console.menu/action 同构：任何插件都能往消息菜单里塞条目，
@@ -150,25 +225,40 @@ export const chatPlugin = {
      */
     const LS_GROUPS = 'yunhu.conv.groups'
     const LS_ASSIGN = 'yunhu.conv.assign'
+    const groupKey = (key: string) => auth.state.user?.id ? key + ':' + auth.state.user.id : key
+    function readGroup(key: string, fallback: any) {
+      try {
+        const owner = String(auth.state.user?.id || '')
+        const legacyOwner = localStorage.getItem('yunhu.conv.legacyOwner')
+        const raw = localStorage.getItem(groupKey(key)) ?? ((!owner || legacyOwner === owner) ? localStorage.getItem(key) : null)
+        return raw ? JSON.parse(raw) : fallback
+      } catch { return fallback }
+    }
+    function groupPreferences() {
+      return {
+        groups: readGroup(LS_GROUPS, []) as Array<{ id: string; name: string }>,
+        assign: readGroup(LS_ASSIGN, {}) as Record<string, string>,
+        collapsed: readGroup('yunhu.conv.collapsed', []) as string[],
+        pinned: readGroup('yunhu.conv.pinned', []) as string[],
+        hidden: readGroup('yunhu.conv.hidden', []) as string[],
+        muted: readGroup('yunhu.conv.muted', []) as string[],
+        marked: readGroup('yunhu.conv.markunread', []) as string[],
+      }
+    }
     const convGroups = reactive({
-      groups: JSON.parse(localStorage.getItem(LS_GROUPS) || '[]') as Array<{ id: string; name: string }>,
-      assign: JSON.parse(localStorage.getItem(LS_ASSIGN) || '{}') as Record<string, string>,   // convId -> groupId
-      collapsed: JSON.parse(localStorage.getItem('yunhu.conv.collapsed') || '[]') as string[],
-      pinned: JSON.parse(localStorage.getItem('yunhu.conv.pinned') || '[]') as string[],
-      hidden: JSON.parse(localStorage.getItem('yunhu.conv.hidden') || '[]') as string[],
-      muted: JSON.parse(localStorage.getItem('yunhu.conv.muted') || '[]') as string[],
-      marked: JSON.parse(localStorage.getItem('yunhu.conv.markunread') || '[]') as string[],
+      ...groupPreferences(),
+      pinMode: localStorage.getItem('yunhu.conv.pinMode') === 'tabs' ? 'tabs' : 'top',
       editing: false,
     })
     function saveGroups() {
-      localStorage.setItem(LS_GROUPS, JSON.stringify(convGroups.groups))
-      localStorage.setItem(LS_ASSIGN, JSON.stringify(convGroups.assign))
-      localStorage.setItem('yunhu.conv.collapsed', JSON.stringify(convGroups.collapsed))
-      localStorage.setItem('yunhu.conv.pinned', JSON.stringify(convGroups.pinned))
-      localStorage.setItem('yunhu.conv.hidden', JSON.stringify(convGroups.hidden))
-      localStorage.setItem('yunhu.conv.muted', JSON.stringify(convGroups.muted))
-      localStorage.setItem('yunhu.conv.markunread', JSON.stringify(convGroups.marked))
+      const keys = { groups: LS_GROUPS, assign: LS_ASSIGN, collapsed: 'yunhu.conv.collapsed', pinned: 'yunhu.conv.pinned', hidden: 'yunhu.conv.hidden', muted: 'yunhu.conv.muted', marked: 'yunhu.conv.markunread' }
+      for (const [key, storageKey] of Object.entries(keys)) localStorage.setItem(groupKey(storageKey), JSON.stringify(convGroups[key]))
     }
+    ctx.on('auth/login', () => {
+      if (!localStorage.getItem('yunhu.conv.legacyOwner')) localStorage.setItem('yunhu.conv.legacyOwner', String(auth.state.user?.id || ''))
+      Object.assign(convGroups, groupPreferences(), { editing: false })
+      saveGroups()
+    })
     /** 标记未读（本地角标，打开会话时清除） */
     function markUnread(convId: string) {
       if (!convGroups.marked.includes(convId)) convGroups.marked.push(convId)
@@ -176,23 +266,51 @@ export const chatPlugin = {
       const c = state.conversations.find((x: any) => x.id === convId)
       if (c) c.unread = Math.max(c.unread || 0, 1)
     }
-    /** 免打扰（本地）：该会话不计入总未读、侧栏不显示红点（消息照收） */
-    function toggleMute(convId: string) {
-      const i = convGroups.muted.indexOf(convId)
-      if (i >= 0) convGroups.muted.splice(i, 1)
-      else convGroups.muted.push(convId)
+    const pendingConversationSettings = new Map<string, Record<string, boolean>>()
+    const findConv = (id: string) => state.conversations.find((c: any) => c.id === id)
+    const isMuted = (id: string) => findConv(id)?.noDisturb ?? convGroups.muted.includes(id)
+    const isPinned = (id: string) => findConv(id)?.pinned ?? convGroups.pinned.includes(id)
+    async function updateConversationFlag(id: string, field: 'pinned' | 'noDisturb') {
+      const c = findConv(id)
+      if (pendingConversationSettings.has(id)) return
+      const active = field === 'pinned' ? isPinned(id) : isMuted(id)
+      const values = field === 'pinned' ? convGroups.pinned : convGroups.muted
+      const original = values.slice()
+      const index = values.indexOf(id)
+      if (index >= 0) values.splice(index, 1)
+      if (!active) values.push(id)
+      if (c) c[field] = !active
+      pendingConversationSettings.set(id, { [field]: !active })
       saveGroups()
-      if (convGroups.muted.includes(convId)) {
-        ctx.ui?.dismissMessages((key: string) => key.startsWith('chat:') && key.endsWith(':' + convId))
+      state.conversations = sortConvs(state.conversations)
+      if (field === 'noDisturb' && !active) {
+        cancelPendingNotification(id)
+        ctx.ui?.dismissMessages((key: string) => key === `chat:${c?.type}:${id}`)
       }
+      try {
+        if (field === 'pinned' && c && api.setPinned) await api.setPinned(id, c.type, !active)
+        if (field === 'noDisturb' && api.noNotify) await api.noNotify(id, !active)
+      } catch (error: any) {
+        const current = findConv(id)
+        if (current) current[field] = active
+        if (field === 'pinned') convGroups.pinned = original
+        else convGroups.muted = original
+        saveGroups()
+        ctx.ui?.toast('会话设置失败：' + error.message, 'error')
+      } finally { pendingConversationSettings.delete(id) }
     }
-    const isMuted = (convId: string) => convGroups.muted.includes(convId)
-    /** 会话排序：置顶优先，其余按时间倒序 */
+    const toggleMute = (id: string) => updateConversationFlag(id, 'noDisturb')
+    /** 未读优先，同一阅读状态内置顶优先，再按时间倒序。 */
     function sortConvs(list: any[]) {
       return [...list].sort((a: any, b: any) => {
-        const pa = convGroups.pinned.includes(a.id) ? 1 : 0
-        const pb = convGroups.pinned.includes(b.id) ? 1 : 0
+        const pa = isPinned(a.id) ? 1 : 0
+        const pb = isPinned(b.id) ? 1 : 0
         if (pa !== pb) return pb - pa
+        const current = (c: any) => state.current?.id === c.id && state.current?.type === c.type ? 1 : 0
+        if (!pa && current(a) !== current(b)) return current(b) - current(a)
+        const ua = a.unread > 0 || convGroups.marked.includes(a.id) ? 1 : 0
+        const ub = b.unread > 0 || convGroups.marked.includes(b.id) ? 1 : 0
+        if (ua !== ub) return ub - ua
         return (b.ts || 0) - (a.ts || 0)
       })
     }
@@ -224,15 +342,13 @@ export const chatPlugin = {
       },
       isCollapsed(id: string) { return convGroups.collapsed.includes(id) },
       toggleMute, isMuted, markUnread,
-      /** 置顶（本地排序，云湖无置顶接口） */
-      togglePin(convId: string) {
-        const i = convGroups.pinned.indexOf(convId)
-        if (i >= 0) convGroups.pinned.splice(i, 1)
-        else convGroups.pinned.push(convId)
-        saveGroups()
-        state.conversations = sortConvs(state.conversations)
+      togglePin: (id: string) => updateConversationFlag(id, 'pinned'),
+      isPinned,
+      setPinMode(mode: string) {
+        if (mode !== 'tabs' && mode !== 'top') return
+        convGroups.pinMode = mode
+        localStorage.setItem('yunhu.conv.pinMode', mode)
       },
-      isPinned(convId: string) { return convGroups.pinned.includes(convId) },
       /** 删除会话（本地隐藏，不删云端聊天记录；云湖无删会话接口） */
       hideConv(convId: string) {
         if (!convGroups.hidden.includes(convId)) convGroups.hidden.push(convId)
@@ -246,10 +362,25 @@ export const chatPlugin = {
       },
       isHidden(convId: string) { return convGroups.hidden.includes(convId) },
       /** 侧栏渲染用：分组 + 未分组 */
-      sections(list: any[]) {
+      sections(list: any[], tab: 'unpinned' | 'pinned' = 'unpinned') {
+        // 搜索按相关度呈现全部命中，不被分组、折叠或当前置顶 Tab 隐藏。
+        if (state.keyword.trim()) return { groups: [], ungrouped: list, pinned: [], active: [] }
+        const pinned: any[] = []
+        const active: any[] = []
         const byGroup: Record<string, any[]> = {}
         const rest: any[] = []
         for (const c of list) {
+          const pinnedConversation = isPinned(c.id)
+          if (convGroups.pinMode === 'tabs') {
+            if (pinnedConversation !== (tab === 'pinned')) continue
+          } else if (pinnedConversation) {
+            pinned.push(c)
+            continue
+          }
+          if (!pinnedConversation && state.current?.id === c.id && state.current?.type === c.type) {
+            active.push(c)
+            continue
+          }
           const g = convGroups.assign[c.id]
           if (g && convGroups.groups.some((x) => x.id === g)) (byGroup[g] = byGroup[g] || []).push(c)
           else rest.push(c)
@@ -257,6 +388,8 @@ export const chatPlugin = {
         return {
           groups: convGroups.groups.map((g) => ({ ...g, items: byGroup[g.id] || [] })),
           ungrouped: rest,
+          pinned,
+          active,
         }
       },
     }
@@ -356,10 +489,8 @@ export const chatPlugin = {
     }
 
     const filtered = () => {
-      const k = state.keyword.trim().toLowerCase()
-      if (!k) return state.conversations
-      return state.conversations.filter(c =>
-        (c.name || '').toLowerCase().includes(k) || c.id.includes(k) || (c.preview || '').toLowerCase().includes(k))
+      // 阅读状态即时重排；搜索时在此基础上按相关度排序。
+      return rankSearchResults(sortConvs(state.conversations), state.keyword, true)
     }
 
     /** 给消息补上统一元素树 */
@@ -367,20 +498,48 @@ export const chatPlugin = {
 
     let conversationSnapshotReady = false
     const notificationFlights = new Set<string>()
-    async function pollNotification(channel: any, account: number) {
+    const notificationPollRetries = new Map<string, ReturnType<typeof setTimeout>>()
+    const notificationPollEpochs = new Map<string, number>()
+    type PendingNotification = { key: string; account: number; session: any; message: any; known: any; attempt: number; timer?: ReturnType<typeof setTimeout> }
+    const pendingNotifications = new Map<string, PendingNotification>()
+    const retryBase = Math.max(5, Number(config.notificationRetryMs) || 1500)
+    function cancelPendingNotification(id: string, type?: number) {
+      for (const [key, pending] of pendingNotifications) {
+        if (String(pending.session.channel.id) === String(id) && (type === undefined || pending.session.channel.type === type)) {
+          clearTimeout(pending.timer); pendingNotifications.delete(key)
+        }
+      }
+      for (const kind of type === undefined ? [1, 2, 3] : [Number(type)]) {
+        const key = `${accountVersion}:${kind}:${id}`
+        clearTimeout(notificationPollRetries.get(key)); notificationPollRetries.delete(key)
+        notificationPollEpochs.set(key, (notificationPollEpochs.get(key) || 0) + 1)
+      }
+      while (notificationPollEpochs.size > 1000) notificationPollEpochs.delete(notificationPollEpochs.keys().next().value)
+    }
+    async function pollNotification(channel: any, account: number, attempt = 0) {
       const key = `${account}:${channel.type}:${channel.id}`
       if (notificationFlights.has(key)) return
+      clearTimeout(notificationPollRetries.get(key)); notificationPollRetries.delete(key)
       notificationFlights.add(key)
+      const epoch = notificationPollEpochs.get(key) || 0
       try {
-        const list = await api.messages(channel.id, channel.type, 1)
-        if (disposed || account !== accountVersion || isMuted(channel.id)) return
+        const list = await api.messages(channel.id, channel.type, 1, { timeout: 5000 })
+        if (disposed || account !== accountVersion || epoch !== (notificationPollEpochs.get(key) || 0) || isMuted(channel.id)) return
         const latest = list[list.length - 1]
-        if (!latest?.id) return
+        if (!latest?.id) throw new Error('最新消息尚未就绪')
         applySession({
           id: latest.id, channel, user: { id: latest.senderId, name: latest.sender, avatar: latest.avatar },
           timestamp: latest.ts, raw: latest, quoteId: latest.quoteId, elements: parse(latest.content || {}, latest.type),
         }, 'created', true)
-      } catch { /* 网络故障不产生额外错误通知，下次列表变化时继续兜底 */ }
+      } catch {
+        // 列表未读数已更新，即使后续计数不再变化也要重试，不能永久丢失这条通知。
+        if (!disposed && account === accountVersion && epoch === (notificationPollEpochs.get(key) || 0) && !isMuted(channel.id) && attempt < 4) {
+          notificationPollRetries.set(key, setTimeout(() => {
+            notificationPollRetries.delete(key)
+            void pollNotification(channel, account, attempt + 1)
+          }, retryBase * 2 ** attempt))
+        }
+      }
       finally { notificationFlights.delete(key) }
     }
     async function loadConversations(silent = false) {
@@ -388,13 +547,24 @@ export const chatPlugin = {
       const account = accountVersion
       state.loadingConvs = true
       try {
-        const list = await api.conversations()
+        const revision = liveVersion
+        const list = await api.conversations(silent ? { timeout: 8000 } : undefined)
         if (disposed || account !== accountVersion) return
+        for (const c of list) Object.assign(c, pendingConversationSettings.get(c.id) || {})
         const previous = new Map(state.conversations.map((c: any) => [`${c.type}:${c.id}`, c]))
+        for (const c of list) {
+          const key = `${c.type}:${c.id}`, old = previous.get(key)
+          if (old && (conversationRevisions.get(key) || 0) > revision) {
+            c.unread = old.unread; c.at = old.at
+            if (old.ts >= c.ts) { c.ts = old.ts; c.preview = old.preview }
+          }
+        }
         // 首次加载只建立基线，避免把启动前的历史未读当成新通知。
         const notify = conversationSnapshotReady ? list.filter((c: any) => {
           const old = previous.get(`${c.type}:${c.id}`)
-          return !isMuted(c.id) && !convGroups.hidden.includes(c.id) && c.unread > (old?.unread || 0) && (!old || c.ts > old.ts)
+          const unreadIncreased = c.unread > (old?.unread || 0)
+          const newerUnread = old && c.unread > 0 && c.ts > old.ts
+          return !(c.noDisturb ?? isMuted(c.id)) && !convGroups.hidden.includes(c.id) && (unreadIncreased || newerUnread)
         }) : []
         conversationSnapshotReady = true
         // 本地隐藏（删除会话）过滤 + 置顶排序
@@ -402,8 +572,8 @@ export const chatPlugin = {
         const sorted = sortConvs(shown)
         // 正在查看的会话：服务端未读数是陈旧的（只在 dismiss 时清），
         // 直接覆盖会让当前会话重新冒出未读气泡 —— 本地先归零。
-        if (state.current) {
-          const cur = sorted.find((c: any) => c.id === state.current!.id)
+        if (viewingConversation()) {
+          const cur = sorted.find((c: any) => c.id === state.current!.id && c.type === state.current!.type)
           if (cur) {
             cur.unread = 0; cur.at = false
             // E4：dismiss 尚未落地时服务端仍记未读，补一次上报把服务端也清掉
@@ -416,9 +586,12 @@ export const chatPlugin = {
           if (convGroups.marked.includes(c.id) && state.current?.id !== c.id) c.unread = Math.max(c.unread || 0, 1)
         }
         saveSnapshot(sorted)
-        // 只有确实增长的未读才补拉一条消息，以拿到可准确跳转的 ID。
-        // 串行执行，避免大量会话同时变化时冲击上游。
-        ;(async () => { for (const c of notify) { if (disposed || account !== accountVersion) break; await pollNotification(c, account) } })()
+        // 少量并发补拉，避免一个慢会话阻塞所有其他会话。
+        const queue = notify.slice()
+        const workers = Math.min(queue.length, 4)
+        for (let i = 0; i < workers; i++) void (async () => {
+          while (queue.length && !disposed && account === accountVersion) await pollNotification(queue.shift(), account)
+        })()
       } catch (e: any) {
         if (!silent && !disposed && account === accountVersion) ctx.emit('ui/toast', { text: '会话列表加载失败：' + e.message, 'type': 'error' })
       } finally { if (account === accountVersion) state.loadingConvs = false }
@@ -457,6 +630,12 @@ export const chatPlugin = {
       state.loadingConvs = false
       conversationSnapshotReady = false
       notificationFlights.clear()
+      for (const timer of notificationPollRetries.values()) clearTimeout(timer)
+      notificationPollRetries.clear()
+      notificationPollEpochs.clear()
+      for (const pending of pendingNotifications.values()) clearTimeout(pending.timer)
+      pendingNotifications.clear()
+      conversationRevisions.clear()
     }
     ctx.on('auth/logout', clearBackgroundWork)
     ctx.effect(() => clearBackgroundWork)
@@ -465,7 +644,7 @@ export const chatPlugin = {
       if (old) clearTimeout(old)
       dismissTimers.set(id, setTimeout(() => {
         dismissTimers.delete(id)
-        if (state.current?.id === id) dismissNow(id)
+        if (state.current?.id === id && viewingConversation()) dismissNow(id)
       }, 2500))
     }
 
@@ -489,7 +668,7 @@ export const chatPlugin = {
       const c = await ensureCache()
       c.convs = list.slice(0, 60).map((x: any) => ({
         id: x.id, name: x.name, avatar: x.avatar, type: x.type,
-        ts: x.ts, unread: x.unread, at: x.at, preview: x.preview,
+        ts: x.ts, unread: x.unread, at: x.at, preview: x.preview, pinned: x.pinned, noDisturb: x.noDisturb,
       }))
       await storage?.save('cache', c).catch(() => {})
     }
@@ -505,13 +684,20 @@ export const chatPlugin = {
       if (!cur) return
       const version = viewVersion
       // 轮询未完成时不叠加请求；主动重载仍可取代旧请求。
-      if (silent && (state.jumpedAway || messageFlightVersion === version)) return
+      if (silent && messageFlightVersion === version) return
       const request = ++messageRequest
+      const liveAtStart = liveVersion
       messageFlightVersion = version
       if (!silent) { state.jumpedAway = false; state.locateId = null }   // 主动重载=回最新
       state.loadingMsgs = !silent
       try {
-        const list = (await api.messages(cur.id, cur.type, 30)).map(withElements)
+        if (preferences.antiRecall) await recallCache.ready()
+        const response = await api.messages(cur.id, cur.type, 30)
+        if (!inView(cur, version) || request !== messageRequest) return
+        const existing = new Map(state.messages.map((m: any) => [String(m.id), m]))
+        const list = response.map((m: any) => { const old = existing.get(String(m.id)); return samePollMessage(m, old) ? old : mergeMessage(m, cur, undefined, captureFromPoll(m)) })
+        const since = list.length ? Math.min(...list.map((m: any) => m.ts || Infinity)) : 0
+        for (const m of recallCache.recalled(cur, since)) if (!list.some((x: any) => x.id === m.id)) list.push(m)
         if (!inView(cur, version) || request !== messageRequest) return
         const mine = auth.state.user?.id
         for (const m of list) if (m.right === undefined) m.right = m.senderId === mine
@@ -520,15 +706,21 @@ export const chatPlugin = {
         const byId = new Map(state.messages.map((m: any) => [m.id, m]))
         let added = 0
         for (const m of list) {
-          if (byId.has(m.id)) Object.assign(byId.get(m.id), m, { pending: false })
+          if (byId.has(m.id)) {
+            if (m === byId.get(m.id)) continue
+            const liveKey = `${channelKey(cur)}:${m.id}`
+            if ((liveRevisions.get(liveKey) || 0) <= liveAtStart) Object.assign(byId.get(m.id), mergeMessage(m, cur, byId.get(m.id)), { pending: false })
+          }
           else { state.messages.push(m); added++ }
         }
         if (added) {
           state.messages.sort((a: any, b: any) => a.ts - b.ts)
           // 翻历史时保留阅读窗口，不能因后台轮询删掉最上方的旧消息。
-          if (atBottom() && state.messages.length > maxMessages) state.messages.splice(0, state.messages.length - maxMessages)
+          if (atBottom() && state.messages.length > messageLimit()) state.messages.splice(0, state.messages.length - messageLimit())
           // pending 只在对应服务端 ID 确认后清除，避免新消息把未对账的发送吞掉。
-          if (atBottom()) ctx.emit('chat/scroll-bottom')
+          // 主动打开/刷新会话时，即便旧 DOM 的滚动事件刚把贴底状态改成 false，也要展示最新消息。
+          // 定位历史消息可能在请求期间开始；此时保留定位，不抢回底部。
+          if ((atBottom() || !silent) && !state.jumpedAway) ctx.emit('chat/scroll-bottom')
         } else if (!silent) {
           ctx.emit('chat/scroll-bottom')
         }
@@ -545,8 +737,11 @@ export const chatPlugin = {
     function atBottom() { return bottomFlag }
 
     async function open(chat: any) {
+      cancelPendingNotification(chat.id, chat.type)
+      const sameChannel = state.current?.id === chat.id && state.current?.type === chat.type
+      rememberWindow()
       const version = ++viewVersion
-      state.current = chat
+      state.current = state.conversations.find((c: any) => c.id === chat.id && c.type === chat.type) || chat
       state.loadingMore = false
       state.searching = false
       // 打开即清除本地「标记未读」
@@ -558,7 +753,7 @@ export const chatPlugin = {
       const hit0 = state.conversations.find((c: any) => c.id === chat.id)
       if (hit0) { hit0.unread = 0; hit0.at = false }
       bottomFlag = true
-      state.messages = []
+      if (!sameChannel) state.messages = messageWindows.get(channelKey(chat))?.slice() || []
       state.hasMore = true
       state.jumpedAway = false
       state.locateId = null
@@ -584,13 +779,21 @@ export const chatPlugin = {
       if (!oldest) return
       state.loadingMore = true
       try {
-        const older = (await api.messagesBefore(cur.id, cur.type, oldest.id, 30)).map(withElements)
+        const response = await api.messagesBefore(cur.id, cur.type, oldest.id, 30)
         if (!inView(cur, version)) return
+        const older = response.map((m: any) => mergeMessage(m, cur))
+        const times = older.map((m: any) => Number(m.ts)).filter((ts: number) => Number.isFinite(ts) && ts > 0)
+        const since = times.length ? Math.min(...times) : 0
+        // The server can omit recalled messages entirely; merge local matches into the same history window.
+        for (const m of recallCache.recalled(cur, since)) {
+          if ((!oldest.ts || m.ts <= oldest.ts) && !older.some((x: any) => x.id === m.id)) older.push(m)
+        }
+        older.sort((a: any, b: any) => (a.ts || 0) - (b.ts || 0))
         const mine = auth.state.user?.id
         for (const m of older) if (m.right === undefined) m.right = m.senderId === mine
         const ids = new Set(state.messages.map((m: any) => m.id))
         state.messages = [...older.filter((m: any) => !ids.has(m.id)), ...state.messages]
-        state.hasMore = older.length >= 30
+        state.hasMore = response.length >= 30
       } catch (e: any) {
         if (inView(cur, version)) ctx.emit('ui/toast', { text: '加载历史失败：' + e.message, type: 'error' })
       } finally { if (inView(cur, version)) state.loadingMore = false }
@@ -617,35 +820,40 @@ export const chatPlugin = {
     }
 
     /** 引用/通知统一定位入口：数据就绪后保存定位态，页面稍后挂载也能定位。 */
-    async function locate(channel: any, messageId: string) {
+    async function locate(channel: any, messageId: string, target?: any) {
       if (!channel?.id || !messageId || disposed) return
       const request = ++locateRequest
+      const version = viewVersion
+      const account = accountVersion
+      const key = channelKey(channel)
+      const currentKey = state.current ? channelKey(state.current) : ''
       ctx.console?.goto('/')
-      const same = state.current?.id === channel.id && state.current?.type === channel.type
-      const opening = same ? null : open(channel)
-      const version = same ? ++viewVersion : viewVersion
-      const current = state.current
-      if (opening) await opening
-      if (!inView(current, version) || request !== locateRequest) return
-      state.loadingMsgs = false
-      state.loadingMore = false
+      // Fetch transactionally. A failed lookup must never clear the visible conversation.
+      let messages = key === currentKey ? state.messages.slice() : messageWindows.get(key)?.slice() || []
+      if (target?.id === messageId && !messages.some((m: any) => m.id === messageId)) messages.push(mergeMessage(target, channel))
       try {
-        if (!state.messages.some((m: any) => m.id === messageId)) {
-          const around = await api.messagesAround(channel.id, channel.type, messageId, 30, -1)
-          if (!inView(current, version) || request !== locateRequest) return
-          if (!around.some((m: any) => m.id === messageId)) throw new Error('消息可能已删除或过旧')
-          const mine = auth.state.user?.id
-          state.messages = around.map(withElements).map((m: any) => ({ ...m, right: m.right ?? m.senderId === mine }))
-          state.hasMore = around.length >= 30
+        if (!messages.some((m: any) => m.id === messageId)) {
+          const around = await api.messagesAround(channel.id, channel.type, messageId, 30, target?.seq || 0)
+          messages = around.map((m: any) => mergeMessage(m, channel))
+          if (!messages.some((m: any) => m.id === messageId)) throw new Error('消息可能已删除或过旧')
+        }
+        if (disposed || account !== accountVersion || version !== viewVersion || request !== locateRequest) return
+        // Seed open() with the resolved window, so even a slow latest-page response cannot blank it.
+        if (key !== currentKey) {
+          messageWindows.set(key, messages)
+          void open(channel)
+        } else {
+          // Retain live pushes that arrived while the lookup was pending.
+          const byId = new Map(state.messages.map((m: any) => [m.id, m]))
+          for (const m of messages) if (!byId.has(m.id)) byId.set(m.id, m)
+          state.messages = [...byId.values()].sort((a: any, b: any) => a.ts - b.ts)
         }
         state.jumpedAway = true
         state.locateId = messageId
         bottomFlag = false
         ctx.emit('chat/locate', messageId)
       } catch (e: any) {
-        if (!inView(current, version) || request !== locateRequest) return
-        state.jumpedAway = false
-        state.locateId = null
+        if (disposed || account !== accountVersion || version !== viewVersion || request !== locateRequest) return
         ctx.ui?.toast('消息定位失败：' + e.message, 'warn')
       }
     }
@@ -694,7 +902,7 @@ export const chatPlugin = {
       if (local) return messageQuote(local)
       const key = `${current.type}:${current.id}:${id}`
       if (!quoteCache.has(key)) {
-        const query = api.messagesAround(current.id, current.type, id, 1, -1).then((list: any[]) => {
+        const query = api.messagesAround(current.id, current.type, id, 1, 0).then((list: any[]) => {
           const found = list.find((m: any) => m.id === id)
           if (!found) { quoteCache.delete(key); return null }
           return messageQuote(found)
@@ -712,8 +920,8 @@ export const chatPlugin = {
       if (!cur || !ids.length) return
       await api.recall(cur.id, cur.type, ids)
       for (const id of ids) {
-        const m = state.messages.find((x: any) => x.id === id)
-        if (m) m.recalled = true
+        const i = state.messages.findIndex((x: any) => x.id === id)
+        if (i >= 0) state.messages[i] = mergeMessage({ ...state.messages[i], recalled: true }, cur, state.messages[i])
       }
       clearSelection()
       ctx.emit('ui/toast', { text: `已撤回 ${ids.length} 条消息`, type: 'success' })
@@ -767,6 +975,7 @@ export const chatPlugin = {
         }
         // WS 可能先于 HTTP 响应到达，同一 ID 只上屏一次。
         if (!state.messages.some((m: any) => m.id === id)) state.messages.push(optimistic)
+        locateRequest++; state.jumpedAway = false; state.locateId = null; bottomFlag = true
         ctx.emit('chat/scroll-bottom')
         scheduleReconcile(cur)
       } catch (e: any) {
@@ -782,11 +991,19 @@ export const chatPlugin = {
      */
     async function edit(msgId: string, text: string) {
       const cur = state.current
+      const version = viewVersion
       if (!cur || !text.trim()) return
       const m = state.messages.find((x: any) => x.id === msgId)
       const ct = m?.type === 3 ? 3 : m?.type === 8 ? 8 : 1
       await api.editMessage(cur.id, cur.type, msgId, ct, { text: text.trim() })
-      if (m) { m.content = { ...(m.content || {}), text: text.trim() }; m.edited = true; m.elements = null }
+      if (inView(cur, version)) {
+        const index = state.messages.findIndex((x: any) => x.id === msgId)
+        if (index >= 0) {
+          const current = state.messages[index]
+          liveRevisions.set(`${cur.type}:${cur.id}:${msgId}`, ++liveVersion)
+          state.messages[index] = mergeMessage({ ...current, content: { ...(current.content || {}), text: text.trim() }, edited: true, elements: null }, cur)
+        }
+      }
       ctx.emit('ui/toast', { text: '已修改并同步', type: 'success' })
     }
 
@@ -813,6 +1030,7 @@ export const chatPlugin = {
           id, elements, type: render(elements).contentType, senderId: me?.id, sender: me?.name || '我',
           avatar: me?.avatar, ts: Date.now(), right: true, pending: true, quoteId,
         })
+        locateRequest++; state.jumpedAway = false; state.locateId = null; bottomFlag = true
         ctx.emit('chat/scroll-bottom')
         scheduleReconcile(cur)
       }
@@ -820,21 +1038,29 @@ export const chatPlugin = {
 
     // WS 重连可能重放同一消息。使用有界 ID 集避免未读和 Toast 重复累计。
     const seenIncoming = new Set<string>()
-    ctx.on('auth/logout', () => seenIncoming.clear())
+    ctx.on('auth/logout', () => { seenIncoming.clear(); liveRevisions.clear() })
     /** 统一会话事件写入本地状态 */
     function applySession(session: any, kind = 'created', fromPoll = false) {
+      const selfId = auth.state.user?.id
+      const type = Number(session.channel?.type) || 2
+      let id = String(session.channel?.id || '')
+      if (type === 1 && id === selfId) id = session.user?.id !== selfId ? session.user?.id : session.raw?.recvId
+      if (!id || !session.id) return
+      session = { ...session, id: String(session.id), channel: { ...session.channel, id: String(id), type } }
       const msg = session.raw || {}
+      if (kind === 'created' && (session.recalled || msg.recalled || msg.recallTs)) kind = 'recalled'
       const mine = session.user.id === auth.state.user?.id
       // ⚠️ WS 推送经常只带 id/发送者不带 content（或 content 为空壳）：
       //    直接 { ...old, ...m } 会把已加载的正文/元素抹成 {}（文章打不开的根因）。
       //    这里做覆盖保护：incoming 空则保留本地已有值。
-      const existing = state.messages.find((x: any) => x.id === session.id)
-      const hasContent = !!msg.content && Object.keys(msg.content).length > 0
+      const existing = state.current?.id === session.channel.id && state.current?.type === session.channel.type
+        ? state.messages.find((x: any) => x.id === session.id) : undefined
+      const hasContent = hasBody(msg.content)
       const content = hasContent ? msg.content : (existing?.content || {})
-      const elements = session.elements?.length
+      const elements = session.elements?.length && (hasContent || !existing)
         ? session.elements
         : (hasContent ? parse(content, msg.type) : (existing?.elements || []))
-      const m = {
+      let m = {
         id: session.id,
         chatId: session.channel.id,
         senderId: session.user.id,
@@ -844,14 +1070,41 @@ export const chatPlugin = {
         type: msg.type || existing?.type,
         content,
         elements,
-        ts: session.timestamp,
+        // An edit notification's timestamp is not a new send time; preserve the row's position.
+        ts: kind === 'updated' && existing?.ts ? existing.ts : session.timestamp || existing?.ts,
+        seq: msg.seq || existing?.seq,
         right: mine,
-        recalled: !!session.recalled,
+        recalled: kind === 'recalled' || !!session.recalled || !!msg.recalled || !!msg.recallTs,
         edited: kind === 'updated' || !!session.edited,
         quoteId: session.quoteId || msg.quoteId || existing?.quoteId,
       }
+      const receivedBody = hasRecallBody({ content: msg.content, elements: session.elements })
+      const capture = !m.recalled && receivedBody && (!fromPoll || captureFromPoll(m))
+      m = mergeMessage(m, session.channel, existing, capture)
+      if (m.recalled && preferences.antiRecall) {
+        const owner = String(selfId || '')
+        const account = accountVersion
+        const eventMessage = m
+        // A recall may arrive before the persisted cache finishes loading, including in a background conversation.
+        void recallCache.ready().then(() => {
+          if (disposed || account !== accountVersion || !preferences.antiRecall || String(auth.state.user?.id || '') !== owner) return
+          const restored = recallCache.merge(session.channel, eventMessage)
+          if (!restored.retainedRecall) return
+          const update = (list: any[]) => {
+            const index = list.findIndex((item: any) => String(item.id) === String(restored.id))
+            if (index >= 0) list[index] = { ...list[index], ...restored }
+          }
+          if (state.current?.id === session.channel.id && state.current?.type === session.channel.type) update(state.messages)
+          const windowMessages = messageWindows.get(channelKey(session.channel))
+          if (windowMessages) update(windowMessages)
+        })
+      }
       const isCurrent = state.current && session.channel.id === state.current.id && session.channel.type === state.current.type
       const incomingKey = `${session.channel.type}:${session.channel.id}:${session.id}`
+      if (!fromPoll) {
+        liveRevisions.set(incomingKey, ++liveVersion)
+        if (liveRevisions.size > 2000) liveRevisions.delete(liveRevisions.keys().next().value)
+      }
       const duplicate = kind === 'created' && (seenIncoming.has(incomingKey) || (isCurrent && !!existing))
       if (kind === 'created') {
         seenIncoming.add(incomingKey)
@@ -862,16 +1115,19 @@ export const chatPlugin = {
         if (i >= 0) state.messages[i] = { ...state.messages[i], ...m }
         else {
           state.messages.push(m)
-          if (atBottom() && !state.jumpedAway && state.messages.length > maxMessages) state.messages.splice(0, state.messages.length - maxMessages)
+          if (atBottom() && !state.jumpedAway && state.messages.length > messageLimit()) state.messages.splice(0, state.messages.length - messageLimit())
           if (atBottom()) ctx.emit('chat/scroll-bottom')
         }
       }
-      const conv = state.conversations.find((c: any) => c.id === session.channel.id)
+      if (isCurrent && !hasContent && kind === 'created') scheduleReconcile(state.current)
+      const conv = state.conversations.find((c: any) => c.id === session.channel.id && c.type === session.channel.type)
       if (conv) {
         conv.preview = previewOf(m)
         conv.ts = session.timestamp
-        if (!isCurrent && kind === 'created' && !duplicate && !mine && !fromPoll) conv.unread = (conv.unread || 0) + 1
-        if (isCurrent && kind === 'created' && !mine) {
+        const reading = isCurrent && viewingConversation()
+        if (!reading && kind === 'created' && !duplicate && !mine && !fromPoll) conv.unread = (conv.unread || 0) + 1
+        if (kind === 'created' && !fromPoll) conversationRevisions.set(channelKey(conv), liveVersion)
+        if (reading && kind === 'created' && !mine) {
           // E4：当前会话来消息立即本地归零 + 即时报已读（防抖兜底合并上报）
           conv.unread = 0; conv.at = false
           scheduleDismiss(session.channel.id)
@@ -881,26 +1137,80 @@ export const chatPlugin = {
       } else if (kind === 'created') {
         if (!convGroups.hidden.includes(session.channel.id)) loadConversations(true)
       }
-      const viewingCurrent = isCurrent && !document.hidden && (document.hasFocus?.() ?? true) && (!ctx.console || ctx.console.state.currentPage === '/')
+      const viewingCurrent = isCurrent && viewingConversation()
       if (!viewingCurrent && !mine && kind === 'created' && !duplicate) {
         if (!isCurrent) ctx.emit('chat/incoming', m)
-        if (!isMuted(session.channel.id)) {
-          const channel = {
-            id: session.channel.id, type: session.channel.type,
-            name: conv?.name || session.channel.name || session.channel.id,
-            avatar: conv?.avatar || session.channel.avatar,
-          }
-          ctx.ui?.toast(`${session.user.name || session.user.id}：${previewOf(m) || '[新消息]'}`, 'message', 6500, {
-            title: channel.name,
-            key: `chat:${channel.type}:${channel.id}`,
-            onClick: () => locate(channel, session.id),
-          })
-        }
+        void notifyIncoming(session, m, conv)
+
       }
     }
 
+    function notifyIncoming(session: any, message: any, known: any) {
+      const key = `${session.channel.type}:${session.channel.id}`
+      const previous = pendingNotifications.get(key)
+      if (previous) clearTimeout(previous.timer)
+      // 同一会话只保留最新待通知消息；较慢的旧资料请求不能覆盖新通知。
+      const entry: PendingNotification = { key, account: accountVersion, session, message, known, attempt: 0 }
+      pendingNotifications.set(key, entry)
+      while (pendingNotifications.size > 100) {
+        const oldest = pendingNotifications.keys().next().value
+        clearTimeout(pendingNotifications.get(oldest)?.timer)
+        pendingNotifications.delete(oldest)
+      }
+      void deliverIncoming(entry)
+    }
+    async function notificationMetadata(channel: any, known: any) {
+      const getter = channel.type === 2 ? api.groupInfo : channel.type === 3 ? api.botInfo : api.getUser
+      const requests: Promise<any>[] = []
+      if (typeof getter === 'function') requests.push(Promise.resolve().then(() => getter.call(api, channel.id, { timeout: 5000 })).then((info: any) => {
+        if (typeof info?.noDisturb !== 'boolean') throw new Error('会话免打扰状态未知')
+        return { ...known, ...info, name: known?.name || info.name }
+      }))
+      if (typeof api.conversations === 'function') requests.push(Promise.resolve().then(() => api.conversations({ timeout: 5000 })).then((list: any[]) => {
+        const hit = list.find((c: any) => String(c.id) === String(channel.id) && Number(c.type) === Number(channel.type))
+        if (typeof hit?.noDisturb !== 'boolean') throw new Error('会话免打扰状态未知')
+        return { ...known, ...hit }
+      }))
+      if (!requests.length) throw new Error('无法获取会话信息')
+      return Promise.any(requests)
+    }
+    async function deliverIncoming(entry: PendingNotification) {
+      const valid = () => !disposed && entry.account === accountVersion && pendingNotifications.get(entry.key) === entry
+      const { session, message } = entry
+      if (!valid()) return
+      if ((ctx as any).lock?.isLocked || isMuted(session.channel.id) || showingConversation(session.channel)) { pendingNotifications.delete(entry.key); return }
+      let conv = state.conversations.find((c: any) => c.id === session.channel.id && c.type === session.channel.type) || entry.known
+      const hasInfoApi = !!(api.groupInfo || api.getUser || api.botInfo)
+      if (!conv || (conv.noDisturb === undefined && hasInfoApi)) {
+        try { conv = await notificationMetadata(session.channel, conv) }
+        catch {
+          if (!valid()) return
+          if (entry.attempt >= 4) { pendingNotifications.delete(entry.key); return }
+          const delay = retryBase * 2 ** entry.attempt++
+          entry.timer = setTimeout(() => { entry.timer = undefined; void deliverIncoming(entry) }, delay)
+          return
+        }
+      }
+      if (!valid()) return
+      if ((ctx as any).lock?.isLocked) { pendingNotifications.delete(entry.key); return }
+      const live = state.conversations.find((c: any) => c.id === session.channel.id && c.type === session.channel.type)
+      if (live && live.noDisturb === undefined && typeof conv?.noDisturb === 'boolean') live.noDisturb = conv.noDisturb
+      if ((live?.noDisturb ?? conv?.noDisturb) || isMuted(session.channel.id) || showingConversation(session.channel)) {
+        pendingNotifications.delete(entry.key); return
+      }
+      const channel = { id: session.channel.id, type: session.channel.type,
+        name: live?.name || conv?.name || session.channel.name || (session.channel.type === 1 ? session.user.name : '') || '新会话',
+        avatar: live?.avatar || conv?.avatar || session.channel.avatar }
+      pendingNotifications.delete(entry.key)
+      ctx.ui?.toast(`${session.user.name || session.user.id}：${previewOf(message) || '[新消息]'}`, 'message', 6500, {
+        title: channel.name, avatar: channel.avatar,
+        key: `chat:${channel.type}:${channel.id}`,
+        onClick: () => locate(channel, message.id, message),
+      })
+    }
+
     const chat = {
-      state, drafts, filtered, loadConversations, loadMessages, loadMore, search, locate, open, send, sendMedia, edit, previewOf,
+      state, drafts, preferences, setAntiRecall, clearRecallCache, filtered, loadConversations, loadMessages, loadMore, search, locate, open, send, sendMedia, edit, previewOf,
       /* 选择态 */
       isSelected, toggleSelect, startSelecting, selectAll, clearSelection,
       get selectedMessages() { return state.messages.filter((m: any) => state.selected.includes(m.id)) },
@@ -931,7 +1241,7 @@ export const chatPlugin = {
         })
       },
       /** ChatView 滚动时调用：标记是否贴在底部（决定新消息要不要自动滚） */
-      setAtBottom,
+      setAtBottom, atBottom,
     }
 
     /* ---- 订阅统一事件（Satori 风格） ---- */
@@ -959,26 +1269,41 @@ export const chatPlugin = {
         loadConversations(true)
         timer = setInterval(() => {
           tick++
-          // E5：后台不轮询，但回到前台要立刻对账一次（visibilitychange 里触发）
-          if (document.hidden) return
-          // 性能：WS 在线时实时性由推送保证，轮询每 tick 只对账会话列表（未读/预览）；
-          // 消息列表每 60s（tick%15）兜底对账一次防推送丢包，WS 离线时每次全量兜底
+          // 后台仍检查未读：WS 断线时不能让最小化窗口完全失去通知。
+          // 当前消息每次 tick 对账，WS 丢包或历史定位后也不会停止刷新；
+          // WS 在线时会话列表降频，消息请求由 messageFlightVersion 合并。
           const ws: any = (ctx as any).ws
           const online = !!ws?.online
-          if (online && tick % 5 !== 0) return
-          loadConversations(true)
-          if (state.current && (!online || tick % 15 === 0)) loadMessages(true)
+          if (!online || tick % 5 === 0) loadConversations(true)
+          if (!document.hidden && !windowMinimized && state.current) loadMessages(true)
         }, pollMs)
       }, { immediate: true })
       // E5：回到前台立即对账（不等下一个 tick，最长 20s 的陈旧窗口消失）
       const onVis = () => {
         if (document.visibilityState === 'visible' && auth.state.status === 'ready') {
+          readCurrent()
           loadConversations(true)
           if (state.current) loadMessages(true)
         }
       }
+      const onMinimized = (event: Event) => {
+        windowMinimized = (event as CustomEvent).detail === true
+        if (windowMinimized && resourceMode.economy) { messageWindows.clear(); quoteCache.clear() }
+        if (!windowMinimized && auth.state.status === 'ready') {
+          readCurrent(); loadConversations(true)
+          if (state.current) loadMessages(true)
+        }
+      }
       document.addEventListener('visibilitychange', onVis)
-      return () => { unwatch(); stop(); document.removeEventListener('visibilitychange', onVis) }
+      const onFocus = () => { windowFocused = true; readCurrent() }
+      const onBlur = () => { windowFocused = false }
+      const onNativeFocus = (event: Event) => { windowFocused = (event as CustomEvent).detail === true; if (windowFocused) readCurrent() }
+      window.addEventListener('focus', onFocus)
+      window.addEventListener('blur', onBlur)
+      window.addEventListener('yh-window-focused', onNativeFocus)
+      window.addEventListener('yh-window-minimized', onMinimized)
+      const unwatchPage = watch(() => ctx.console?.state.currentPage, readCurrent)
+      return () => { unwatch(); unwatchPage(); stop(); document.removeEventListener('visibilitychange', onVis); window.removeEventListener('focus', onFocus); window.removeEventListener('blur', onBlur); window.removeEventListener('yh-window-focused', onNativeFocus); window.removeEventListener('yh-window-minimized', onMinimized) }
     })
 
     /* 输入区按钮由插件贡献 —— 这批是 chat 插件自带的（默认序：文本/MD/HTML → 表情 → 图片 → 视频 → 文件） */

@@ -45,6 +45,7 @@ export const botConsolePlugin = {
     })
 
     async function load() {
+      if (api.token === '' && !(ctx as any).auth?.state?.user?.id) return
       state.loading = true
       try {
         const r = await api.myBots()
@@ -95,6 +96,7 @@ export const botConsolePlugin = {
 
     ctx.set('botconsole', { state, load, create, edit, resetToken, loadInstructions })
 
+    ctx.on('auth/login', () => { load() })
     load()
     ctx.logger?.info('botconsole 插件已加载（机器人控制台）')
 

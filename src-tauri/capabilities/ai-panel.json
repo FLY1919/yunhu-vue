@@ -1,0 +1,8 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "ai-panel",
+  "description": "AI 回复浮窗，只能操作自身窗口",
+  "windows": ["ai-reply"],
+  "remote": { "urls": ["http://127.0.0.1:*/*"] },
+  "permissions": ["core:default", "allow-ai-panel-action"]
+}

@@ -1,12 +1,15 @@
 <script setup lang="ts">
-import { inject, ref, nextTick, computed, onUnmounted, toRefs } from 'vue'
+import { decodedImageUrl, imageMetadata, mediaMetadata } from '../core/media'
+import { inject, ref, nextTick, computed, onUnmounted, toRefs, defineAsyncComponent, watch } from 'vue'
 import QuoteBar from './QuoteBar.vue'
-import ImageEditor from './ImageEditor.vue'
+import AiInstructionDialog from './AiInstructionDialog.vue'
+const ImageEditor = defineAsyncComponent(() => import('./ImageEditor.vue'))
 import { h } from '../satori/element'
 import Icon from '../console/components/Icon.vue'
 import { resUrl } from '../core/res'
 import { fallbackAvatar } from '../core/util'
 import type { PendingAttachment as Pending } from '../core/composer-drafts'
+import { keyOf } from '../plugins/userbot'
 
 const ctx = inject<any>('ctx')
 const chat = ctx.chat
@@ -20,6 +23,82 @@ let disposed = false
 const isCurrent = () => !disposed && chat.state.current?.id === target.id && chat.state.current?.type === target.type
   && ctx.auth?.state.user?.id === accountId
 onUnmounted(() => { disposed = true })
+const aiOpen = ref(false)
+const aiInstructionOpen = ref(false)
+const aiInstructionError = ref('')
+const aiSubmitting = ref(false)
+const aiDetached = computed(() => !!ctx.aiPanel?.state.detached)
+async function detachAi(position?: { x?: number; y?: number; drag?: boolean }) {
+  aiInstructionOpen.value = false
+  await ctx.aiPanel?.detach(position)
+}
+let stopAiDrag: (() => void) | undefined
+function startAiDrag(e: PointerEvent) {
+  if (e.button !== 0 || !ctx.aiPanel) return
+  stopAiDrag?.()
+  const el = e.currentTarget as HTMLElement
+  el.setPointerCapture(e.pointerId)
+  const stop = () => {
+    el.removeEventListener('pointermove', move); el.removeEventListener('pointerup', stop); el.removeEventListener('pointercancel', stop)
+    if (el.hasPointerCapture(e.pointerId)) el.releasePointerCapture(e.pointerId)
+    stopAiDrag = undefined
+  }
+  const move = (p: PointerEvent) => {
+    if (p.clientX < 0 || p.clientX > innerWidth || p.clientY < 0 || p.clientY > innerHeight) {
+      stop(); void detachAi({ x: p.screenX - 180, y: p.screenY - 24, drag: true })
+    }
+  }
+  stopAiDrag = stop
+  el.addEventListener('pointermove', move); el.addEventListener('pointerup', stop); el.addEventListener('pointercancel', stop)
+}
+onUnmounted(() => stopAiDrag?.())
+const aiKey = keyOf(target)
+const aiHasAI = computed(() => ctx.userbot?.usesAIFor(target) !== false)
+const aiWorkMode = computed(() => ctx.userbot?.workModeFor(target) || 'conversation')
+function switchAiMode(event: Event) { try { ctx.userbot.setWorkMode(target, (event.target as HTMLSelectElement).value) } catch (e: any) { (event.target as HTMLSelectElement).value = aiWorkMode.value; ctx.ui.toast(e.message, 'warn') } }
+const aiBusy = computed(() => !!ctx.userbot?.state.busy[aiKey])
+const aiNow = ref(Date.now())
+const aiQueued = computed(() => ctx.userbot?.state.queued?.[aiKey])
+const aiActive = computed(() => aiBusy.value || !!aiQueued.value)
+const aiStatus = computed(() => aiQueued.value && !aiBusy.value
+  ? `等待回复 · ${Math.max(0, Math.ceil((aiQueued.value.dueAt - aiNow.value) / 1000))} 秒 · ${aiQueued.value.count} 条消息`
+  : ctx.userbot?.state.context[aiKey]?.stage || (aiBusy.value ? '正在准备回复' : ctx.userbot?.statusFor(target)))
+const aiElapsed = computed(() => Math.max(0, Math.floor((aiNow.value - (ctx.userbot?.state.started?.[aiKey] || aiNow.value)) / 1000)))
+let aiClock: ReturnType<typeof setInterval> | undefined
+watch(aiActive, (active) => {
+  clearInterval(aiClock); aiNow.value = Date.now()
+  if (active) { if (isCurrent()) aiOpen.value = true; aiClock = setInterval(() => { aiNow.value = Date.now() }, 1000) }
+}, { immediate: true })
+onUnmounted(() => clearInterval(aiClock))
+watch(() => ctx.userbot?.state.drafts[aiKey], (value) => { if (value && isCurrent()) aiOpen.value = true })
+async function generateAiDraft(manual?: { instruction: string; previousDraft?: string }) {
+  if (aiSubmitting.value || aiActive.value || !isCurrent()) return false
+  aiSubmitting.value = true; aiInstructionError.value = ''
+  try {
+    const answer = await ctx.userbot.runManual(target, manual)
+    if (isCurrent()) { ctx.userbot.state.drafts[aiKey] = answer; ctx.userbot.state.draftKinds[aiKey] = ctx.userbot.state.replyKinds[aiKey] || 1 }
+    return true
+  } catch (e: any) {
+    if (isCurrent() && e?.name !== 'AbortError') {
+      aiInstructionError.value = e.message || '生成失败，请重试'
+      ctx.ui?.toast?.('AI 生成失败：' + aiInstructionError.value, 'error', 6000)
+    }
+    return false
+  } finally { aiSubmitting.value = false }
+}
+async function submitAiInstruction(value: { instruction: string; useDraft: boolean }) {
+  const previousDraft = value.useDraft ? ctx.userbot?.state.drafts[aiKey] : undefined
+  if (await generateAiDraft({ instruction: value.instruction, previousDraft }) && isCurrent()) aiInstructionOpen.value = false
+}
+function useAiDraft() {
+  const answer = ctx.userbot?.state.drafts[aiKey]
+  if (!answer || !isCurrent()) return
+  text.value = text.value ? text.value.replace(/\s+$/, '') + '\n' + answer : answer
+  kind.value = ctx.userbot.state.draftKinds?.[aiKey] || 1
+  delete ctx.userbot.state.draftKinds?.[aiKey]
+  delete ctx.userbot.state.drafts[aiKey]; aiOpen.value = false
+  nextTick(() => { autoresize(); ta.value?.focus() })
+}
 
 // 1 文本 / 3 Markdown / 8 HTML
 const ta = ref<HTMLTextAreaElement | null>(null)
@@ -139,8 +218,8 @@ function autoresize() {
 let pendingSeq = Math.max(Date.now(), ...pending.value.map((p) => p.id))
 
 function classify(f: File): Pending['kind'] {
-  if (f.type.startsWith('image/')) return 'image'
-  if (f.type.startsWith('video/')) return 'video'
+  if (f.type.startsWith('image/') || /\.(png|jpe?g|gif|webp|bmp|avif|heic|heif)$/i.test(f.name)) return 'image'
+  if (f.type.startsWith('video/') || /\.(mp4|webm|mov|m4v|mkv|avi)$/i.test(f.name)) return 'video'
   if (f.type.startsWith('audio/')) return 'audio'
   return 'file'
 }
@@ -219,16 +298,23 @@ onUnmounted(() => { offTauriDrop?.() })
 
 /* ---- 发送前图片编辑（裁剪/旋转/翻转） ---- */
 const editing = ref<Pending | null>(null)
+const applyingEdit = ref(false)
 function openEditor(p: Pending) { if (!uploading.value && !p.sent && p.kind === 'image') editing.value = p }
-function onEdited(f: File) {
+async function onEdited(f: File) {
   const p = editing.value
-  editing.value = null
-  if (!p || uploading.value || p.sent) return
-  p.elements = undefined
-  if (p.url) URL.revokeObjectURL(p.url)
-  p.file = f
-  p.url = URL.createObjectURL(f)
-  p.error = ''
+  if (!p || uploading.value || p.sent || applyingEdit.value) return
+  applyingEdit.value = true
+  let url = ''
+  try {
+    url = await decodedImageUrl(f)
+    if (!isCurrent() || editing.value !== p || !pending.value.includes(p)) return
+    const previous = p.url
+    p.elements = undefined; p.file = f; p.url = url; url = ''; p.error = ''
+    await nextTick()
+    editing.value = null
+    if (previous) URL.revokeObjectURL(previous)
+  } catch (e: any) { ctx.ui?.toast?.('编辑图片预览失败：' + (e?.message || String(e)), 'error') }
+  finally { if (url) URL.revokeObjectURL(url); applyingEdit.value = false }
 }
 
 const dragOver = ref(false)
@@ -276,10 +362,11 @@ async function prepareAttachment(p: Pending) {
       const onProg = progressOf(p)
       if (p.kind === 'image') {
         const { url } = await ctx.api.uploadAndUrl(p.file, 'image', onProg)
-        p.elements = [h.image(url)]
+        p.elements = [h.image(url, await imageMetadata(p.file))]
       } else if (p.kind === 'video') {
         const { key } = await ctx.api.uploadFile(p.file, 'video', onProg)
-        p.elements = [h.video(key, 0)]
+        const meta = await mediaMetadata(p.file, 'video')
+        p.elements = [{ ...h.video(key, meta.time), attrs: { src: key, ...meta, name: p.file.name, size: p.file.size } }]
       } else if (p.kind === 'audio') {
         const { key } = await ctx.api.uploadFile(p.file, 'audio', onProg)
         p.elements = [h.audio(key, await audioDurationOf(p.file))]
@@ -336,7 +423,7 @@ async function submit() {
       } catch { /* chat.send 已提示，草稿保留 */ }
     }
     await nextTick()
-    if (isCurrent()) autoresize()
+    if (isCurrent()) { autoresize(); if (!text.value.trim() && !pending.value.length) ctx.emit('chat/scroll-bottom') }
   } finally {
     uploading.value = false
     if (attachFailed && isCurrent()) {
@@ -459,6 +546,9 @@ function fmtSize(n: number) {
           <Icon :name="BAR_ICON[it.kind] || 'page'" :size="16" />
         </button>
       </template>
+      <div v-if="ctx.userbot" class="ai-wrap">
+        <button class="ghost tiny ai-trigger" title="用户 Bot / AI" aria-label="用户 Bot / AI" :aria-expanded="aiOpen" aria-controls="ai-reply-strip" :class="{ active: aiOpen }" @click="aiOpen = !aiOpen">AI<span v-if="ctx.userbot.state.drafts[aiKey]" class="ai-dot"></span></button>
+      </div>
       <input ref="imgInput" type="file" accept="image/*" multiple hidden @change="onPick" />
       <input ref="fileInput" type="file" multiple hidden @change="onPick" />
       <input ref="audioInput" type="file" accept="audio/*" multiple hidden @change="onPick" />
@@ -470,6 +560,32 @@ function fmtSize(n: number) {
         录制中 {{ ctx.stickers.state.videoSeconds }}s（再点「录制视频」结束并发送）
       </span>
     </div>
+    <Transition name="ai-strip">
+      <section v-if="aiOpen && ctx.userbot && !aiDetached" id="ai-reply-strip" class="ai-menu" aria-label="AI 回复助手" @keydown.esc.stop="aiOpen = false">
+        <div class="ai-strip-row">
+          <span class="ai-badge"><Icon name="robot" :size="18" /></span>
+          <div class="ai-info"><strong>{{ aiWorkMode === 'management' ? 'AI 管理' : 'AI 回复' }}</strong><span class="ai-status" role="status"><i v-if="aiActive" class="ai-working"></i>{{ aiStatus }}</span></div>
+          <div class="ai-actions">
+            <select v-if="target.type === 2" class="ai-mode" aria-label="AI 工作模式" :value="aiWorkMode" @change="switchAiMode"><option value="conversation">对话模式</option><option value="management">管理模式</option></select>
+            <button class="ai-generate" :disabled="!aiHasAI || aiActive || aiSubmitting" @click="generateAiDraft()">{{ !aiHasAI ? '规则自动化运行中' : aiActive ? '处理中…' : ctx.userbot.state.drafts[aiKey] ? '重新生成' : '生成回复草稿' }}</button>
+            <button class="ai-instruction-trigger" :disabled="!aiHasAI || aiActive || aiSubmitting" @click="aiInstructionError = ''; aiInstructionOpen = true">快捷指令</button>
+            <button v-if="ctx.userbot.state.drafts[aiKey]" @click="useAiDraft">填入输入框</button>
+            <button v-if="ctx.aiPanel" class="ai-icon ai-detach" title="独立浮窗（可按住拖到软件外）" aria-label="独立浮窗" :disabled="ctx.aiPanel.state.opening" @pointerdown="startAiDrag" @click="detachAi()"><Icon name="copy" :size="17" /></button>
+            <button class="ai-icon" title="当前会话 AI 设置" aria-label="当前会话 AI 设置" @click="ctx.userbot.open(target); aiOpen = false"><Icon name="settings" :size="17" /></button>
+            <button class="ai-icon" title="收起 AI 回复" aria-label="收起 AI 回复" @click="aiOpen = false"><Icon name="close" :size="17" /></button>
+          </div>
+        </div>
+        <div v-if="aiActive" class="ai-progress-area">
+          <div class="ai-progress" role="progressbar" aria-label="AI 回复进度" :aria-valuetext="aiStatus"><span></span></div>
+          <span class="ai-elapsed">{{ aiBusy ? `已等待 ${aiElapsed} 秒` : '等待合并消息 / 冷却结束' }}</span>
+        </div>
+        <span v-if="ctx.userbot.state.drafts[aiKey]" class="ai-format-label">{{ ctx.userbot.state.draftKinds[aiKey] === 3 ? 'Markdown 草稿' : '文字草稿' }}</span>
+        <p v-if="ctx.userbot.state.drafts[aiKey]" class="ai-preview">{{ ctx.userbot.state.drafts[aiKey] }}</p>
+        <div v-if="ctx.userbot.state.context[aiKey]" class="ai-context"><span>上下文 ≈ {{ ctx.userbot.state.context[aiKey].percent }}%</span><span v-if="ctx.userbot.state.context[aiKey].updatedAt">记忆已自动更新</span></div>
+      </section>
+    </Transition>
+    <div v-if="aiOpen && aiDetached" class="ai-menu ai-detached-notice" role="status"><span>AI 回复已在独立浮窗中</span><button @click="detachAi()">显示浮窗</button><button @click="ctx.aiPanel.dock()">嵌回聊天框</button></div>
+    <AiInstructionDialog :management="aiWorkMode === 'management'" v-if="aiInstructionOpen" :busy="aiSubmitting" :error="aiInstructionError" :has-draft="!!ctx.userbot?.state.drafts[aiKey]" @submit="submitAiInstruction" @close="aiInstructionOpen = false" />
 
     <!-- 待发送附件预览区：图片可点开发送前编辑，可写独立配文 -->
     <div v-if="pending.length" class="pending">
@@ -514,12 +630,47 @@ function fmtSize(n: number) {
       </div>
     </div>
 
-    <ImageEditor v-if="editing" :file="editing.file" :url="editing.url"
+    <ImageEditor v-if="editing" :file="editing.file" :url="editing.url" :saving="applyingEdit"
                  @done="onEdited" @close="editing = null" />
   </div>
 </template>
 
 <style scoped>
+.composer { z-index: 4; }
+.ai-wrap { position: relative; flex: 0 0 auto; }
+.ai-detach{touch-action:none;cursor:grab!important}.ai-detach:active{cursor:grabbing!important}.ai-detached-notice{display:flex;align-items:center;flex-wrap:wrap;gap:8px;font-size:12px;color:var(--fg2)}.ai-detached-notice span{margin-right:auto}
+.ai-trigger { position: relative; font-weight: 700; }
+.ai-dot { position: absolute; width: 7px; height: 7px; border-radius: 50%; right: 2px; top: 2px; background: var(--acc); }
+.ai-trigger.active { background: var(--acc-soft); color: var(--acc); border-color: var(--acc); }
+.ai-menu { width: 100%; box-sizing: border-box; margin: 0 0 10px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 13px; background: var(--card); box-shadow: 0 3px 14px #0000000c; overflow: hidden; transform-origin: bottom center; }
+.ai-strip-row { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.ai-badge { display: grid; place-items: center; width: 32px; height: 32px; flex: 0 0 auto; border-radius: 10px; color: var(--acc); background: var(--acc-soft); }
+.ai-info { display: flex; align-items: center; gap: 12px; flex: 1; min-width: 0; }
+.ai-info strong { font-size: 13px; white-space: nowrap; }
+.ai-status { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--fg2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ai-mode { max-width: 105px; min-height:31px; border:1px solid var(--line); border-radius:8px; background:var(--card2); color:var(--fg); padding:5px; font:inherit; font-size:12px; }
+.ai-actions { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+.ai-menu button { display: inline-flex; justify-content: center; align-items: center; gap: 5px; padding: 7px 10px; min-height: 31px; border: 1px solid var(--line); border-radius: 8px; background: var(--card2); color: var(--fg); cursor: pointer; font: inherit; font-size: 12px; white-space: nowrap; transition: background 160ms, border-color 160ms, transform 160ms; }
+.ai-menu button:hover { border-color: var(--acc); background: var(--acc-soft); }
+.ai-menu button:active { transform: scale(.97); }
+.ai-menu button:disabled { opacity: .55; cursor: default; }
+.ai-menu .ai-generate { background: var(--acc-soft); color: var(--acc); border-color: transparent; }
+.ai-menu .ai-icon { padding: 6px; width: 31px; background: transparent; border-color: transparent; }
+.ai-format-label { display: block; margin-top: 9px; font-size: 11px; color: var(--fg2); }
+.ai-preview { margin: 9px 0 0; padding: 10px 12px; max-height: 112px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--fg); background: var(--card2); border-radius: 8px; font-size: 13px; line-height: 1.65; }
+.ai-progress-area { display: flex; align-items: center; gap: 12px; margin-top: 9px; }
+.ai-progress { position: relative; flex: 1; height: 3px; overflow: hidden; border-radius: 4px; background: var(--acc-soft); }
+.ai-progress span { position: absolute; inset: 0 auto 0 0; width: 38%; border-radius: inherit; background: var(--acc); animation: ai-progress 1.4s ease-in-out infinite; }
+.ai-elapsed { font-size: 11px; color: var(--fg2); white-space: nowrap; }
+@keyframes ai-progress { from { transform: translateX(-105%); } to { transform: translateX(365%); } }
+.ai-context { display: flex; gap: 12px; margin-top: 7px; font-size: 11px; color: var(--fg2); }
+.ai-working { width: 10px; height: 10px; border-radius: 50%; border: 2px solid var(--line); border-top-color: var(--acc); animation: ai-spin 900ms linear infinite; flex-shrink: 0; }
+.ai-strip-enter-active { transition: opacity 210ms ease, transform 240ms cubic-bezier(.2,.8,.2,1), max-height 240ms ease, margin 240ms ease, padding 240ms ease; max-height: 260px; }
+.ai-strip-leave-active { transition: opacity 170ms ease, transform 190ms ease, max-height 210ms ease, margin 210ms ease, padding 210ms ease; max-height: 260px; pointer-events: none; }
+.ai-strip-enter-from,.ai-strip-leave-to { opacity: 0; transform: translateY(7px); max-height: 0; margin-bottom: 0; padding-top: 0; padding-bottom: 0; }
+@keyframes ai-spin { to { transform: rotate(360deg); } }
+@media(max-width:760px) { .ai-info { align-items: flex-start; flex-direction: column; gap: 3px; }.ai-menu { padding: 9px; }.ai-badge { display: none; }.ai-strip-row { gap: 6px; flex-wrap: wrap; }.ai-status { max-width: 145px; }.ai-actions { gap: 3px; flex-wrap: wrap; }.ai-menu button { padding: 6px; } }
+@media(prefers-reduced-motion:reduce) { .ai-strip-enter-active,.ai-strip-leave-active,.ai-menu button { transition: none; }.ai-working,.ai-progress span { animation: none; } }
 .bar-row {
   display: flex; flex-wrap: nowrap; align-items: center; gap: 6px;
   margin-bottom: 8px; padding: 2px 0 4px;

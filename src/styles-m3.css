@@ -66,6 +66,7 @@ button.ghost.on, button.ghost.small.on, .bar-row .on, .gp-chips .on {
 .convs li { border-radius: 8px; margin: 1px 6px; padding: 9px 8px; }
 .convs li.active { background: var(--m3-secondary-container); }
 .convs li.active .cname { color: var(--m3-on-secondary-container); }
+.convs li.active.has-unread .cname { color: var(--link, var(--acc)); }
 
 /* ---------- 关闭类按钮统一：正圆 + 内容居中 ---------- */
 .gp-x, .sp-x, .post-x, .viewer-x, .pend-x, .mp-x, .dock-x {
@@ -104,7 +105,7 @@ textarea, .dlg-input:not(input), .gp-row textarea, .m-form textarea { min-height
 
 /* ---------- 滚动条：常规形态（8px 宽、小圆角，不做细椭圆） ---------- */
 ::-webkit-scrollbar { width: 8px; height: 8px; }
-::-webkit-scrollbar-thumb { background: var(--line2); border-radius: 4px; }
+::-webkit-scrollbar-thumb { background: color-mix(in srgb, var(--fg2) 65%, var(--card)); border-radius: 4px; }
 ::-webkit-scrollbar-thumb:hover { background: color-mix(in srgb, var(--acc) 45%, var(--line2)); }
 
 /* 面板只做短距离淡入；减少动态效果时停止非必要动画。 */

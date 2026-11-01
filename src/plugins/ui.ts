@@ -6,6 +6,7 @@ import { createNativeNotifications } from '../core/notifications'
 
 export interface ToastOptions {
   title?: string
+  avatar?: string
   key?: string
   onClick?: () => void | Promise<void>
 }
@@ -25,11 +26,13 @@ export const uiPlugin = {
     const state = reactive({ theme: saved, systemDark: sysDark(), toasts: [] as any[], panel: 'chat', confirmReq: null as any,
       notificationMode: preferredMode === 'in-app' ? 'in-app' : preferredMode === 'windows' ? 'windows' :
         ((window as any).__TAURI__ ? 'windows' : 'in-app'),
-      nativeNotificationsAvailable: false, notificationError: '',
+      nativeNotificationsAvailable: false, nativeNotificationsSupported: false, notificationError: '',
     })
     let seq = 0
     let disposed = false
+    let windowMinimized = false
     const instance = Math.random().toString(36).slice(2, 10)
+    const nativeTimeoutMs = Math.max(10, Number(config.nativeTimeoutMs) || 8000)
     const nativeToasts = new Map<number, NativeToast>()
     const native = createNativeNotifications((id) => {
       const toast = [...nativeToasts.values()].find(t => t.nativeId === id)
@@ -38,8 +41,16 @@ export const uiPlugin = {
       const toast = [...nativeToasts.values()].find(t => t.nativeId === id)
       if (toast) fallback(toast, error)
     })
-    void native.ready.then(available => { if (!disposed) state.nativeNotificationsAvailable = available })
+    state.nativeNotificationsSupported = native.available
+    void native.ready.then(available => {
+      if (!disposed) {
+        state.nativeNotificationsAvailable = available
+        state.nativeNotificationsSupported = native.supported
+        if (native.error) state.notificationError = native.error
+      }
+    })
     const timers = new Map<number, ReturnType<typeof setTimeout>>()
+    const hiddenMessageDelays = new Map<number, number>()
     let confirmResolve: ((ok: boolean) => void) | null = null
 
     const ui = {
@@ -62,7 +73,7 @@ export const uiPlugin = {
         r?.(ok)
       },
       toast(text: string, type = 'info', ms = 3200, options: ToastOptions = {}) {
-        if (disposed) return 0
+        if (disposed || (type === 'message' && (ctx as any).lock?.isLocked)) return 0
         if (type === 'message' && state.notificationMode === 'windows') {
           if (options.key) ui.dismissMessages(key => key === options.key)
           const id = ++seq
@@ -70,17 +81,21 @@ export const uiPlugin = {
           nativeToasts.set(id, toast)
           // 通知中心的点击回调保留到用户操作；不能按软件内 Toast 的几秒超时移除。
           while (nativeToasts.size > 100) ui.dismiss(nativeToasts.keys().next().value)
-          void native.show(toast.nativeId, options.title || '云湖牢大版', text, () => nativeToasts.has(id)).then(() => {
+          // 桥接调用偶发不返回时，不能让消息永远卡在等待中；迟到的原生通知随后会被撤销。
+          timers.set(id, setTimeout(() => fallback(toast, 'Windows 通知响应超时'), nativeTimeoutMs))
+          void native.show(toast.nativeId, options.title || '云湖牢大版', text, () => nativeToasts.has(id), options.avatar).then(() => {
             if (disposed || !nativeToasts.has(id)) void native.dismiss(toast.nativeId)
-            else state.notificationError = ''
-          }).catch(e => fallback(toast, e?.message || String(e)))
+            else { state.nativeNotificationsAvailable = true; state.notificationError = '' }
+          }).catch(e => fallback(toast, e?.message || String(e))).finally(() => {
+            clearTimeout(timers.get(id)); timers.delete(id)
+          })
           return id
         }
         return showToast(text, type, ms, options)
       },
       dismissMessages(matches: (key: string) => boolean = () => true) {
         for (const toast of [...state.toasts.filter(t => t.type === 'message'), ...nativeToasts.values()]) {
-          if (toast.key && matches(toast.key)) ui.dismiss(toast.id)
+          if (matches(toast.key || '')) ui.dismiss(toast.id)
         }
       },
       setNotificationMode(mode: string) {
@@ -104,10 +119,12 @@ export const uiPlugin = {
         }
         clearTimeout(timers.get(id))
         timers.delete(id)
+        hiddenMessageDelays.delete(id)
         const i = state.toasts.findIndex((t: any) => t.id === id)
         if (i >= 0) state.toasts.splice(i, 1)
       },
       async activate(id: number) {
+        if ((ctx as any).lock?.isLocked) { ui.dismiss(id); return }
         const toast = nativeToasts.get(id) || state.toasts.find((t: any) => t.id === id)
         ui.dismiss(id)
         try { await toast?.onClick?.() }
@@ -133,6 +150,7 @@ export const uiPlugin = {
     }
 
     function showToast(text: string, type: string, ms: number, options: ToastOptions) {
+      if (type === 'message' && (ctx as any).lock?.isLocked) return 0
       // 同一会话只保留最新通知；限制堆叠，避免突发消息挤满屏幕。
       const existing = options.key && state.toasts.find((t: any) => t.key === options.key)
       const id = existing ? existing.id : ++seq
@@ -140,9 +158,20 @@ export const uiPlugin = {
       if (existing) Object.assign(existing, toast)
       else state.toasts.push(toast)
       clearTimeout(timers.get(id))
-      timers.set(id, setTimeout(() => ui.dismiss(id), ms))
+      timers.delete(id)
+      hiddenMessageDelays.delete(id)
+      // 软件内消息在隐藏、最小化或锁屏时无法看到，恢复可见后才开始计时。
+      if (type === 'message' && (document.hidden || windowMinimized || (ctx as any).lock?.isLocked)) hiddenMessageDelays.set(id, ms)
+      else timers.set(id, setTimeout(() => ui.dismiss(id), ms))
       while (state.toasts.length > 5) ui.dismiss(state.toasts[0].id)
       return id
+    }
+    function resumeHiddenMessages() {
+      if (document.hidden || windowMinimized || (ctx as any).lock?.isLocked) return
+      for (const [id, ms] of hiddenMessageDelays) {
+        hiddenMessageDelays.delete(id)
+        if (state.toasts.some((t: any) => t.id === id)) timers.set(id, setTimeout(() => ui.dismiss(id), ms))
+      }
     }
 
     function applyTheme(t: string) { document.documentElement.dataset.theme = t }
@@ -162,20 +191,27 @@ export const uiPlugin = {
         openExternalUrl(link.href).catch((e) => ui.toast('打开链接失败：' + e.message, 'error'))
       }
       document.addEventListener('click', onExternalClick)
+      const onMinimized = (event: Event) => { windowMinimized = (event as CustomEvent).detail === true; resumeHiddenMessages() }
+      window.addEventListener('yh-window-minimized', onMinimized)
+      document.addEventListener('visibilitychange', resumeHiddenMessages)
       return () => {
         disposed = true
         for (const id of [...nativeToasts.keys()]) ui.dismiss(id)
         native.dispose()
         mq?.removeEventListener?.('change', onSys)
         document.removeEventListener('click', onExternalClick)
+        window.removeEventListener('yh-window-minimized', onMinimized)
+        document.removeEventListener('visibilitychange', resumeHiddenMessages)
         for (const timer of timers.values()) clearTimeout(timer)
         timers.clear()
+        hiddenMessageDelays.clear()
         state.toasts = []
         ui.resolveConfirm(false)
       }
     })
 
     ctx.on('ui/toast', ({ text, type, ms, ...options }: any) => ui.toast(text, type, ms, options))
+    ctx.on('app/unlock' as any, resumeHiddenMessages)
     ctx.on('auth/logout', () => {
       for (const t of [...state.toasts, ...nativeToasts.values()]) ui.dismiss(t.id)
     })

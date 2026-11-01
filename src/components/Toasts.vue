@@ -5,6 +5,7 @@
  * 所以它必须挂在最外层（App.vue），不能放在某个页面里。
  */
 import { inject } from 'vue'
+import { resUrl } from '../core/res'
 
 const ctx = inject<any>('ctx')
 const ui = ctx.ui
@@ -13,6 +14,7 @@ const ui = ctx.ui
 <template>
   <TransitionGroup name="toast" tag="div" class="toasts" aria-live="polite" aria-relevant="additions text">
     <div v-for="t in ui.state.toasts" :key="t.id" class="toast" :class="t.type">
+      <img v-if="t.avatar" class="toast-avatar" :src="resUrl(t.avatar)" alt="" @error="(e: any) => e.target.style.display = 'none'" />
       <button v-if="t.onClick" class="toast-action" @click="ui.activate(t.id)">
         <strong v-if="t.title">{{ t.title }}</strong>
         <span>{{ t.text }}</span>
@@ -27,6 +29,7 @@ const ui = ctx.ui
 <style scoped>
 .toasts { width: min(360px, calc(100vw - 32px)); pointer-events: none; }
 .toast { display: flex; align-items: flex-start; gap: 8px; min-width: 0; max-width: 100%; pointer-events: auto; }
+.toast-avatar { width: 38px; height: 38px; border-radius: 50%; object-fit: cover; flex: 0 0 38px; }
 .toast-action { flex: 1; display: flex; flex-direction: column; gap: 4px; min-width: 0; padding: 0;
   background: none; color: inherit; text-align: left; font-weight: 400; border: 0; }
 .toast-action:hover { background: none; filter: none; }

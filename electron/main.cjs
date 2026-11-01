@@ -164,6 +164,8 @@ function createWindow() {
   })
   // UA 里的非 ASCII 段剔除（系统语言区标签等），避免个别请求头场景抛 Invalid header value
   try { mainWindow.webContents.setUserAgent(mainWindow.webContents.getUserAgent().replace(/[^\x00-\x7F]/g, '')) } catch { /* 忽略 */ }
+  mainWindow.on('minimize', () => { mainWindow?.webContents.executeJavaScript("window.dispatchEvent(new CustomEvent('yh-window-minimized',{detail:true}))").catch(() => {}) })
+  mainWindow.on('restore', () => { mainWindow?.webContents.executeJavaScript("window.dispatchEvent(new CustomEvent('yh-window-minimized',{detail:false}))").catch(() => {}) })
   mainWindow.loadURL('yunhu://app/index.html')
 
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {

@@ -13,12 +13,14 @@
  *   · /v1/user/get-user-data 返回 data.data  ← 双层嵌套
  *   · /v1/user/save-user-data 是扁平字段
  */
-import { inject, ref, computed, onMounted } from 'vue'
+import { inject, ref, computed, onMounted, onUnmounted } from 'vue'
 import KCard from '../components/KCard.vue'
+import Icon from '../components/Icon.vue'
 import { resUrl } from '../../core/res'
 import { fallbackAvatar, fmtTime } from '../../core/util'
 
 const ctx = inject<any>('ctx')
+const props = withDefaults(defineProps<{ section?: string }>(), { section: 'profile' })
 const api = ctx.api
 const chat = ctx.chat
 const auth = ctx.auth
@@ -123,7 +125,8 @@ async function copy(text: string, label = '') {
 }
 
 onMounted(loadAll)
-ctx.on('chat/open', loadAll)
+const off = ctx.on('chat/open', loadAll)
+onUnmounted(() => off?.())
 </script>
 
 <template>
@@ -135,7 +138,7 @@ ctx.on('chat/open', loadAll)
     </div>
 
     <!-- ============ ① 账号信息 ============ -->
-    <KCard title="账号信息">
+    <KCard v-if="section === 'account'" title="账号信息" data-setting-id="account-info">
       <div class="account">
         <img :src="auth.state.user?.avatar ? resUrl(auth.state.user.avatar) : fallbackAvatar(auth.state.user?.name)"
              @error="(e: any) => (e.target.src = fallbackAvatar(auth.state.user?.name))" alt="" />
@@ -151,7 +154,7 @@ ctx.on('chat/open', loadAll)
       </div>
 
       <div class="grid mt-sm">
-        <div class="kv"><span class="k">金币</span><b>🪙 {{ meInfo.coin ?? 0 }}</b></div>
+        <div class="kv"><span class="k">金币</span><b><Icon name="coin" :size="14" class="inline-icon" aria-hidden="true" /> {{ meInfo.coin ?? 0 }}</b></div>
         <div class="kv"><span class="k">邀请码</span><span>{{ meInfo.invitationCode || '—' }}</span></div>
         <div class="kv"><span class="k">注册时间</span><span>{{ stats.registerTime || '—' }}</span></div>
         <div class="kv"><span class="k">在线天数</span><span>{{ stats.onlineDay ?? '—' }} 天（连续 {{ stats.continuousOnlineDay ?? '—' }}）</span></div>
@@ -167,15 +170,15 @@ ctx.on('chat/open', loadAll)
         <button class="ghost small" @click="showToken = !showToken">{{ showToken ? '隐藏' : '显示' }}</button>
         <button class="ghost small" @click="copy(api.token, ' Token')">复制</button>
       </div>
-      <p class="dim small mt-sm">Token 等同账号凭证，别外发；这里只存在浏览器 localStorage。</p>
+      <p class="dim small mt-sm">Token 用于本机恢复登录，请勿分享给他人。</p>
     </KCard>
 
     <!-- ============ ② 个人资料 ============ -->
-    <KCard title="个人资料" class="mt">
+    <KCard v-if="section === 'profile'" title="个人资料" data-setting-id="profile">
       <div class="account">
         <img :src="auth.state.user?.avatar ? resUrl(auth.state.user.avatar) : fallbackAvatar(auth.state.user?.name)"
              @error="(e: any) => (e.target.src = fallbackAvatar(auth.state.user?.name))" alt="" />
-        <div class="acc-main dim small">头像会先上传到云湖数据床，再用完整 URL 调 /v1/user/edit-avatar</div>
+        <div class="acc-main dim small">更新头像、昵称和对外展示的个人资料。</div>
         <button class="ghost small" :disabled="busy" @click="avatarInput?.click()">更换头像</button>
         <input ref="avatarInput" type="file" accept="image/*" hidden @change="onAvatar" />
       </div>

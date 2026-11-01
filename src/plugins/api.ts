@@ -47,7 +47,7 @@ function decodeContent(bytes) {
     form: s(7), quote_msg_text: s(8), image: s(9), sticker_url: s(9),
     post_id: s(10), post_title: s(11), post_content: s(12), post_content_type: n(13),
     expression_id: s(15), quote_image_url: s(16), file_size: n(18),
-    video_url: s(19), audio_url: s(21), audio_time: n(22),
+    video_url: s(19), video_time: n(20), audio_url: s(21), audio_time: n(22),
     sticker_item_id: n(25), sticker_pack_id: n(26),
     room_name: s(29), call_status_text: s(32), width: n(33), height: n(34), tip: s(37),
     _raw: c,
@@ -63,12 +63,12 @@ export const apiPlugin = {
     let token = ''
     let routes = null
 
-    interface RequestOptions { method?: string; body?: any; timeout?: number }
+    interface RequestOptions { method?: string; body?: any; timeout?: number; authToken?: string; signal?: AbortSignal }
     // 默认超时 60s（原 20s 在高负载机器+慢上游时批量上传表情会误 abort，
     // 用户实测连发多张收藏报「signal is aborted without reason」）
-    async function request(path: string, { method = 'POST', body, timeout = 60000 }: RequestOptions = {}) {
+    async function request(path: string, { method = 'POST', body, timeout = 60000, authToken = token, signal }: RequestOptions = {}) {
       const headers: Record<string, string> = {}
-      if (token) headers.token = token
+      if (authToken) headers.token = authToken
       // 前端再保险一层：接口请求禁用缓存
       const init: RequestInit = { method, headers, cache: 'no-store' }
       if (body instanceof Uint8Array) {
@@ -79,14 +79,32 @@ export const apiPlugin = {
         init.body = JSON.stringify(body)
       }
       const ctrl = new AbortController()
-      const timer = setTimeout(() => ctrl.abort(), timeout)
+      let timer: ReturnType<typeof setTimeout>
+      let cancel: () => void
+      const interrupted = new Promise<never>((_, reject) => {
+        cancel = () => { ctrl.abort(); reject(new DOMException('请求已取消', 'AbortError')) }
+        timer = setTimeout(() => {
+          ctrl.abort()
+          reject(new DOMException('请求超时', 'TimeoutError'))
+        }, timeout)
+        signal?.addEventListener('abort', cancel, { once: true })
+      })
       init.signal = ctrl.signal
       try {
-        const res = await fetch(base + path, init)
-        const buf = new Uint8Array(await res.arrayBuffer())
-        if (buf[0] === 0x7b) return { json: JSON.parse(new TextDecoder().decode(buf)), http: res.status }
-        return { pb: pb.decode(buf), raw: buf, http: res.status }
-      } finally { clearTimeout(timer) }
+        if (signal?.aborted) cancel()
+        return await Promise.race([interrupted, (async () => {
+          if (ctrl.signal.aborted) throw new DOMException('请求已取消', 'AbortError')
+          const res = await fetch(base + path, init)
+          const buf = new Uint8Array(await res.arrayBuffer())
+          const text = new TextDecoder().decode(buf).trimStart()
+          const isJson = /json/i.test(res.headers.get('content-type') || '') || text.startsWith('{')
+          const json = isJson ? JSON.parse(text) : undefined
+          if (!res.ok) throw Object.assign(new Error(json?.msg || json?.message || `请求失败（HTTP ${res.status}）`), { status: res.status })
+          if (json) return { json, http: res.status }
+          if (text.startsWith('<')) throw new Error('服务器未返回有效的 API 数据')
+          return { pb: pb.decode(buf), raw: buf, http: res.status }
+        })()])
+      } finally { clearTimeout(timer); signal?.removeEventListener('abort', cancel) }
     }
 
     function assertOk(r) {
@@ -108,15 +126,16 @@ export const apiPlugin = {
       request,
 
       async login(email, password, deviceId, platform = 'web') {
-        const r = await request('/v1/user/email-login', { body: { email, password, deviceId, platform } })
+        const r = await request('/v1/user/email-login', { body: { email, password, deviceId, platform }, authToken: '' })
         assertOk(r)
         const t = r.json?.data?.token
         if (!t) throw new Error('未返回 token')
         return t
       },
 
-      async self() {
-        const r = assertOk(await request('/v1/user/info', { method: 'GET' }))
+      // An explicit token validates another local account without replacing the live connection's credentials.
+      async self(authToken: string = token) {
+        const r = assertOk(await request('/v1/user/info', { method: 'GET', authToken }))
         const d = pb.msg(r.pb, 2)
         const coinRaw = pb.raw(d, 8)
         return {
@@ -139,20 +158,43 @@ export const apiPlugin = {
         return routes
       },
 
-      async conversations() {
-        const r = assertOk(await request('/v1/conversation/list', { body: new Uint8Array() }))
-        return pb.each(r.pb, 2).map(d => ({
-          id: pb.str(d, 1), type: pb.num(d, 2),
-          name: pb.str(d, 15) || pb.str(d, 3) || pb.str(d, 1),
-          remark: pb.str(d, 3), preview: pb.str(d, 4),
-          unread: pb.num(d, 6), at: pb.bool(d, 7),
-          avatar: pb.str(d, 9), ts: pb.num(d, 5),
+      async stickyList({ timeout = 60000 } = {}) {
+        const r = assertOk(await request('/v1/sticky/list', { body: {}, timeout }))
+        return (r.data?.sticky || []).filter((x: any) => !x.delFlag).map((x: any) => ({
+          id: String(x.chatId), type: Number(x.chatType), name: x.chatName,
+          avatar: x.avatarUrl, pinned: true, stickyId: x.id, pinSort: Number(x.sort) || 0,
         }))
       },
+      async setPinned(chatId: string, chatType: number, pinned: boolean) {
+        return assertOk(await request(pinned ? '/v1/sticky/add' : '/v1/sticky/delete', { body: { chatId, chatType } }))
+      },
+      async conversations({ timeout = 60000 } = {}) {
+        // 置顶是独立列表，不能从消息时间或未读数猜测。置顶接口失败不丢失普通列表。
+        const [r, pins] = await Promise.all([
+          request('/v1/conversation/list', { body: new Uint8Array(), timeout }).then(assertOk),
+          api.stickyList({ timeout }).catch(() => null),
+        ])
+        const list = pb.each(r.pb, 2).map(d => ({
+          id: pb.str(d, 1), type: pb.num(d, 2),
+          name: pb.str(d, 3) || pb.str(d, 15) || pb.str(d, 1),
+          remark: pb.str(d, 3), preview: pb.str(d, 4),
+          unread: pb.num(d, 6), at: pb.bool(d, 7),
+          noDisturb: pb.bool(d, 11),
+          avatar: pb.str(d, 9), ts: pb.num(d, 5),
+          ...(pins ? { pinned: false } : {}),
+        }))
+        for (const pin of pins || []) {
+          const hit = list.find(c => c.id === pin.id && c.type === pin.type)
+          if (hit) Object.assign(hit, { pinned: true, stickyId: pin.stickyId, pinSort: pin.pinSort })
+          // 未出现在普通列表里的置顶会话也必须展示；免打扰待资料接口确认。
+          else list.push({ ...pin, unread: 0, at: false, ts: 0, preview: '', noDisturb: undefined })
+        }
+        return list
+      },
 
-      async messages(chatId, chatType, count = 30) {
+      async messages(chatId, chatType, count = 30, { timeout = 60000 } = {}) {
         const body = pb.build(pb.fNum(2, count), pb.fNum(4, chatType), pb.fStr(5, chatId))
-        const r = assertOk(await request('/v1/msg/list-message', { body }))
+        const r = assertOk(await request('/v1/msg/list-message', { body, timeout }))
         return pb.each(r.pb, 2).map(decodeMsg).sort((a, b) => a.ts - b.ts)
       },
 
@@ -166,7 +208,9 @@ export const apiPlugin = {
           pb.fBytes(5, encodeContent(content)),
           pb.fNum(6, contentType),
         ]
-        if (quoteId) parts.push(pb.fStr(9, quoteId))   // ⚠️ 官方引用 id 字段=9（dump 实锤 32hex）；曾误写 8（那是 content 的 quote_msg_text 位）→ 引用概率失效
+        // SendMsgRequest.quote_msg_id = 8；收到的 MsgData.quote_msg_id 才是 9。
+        // 请求字段 9 是 Media 子消息，放入字符串会触发上游「请求参数错误」。
+        if (quoteId) parts.push(pb.fStr(8, quoteId))
         assertOk(await request('/v1/msg/send-message', { body: pb.build(parts) }))
         return id
       },
@@ -210,8 +254,8 @@ export const apiPlugin = {
        * 机器人资料：POST /v1/bot/bot-info  BotInfoRequest{ id=2 } → BotData
        * （机器人不是「用户」，get-user 会返回「该用户不存在」，必须走这个）
        */
-      async botInfo(botId: string) {
-        const r = assertOk(await request('/v1/bot/bot-info', { body: pb.build(pb.fStr(2, botId)) }))
+      async botInfo(botId: string, { timeout = 60000 } = {}) {
+        const r = assertOk(await request('/v1/bot/bot-info', { body: pb.build(pb.fStr(2, botId)), timeout }))
         const d = pb.msg(r.pb, 2)
         return {
           isBot: true,
@@ -227,6 +271,7 @@ export const apiPlugin = {
           autoAgree: pb.bool(d, 13),
           noDelete: pb.bool(d, 14),
           noDisturb: pb.bool(d, 15),
+          pinned: pb.bool(d, 18),
           isDeleted: pb.bool(d, 19),
           groupLimit: pb.bool(d, 20),
         }
@@ -315,12 +360,22 @@ export const apiPlugin = {
         return assertOk(await request('/v1/friend/delete-friend', { body: { chatId, chatType } }))
       },
 
-      /** 创建群聊：CreateGroupRequest{ name=2, introduction=3, avatar_url=4 } */
-      async createGroup(name: string, introduction = '', avatarUrl = '') {
-        const r = assertOk(await request('/v1/group/create-group', {
+      /** full.proto: CreateGroupResponse { Status status=1; string group_id=2; } */
+      async createGroup(name: string, introduction = '', avatarUrl = '', { signal, timeout = 15000 }: { signal?: AbortSignal; timeout?: number } = {}) {
+        if (!name.trim()) throw new Error('群名称不能为空')
+        if (!avatarUrl.trim()) throw new Error('请填写群头像地址，或先设置个人头像')
+        const r = await request('/v1/group/create-group', {
           body: pb.build(pb.fStr(2, name), pb.fStr(3, introduction), pb.fStr(4, avatarUrl)),
-        }))
-        return pb.str(pb.msg(r.pb, 2) || pb.msg(r.pb, 3) || new Uint8Array(), 2) || ''
+          signal, timeout,
+        })
+        const status = r.json ? r.json : pb.msg(r.pb, 1)
+        const code = r.json ? status.code : pb.num(status, 2)
+        if (code !== 1) throw new Error((r.json ? status.msg : pb.str(status, 3)) || `创建群聊失败（状态 ${code ?? '缺失'}）`)
+        // group_id is a scalar string. Decoding it as a nested message can hang on wire type 3.
+        const value = r.json ? r.json.data?.groupId ?? r.json.data?.group_id : pb.str(r.pb, 2)
+        const id = typeof value === 'string' || typeof value === 'number' ? String(value).trim() : ''
+        if (!id) throw new Error('服务端已返回成功，但缺少群 ID；请先刷新群列表确认，避免重复创建')
+        return id
       },
       /** 邀请进群 */
       async inviteToGroup(groupId: string, userIds: string[]) {
@@ -637,14 +692,18 @@ export const apiPlugin = {
         const r = assertOk(await request('/v1/friend/address-book-list', { body: new Uint8Array() }))
         const out: Record<string, any[]> = { users: [], groups: [], bots: [] }
         for (const d of pb.each(r.pb, 2)) {
-          const type = pb.num(d, 3)
+          const label = pb.str(d, 1)
+          const declared = pb.num(d, 3)
+          const type = [1, 2, 3].includes(declared) ? declared : /群/.test(label) ? 2 : /机器人/.test(label) ? 3 : /用户|好友/.test(label) ? 1 : 0
+          if (!type) continue
           const list = pb.each(d, 2).map(u => ({
             id: pb.str(u, 1), remark: pb.str(u, 2), avatar: pb.str(u, 3),
             level: pb.num(u, 4), noDisturb: pb.bool(u, 5),
             name: pb.str(u, 8) || pb.str(u, 2) || pb.str(u, 1),
           }))
-          out[type === 1 ? 'users' : type === 2 ? 'groups' : 'bots'] = list
+          out[type === 1 ? 'users' : type === 2 ? 'groups' : 'bots'].push(...list)
         }
+        for (const key of Object.keys(out)) out[key] = [...new Map(out[key].map(item => [String(item.id), item])).values()]
         return out
       },
 
@@ -699,8 +758,8 @@ export const apiPlugin = {
        * 群信息：POST /v1/group/info  GroupInfoRequest{ group_id=2 }
        * 字段号严格按 full.proto#GroupData（之前猜错了，avatar/introduction 全串位）
        */
-      async groupInfo(groupId: string) {
-        const r = assertOk(await request('/v1/group/info', { body: pb.build(pb.fStr(2, groupId)) }))
+      async groupInfo(groupId: string, { timeout = 60000 } = {}) {
+        const r = assertOk(await request('/v1/group/info', { body: pb.build(pb.fStr(2, groupId)), timeout }))
         const d = pb.msg(r.pb, 2)
         return {
           id: pb.str(d, 1),
@@ -714,6 +773,7 @@ export const apiPlugin = {
           permission: pb.num(d, 9),
           category: pb.str(d, 11),
           isPrivate: pb.bool(d, 13),
+          noDisturb: pb.bool(d, 14), pinned: pb.bool(d, 19),
           admins: pb.list(d, 20).map((b: any) => new TextDecoder().decode(b)),
           limitedMsgType: pb.str(d, 22),
           owner: pb.str(d, 23),
@@ -856,6 +916,7 @@ export const apiPlugin = {
         // 官方上传大小限制：用户定死 40MB 上限（所有类型统一，超出直接拒绝不浪费流量）
         const LIMITS: Record<string, number> = { image: 40 * 1024 * 1024, video: 40 * 1024 * 1024, audio: 40 * 1024 * 1024, file: 40 * 1024 * 1024, sticker: 40 * 1024 * 1024 }
         const lim = LIMITS[kind] || 40 * 1024 * 1024
+        if (!file.size) throw new Error('文件内容为空，请重新选择文件')
         if (file.size > lim) {
           throw new Error(`文件超过 40MB 上传限制（当前 ${(file.size / 1024 / 1024).toFixed(1)}MB）`)
         }
@@ -871,12 +932,17 @@ export const apiPlugin = {
 
         // 记住上次成功的上传域名（按 bucket 缓存），避免每次先撞一次区域错误
         const cacheKey = `yh.up.host.${bucket || ak || 'default'}`
-        let host = localStorage.getItem(cacheKey) || 'upload.qiniup.com'
-        if (ak && bucket && !localStorage.getItem(cacheKey)) {
+        const validHost = (value: string) => /^(?:[a-z0-9-]+\.)*(?:qiniup\.com|qbox\.me)$/i.test(value)
+        let cached = ''
+        try { cached = localStorage.getItem(cacheKey) || '' } catch { /* storage can be unavailable */ }
+        let host = validHost(cached) ? cached : 'upload.qiniup.com'
+        if (ak && bucket && !cached) {
           try {
-            const q: any = await fetch(`https://api.qiniu.com/v4/query?ak=${ak}&bucket=${bucket}`).then(r => r.json())
-            const d = q?.up?.domains?.[0] || q?.up?.acc?.domains?.[0] || q?.up?.src?.domains?.[0]
-            if (d) host = String(d).replace(/^https?:\/\//, '')
+            const q: any = await fetch(`https://api.qiniu.com/v4/query?ak=${encodeURIComponent(ak)}&bucket=${encodeURIComponent(bucket)}`, { signal: AbortSignal.timeout(8000) }).then(r => r.json())
+            const up = q?.hosts?.[0]?.up || q?.up
+            const d = up?.domains?.[0] || up?.acc?.domains?.[0] || up?.src?.domains?.[0]
+            const candidate = String(d || '').replace(/^https?:\/\//, '').replace(/\/$/, '')
+            if (validHost(candidate)) host = candidate
           } catch { /* 忽略，用默认 */ }
         }
 
@@ -892,7 +958,7 @@ export const apiPlugin = {
         const tried = new Set<string>()
         let lastErr = ''
         for (let attempt = 0; attempt < 4; attempt++) {
-          if (tried.has(host)) host = 'up.qiniup.com'
+          if (tried.has(host)) break
           tried.add(host)
           const fd = new FormData()
           fd.append('token', token)
@@ -900,26 +966,31 @@ export const apiPlugin = {
           fd.append('file', file)
           // 经本站代理上传：/up/<上传域名>/ -> https://<域名>/
           // 用 XHR 而非 fetch：fetch 拿不到上传进度，XHR 的 upload.onprogress 可以（速度条要用）
-          const text = await new Promise<string>((resolve, reject) => {
+          const result = await new Promise<{ status: number; text: string }>((resolve, reject) => {
             const xhr = new XMLHttpRequest()
             xhr.open('POST', `/up/${host}/`)
+            xhr.timeout = 120000
+            xhr.ontimeout = () => reject(new Error('上传超时，请重试'))
+            xhr.onabort = () => reject(new Error('上传已取消'))
             if (onProgress) {
               xhr.upload.onprogress = (e) => { if (e.lengthComputable) onProgress(e.loaded, e.total) }
             }
-            xhr.onload = () => resolve(xhr.responseText)
+            // Region redirects arrive as HTTP 400 JSON. Parse them before deciding whether to reject.
+            xhr.onload = () => resolve({ status: xhr.status, text: xhr.responseText })
             xhr.onerror = () => reject(new Error('上传网络错误'))
             xhr.send(fd)
           })
+          const text = result.text
           let json: any = {}
           try { json = JSON.parse(text) } catch { /* 非 JSON */ }
-          if (json.key) {
-            localStorage.setItem(cacheKey, host)
+          if (result.status >= 200 && result.status < 300 && typeof json.key === 'string' && json.key.trim()) {
+            try { localStorage.setItem(cacheKey, host) } catch { /* successful upload remains successful */ }
             return { key: json.key as string, host }
           }
 
-          lastErr = json.error || text.slice(0, 160) || '上传失败'
+          lastErr = String(json.error || text.slice(0, 200) || ('上传失败 HTTP ' + result.status))
           const m = lastErr.match(/please use\s+([\w.-]+)/i)
-          if (m) { host = m[1]; continue }
+          if (m && validHost(m[1]) && !tried.has(m[1])) { host = m[1]; onProgress?.(0, file.size); continue }
           break
         }
         throw new Error(lastErr)
@@ -935,7 +1006,7 @@ export const apiPlugin = {
           : kind === 'audio' ? (routes.audioUrl || 'https://chat-audio1.jwznb.com/')
             : kind === 'video' ? (routes.videoUrl || 'https://chat-video1.jwznb.com/')
               : (routes.fileUrl || 'https://chat-file.jwznb.com/')
-        return { key, url: base + key }
+        return { key, url: new URL(key.replace(/^\/+/, ''), base.replace(/\/*$/, '/')).href }
       },
 
       /* ================= 群设置 ================= */
@@ -1011,8 +1082,8 @@ export const apiPlugin = {
         return r.json?.data || {}
       },
       /** 按 msgId 拉前后一段消息（定位跳转用）；proto: seq=3 chatType=4 chatId=5 unknown=6 count=7 msgId=8 */
-      async messagesAround(chatId: string, chatType: number, msgId: string, count = 20, seq = -1) {
-        const body = pb.build(pb.fNum(3, seq), pb.fNum(4, chatType), pb.fStr(5, chatId), pb.fNum(6, 0), pb.fNum(7, count), pb.fStr(8, msgId))
+      async messagesAround(chatId: string, chatType: number, msgId: string, count = 20, seq = 0) {
+        const body = pb.build(...(seq > 0 ? [pb.fNum(3, seq)] : []), pb.fNum(4, chatType), pb.fStr(5, chatId), pb.fNum(6, 0), pb.fNum(7, count), pb.fStr(8, msgId))
         const r = assertOk(await request('/v1/msg/list-message-by-mid-seq', { body }))
         return pb.each(r.pb, 2).map(decodeMsg).sort((a: any, b: any) => a.ts - b.ts)
       },
@@ -1031,21 +1102,24 @@ export const apiPlugin = {
       },
       /** 「发现」页：推荐分区列表 */
       async recommendCategories() {
-        const r = await request('/v1/user/recommend-category-list', { body: {} })
+        const r = await request('/v1/user/recommend-category-list', { body: { appChannel: 'default' } })
         assertOk(r)
-        return r.json?.data?.list || r.json?.data?.categories || []
+        return (r.json?.data?.categories || r.json?.data?.list || []).map((c: any) => {
+          const name = typeof c === 'string' ? c : c.name || c.categoryName || c.category || String(c.id)
+          return { id: name, name }
+        })
       },
       /** 「发现」页：分区内推荐群/机器人 */
       async recommendList(categoryId: number | string) {
-        const r = await request('/v1/user/recommend-list', { body: { categoryId } })
+        const r = await request('/v1/user/recommend-list', { body: { category: String(categoryId), keyword: '', size: 30, page: 1 } })
         assertOk(r)
-        return r.json?.data?.list || []
+        return (r.json?.data?.groupList || r.json?.data?.list || []).map((x: any) => ({ ...x, id: String(x.chatId || x.id), name: x.nickname || x.name, avatar: x.avatarUrl || x.avatar, chatType: 2 }))
       },
       /** 「发现」页：推荐机器人 */
       async recommendBots() {
         const r = await request('/v1/user/recommend', { body: {} })
         assertOk(r)
-        return r.json?.data?.list || r.json?.data?.bots || []
+        return (r.json?.data?.botList || r.json?.data?.list || r.json?.data?.bots || []).map((x: any) => ({ ...x, id: String(x.chatId || x.id), name: x.nickname || x.name, avatar: x.avatarUrl || x.avatar, chatType: 3 }))
       },
       /** 举报用户/群/机器人（/v1/report/create） */
       async report(chatId: string, chatType: number, chatName: string, content: string) {
@@ -1179,8 +1253,8 @@ export const apiPlugin = {
        * 获取任意用户信息（含注册时间/在线天数/VIP/勋章/IP归属地等）。
        * proto: GetUserRequest { string id = 2 }
        */
-      async getUser(id: string) {
-        const r = assertOk(await request('/v1/user/get-user', { body: pb.build(pb.fStr(2, id)) }))
+      async getUser(id: string, { timeout = 60000 } = {}) {
+        const r = assertOk(await request('/v1/user/get-user', { body: pb.build(pb.fStr(2, id)), timeout }))
         const d = pb.msg(r.pb, 2)
         const p = pb.msg(d, 19)
         return {
@@ -1192,6 +1266,7 @@ export const apiPlugin = {
           medalCount: pb.list(d, 6).length,
           registerTime: pb.str(d, 7),
           doNotDisturb: pb.bool(d, 8),
+          noDisturb: pb.bool(d, 8), pinned: pb.bool(d, 17),
           banId: pb.num(d, 9),
           banUntil: pb.num(d, 10),
           onlineDay: pb.num(d, 11),
@@ -1226,12 +1301,15 @@ export const apiPlugin = {
       },
 
       /** 普通按钮消息回报 */
-      async buttonReport({ chatId, chatType, msgId, buttonId, value }) {
+      async buttonReport({ chatId, chatType, msgId, userId, value }) {
+        // ButtonReportRequest：消息 ID=2、会话类型=3、会话 ID=4、当前用户 ID=5、按钮值=6。
         const body = pb.build(
-          pb.fStr(1, msgId || ''), pb.fStr(2, chatId || ''),
-          pb.fNum(3, chatType || 0), pb.fStr(4, buttonId || ''), pb.fStr(5, value || ''),
+          pb.fStr(2, msgId || ''), pb.fNum(3, chatType || 0), pb.fStr(4, chatId || ''),
+          pb.fStr(5, userId || ''), pb.fStr(6, value ?? ''),
         )
-        return request('/v1/msg/button-report', { body })
+        const result = await request('/v1/msg/button-report', { body })
+        if (result.http < 200 || result.http >= 300) throw new Error(`HTTP ${result.http}`)
+        return assertOk(result)
       },
     }
 

@@ -51,7 +51,7 @@
 html, body, #app { height: 100%; margin: 0; }
 body {
   background: var(--bg); color: var(--fg);
-  font: 14px/1.6 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  font: 14px/1.6 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'PingFang SC', 'Microsoft YaHei', 'Apple Color Emoji', 'Segoe UI Emoji', 'Noto Color Emoji', sans-serif;
   overflow: hidden; -webkit-font-smoothing: antialiased;
 }
 ::-webkit-scrollbar { width: 8px; height: 8px; }
@@ -81,6 +81,7 @@ input:focus, textarea:focus, select:focus { border-color: var(--acc); box-shadow
 code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: .92em; }
 code.mono, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
 .dim { color: var(--fg2); }
+.inline-icon { display: inline-block; vertical-align: -.16em; flex-shrink: 0; }
 input::placeholder, textarea::placeholder { color: var(--fg2); opacity: 1; }
 a { color: var(--link, var(--acc)); text-underline-offset: 3px; }
 :root[data-theme='dark'] { color-scheme: dark; }
@@ -95,6 +96,7 @@ a { color: var(--link, var(--acc)); text-underline-offset: 3px; }
 /* ---------- 登录 ---------- */
 .login-wrap {
   height: 100%; display: flex; align-items: center; justify-content: center; padding: 20px;
+  overflow: auto;
   background:
     radial-gradient(1000px 520px at 12% 8%, color-mix(in srgb, var(--acc) 16%, transparent), transparent 62%),
     var(--bg);
@@ -103,6 +105,7 @@ a { color: var(--link, var(--acc)); text-underline-offset: 3px; }
   width: 400px; max-width: 100%; background: var(--card); border: 1px solid var(--line);
   border-radius: 14px; padding: 28px; box-shadow: var(--shadow);
 }
+.login-wrap > .login-card { margin-block: auto; flex-shrink: 0; }
 .login-card h1 { font-size: 19px; margin: 0 0 6px; font-weight: 600; }
 .login-card .brand {
   display: block; width: 72px; height: 72px; border-radius: 50%; object-fit: cover;
@@ -124,7 +127,7 @@ a { color: var(--link, var(--acc)); text-underline-offset: 3px; }
 .console {
   display: grid;
   grid-template-columns: 56px 1fr;
-  grid-template-rows: 1fr 28px;
+  grid-template-rows: minmax(0, 1fr) 28px;
   grid-template-areas: 'rail page' 'status status';
   height: 100%;
 }
@@ -151,7 +154,7 @@ a { color: var(--link, var(--acc)); text-underline-offset: 3px; }
 
 /* position: relative —— 群看板/群文件那层浮层要以它为定位父级，
    这样浮层只在「右侧内容区」里铺开，不会盖到左边导航栏，导航栏也不用悬浮 */
-.page-area { grid-area: page; overflow: auto; min-width: 0; position: relative; }
+.page-area { grid-area: page; overflow: auto; min-width: 0; min-height: 0; position: relative; }
 .page-empty { height: 100%; display: flex; flex-direction: column; gap: 10px; align-items: center; justify-content: center; color: var(--fg2); }
 
 .statusbar {
@@ -235,7 +238,7 @@ a { color: var(--link, var(--acc)); text-underline-offset: 3px; }
    =================================================================== */
 .chat-page { display: flex; height: 100%; min-height: 0; position: relative; }
 .chat-side { width: 292px; flex: 0 0 292px; border-right: 1px solid var(--line); background: var(--card); min-height: 0; }
-.chat-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.chat-main { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
 /* 群设置面板打开时聊天区让位（QQ 式挤压，不遮盖） */
 /* 群面板浮层不挤压聊天区（避免开/关跳动） */
 @media (max-width: 900px) { .chat-page.gp-open .chat-main { margin-right: 0; } }
@@ -322,21 +325,33 @@ a { color: var(--link, var(--acc)); text-underline-offset: 3px; }
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 1; font-size: 13.5px;
 }
 .convs .time { font-size: 11px; color: var(--fg2); opacity: .8; }
-/* 免打扰会话：名字旁灰色小铃铛（QQ 式），有未读也不弹红点 */
+/* 免打扰仅控制通知；列表仍保留未读角标。 */
 .convs .mute-ico { color: var(--fg2); opacity: .75; flex: 0 0 auto; align-self: center; }
+.convs .pin-ico { color: var(--fg2); flex: 0 0 auto; }
+.convs li.has-unread .pin-ico { color: var(--link, var(--acc)); }
 .convs .prev {
   font-size: 12px; color: var(--fg2); opacity: .85;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 1px;
 }
 /* 未读：名字加重 + 小圆点计数（比大红块安静得多） */
-.convs li.has-unread .cname { font-weight: 600; color: var(--fg); }
-.convs li.has-unread .prev { color: var(--fg); opacity: .7; }
+.convs li.has-unread .cname { font-weight: 750; color: var(--link, var(--acc)); }
+.convs li.has-unread .prev { color: var(--fg); opacity: 1; }
+.convs li.has-unread .time { color: var(--fg); opacity: 1; font-weight: 600; }
 .badge {
   background: var(--acc); color: #fff; border-radius: 999px;
   font-size: 10.5px; line-height: 16px; min-width: 16px; text-align: center;
   padding: 0 5px; font-weight: 600;
 }
-.convs li.active .badge { background: var(--acc); }
+.convs .badge, .convs li.active .badge { background: #d92d45; color: #fff; font-weight: 750; box-shadow: 0 0 0 2px rgb(217 45 69 / .14); }
+.convs li .badge.muted-unread { background: #6b7280; color: #fff; font-weight: 600; box-shadow: none; }
+.convs li.muted.has-unread .cname { color: var(--fg2); font-weight: 600; }
+.convs li.muted.has-unread .prev, .convs li.muted.has-unread .time { color: var(--fg2); font-weight: 400; }
+.rail-badge.unread-dot { width: 9px; height: 9px; min-width: 9px; padding: 0; border-radius: 50%; }
+.rail-badge.unread-dot { background: #6b7280; }
+.rail-badge:not(.unread-dot) { background: #d92d45; }
+.settings-fade-enter-active, .settings-fade-leave-active { transition: opacity .12s ease, transform .12s ease; }
+.settings-fade-enter-from, .settings-fade-leave-to { opacity: 0; transform: translateY(4px); }
+@media(prefers-reduced-motion: reduce) { .settings-fade-enter-active, .settings-fade-leave-active { transition: none; } }
 /* 搜索框做得扁一点 */
 .search { padding: 8px 10px; }
 .search input { width: 100%; font-size: 13px; }
@@ -349,18 +364,12 @@ a { color: var(--link, var(--acc)); text-underline-offset: 3px; }
   position: relative; z-index: 65;   /* ⋮ 菜单要盖在消息区之上（同 .messages 层叠问题） */
 }
 .chat-header .t { font-weight: 600; font-size: 14px; }
-/* QQ 式昵称旁在线绿点 */
-.online-dot {
-  display: inline-block; width: 8px; height: 8px; border-radius: 50%;
-  background: #3ddc84; margin: 0 6px 1px 4px; vertical-align: middle;
-  box-shadow: 0 0 0 2px rgba(61, 220, 132, .18);
-}
 .chat-header .s { font-size: 11.5px; color: var(--fg2); }
 .chat-header .head-main { flex: 1; min-width: 0; }
 .chat-header .head-side { display: flex; align-items: center; gap: 7px; font-size: 12px; color: var(--fg2); }
 .only-mobile { display: none; }
 
-.messages { flex: 1; overflow-y: auto; padding: 18px 20px; display: flex; flex-direction: column; gap: 14px; position: relative; isolation: isolate; }
+.messages { flex: 1; min-height: 0; overflow-y: auto; padding: 18px 20px; display: flex; flex-direction: column; gap: 14px; position: relative; isolation: isolate; }
 /* 「回最新」悬浮箭头：离开底部时出现在消息区右下角 */
 .jump-latest {
   position: sticky; top: calc(100% - 56px); align-self: flex-end; margin-right: 6px;
@@ -393,7 +402,7 @@ a { color: var(--link, var(--acc)); text-underline-offset: 3px; }
 /* 双保险：己方气泡/媒体显式右贴（任何未知布局条件下都不许居中漂） */
 .row.right .msg-wrap { margin-left: auto; }
 .row.right .bubble img.media, .row.right .bubble img.sticker { margin-left: auto; margin-right: 0; display: block; }
-.row.right .bubble a { color: #dbe8ff; }
+.row.right .bubble a { color: var(--link, var(--acc)); }
 .meta { font-size: 11px; color: var(--fg2); margin-bottom: 4px; display: flex; gap: 6px; }
 .row.right .meta { justify-content: flex-end; }
 .sys {
@@ -455,7 +464,7 @@ a { color: var(--link, var(--acc)); text-underline-offset: 3px; }
   0% { box-shadow: 0 0 0 3px var(--acc); }
   100% { box-shadow: 0 0 0 3px transparent; }
 }
-/* 搜索定位目标：持续色块指示（引用式高亮框），直到回最新/切会话 */
+/* 定位高亮由 locateId 控制，点击外部时同步清除。 */
 .row.locate .bubble {
   box-shadow: 0 0 0 3px var(--acc);
 }
@@ -634,3 +643,7 @@ button.icon-btn { width: 30px; height: 30px; padding: 0; display: inline-grid; p
 }
 .fn-chip:hover { background: var(--acc-soft); color: var(--acc); border-color: var(--acc); }
 .fn-chip.more { border-style: dashed; }
+
+/* Resource mode keeps short interaction transitions, avoiding full-window blur layers. */
+:root[data-economy='true'] .messages::before { filter: none; }
+:root[data-economy='true'] :is(.dlg-mask,.viewer-mask,.ai-command-mask,.bot-review-mask) { backdrop-filter: none; }

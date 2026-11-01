@@ -1,0 +1,1749 @@
+--- /dev/null
++++ b/RELEASE_NOTES_1.0.17.md
+@@ -0,0 +1,41 @@
++# YH LaoDa 1.0.17
++
++基于最新交付的 1.0.16 完整源码增量更新。保留已有消息、通知、表情包、AI 人设、自动回复、记忆和群管理功能。
++
++## 建群修复与重构
++
++- 按 yh-Tpdev/yhchatAPI 的 src/full.proto 核对：CreateGroupRequest 的 name、introduction、avatar_url 分别为字段 2、3、4；CreateGroupResponse 的 status 为字段 1，group_id 为字段 2 的字符串。
++- 修正将 group_id 当嵌套消息解码的问题。旧解码器在部分数字 ID 中会读出没有结束标记的 group，最终陷入同步死循环，连原有 15 秒兜底计时器也无法执行。
++- 为 protobuf 增加输入类型、变长整数、字段编号、长度、固定宽度、group 结束标记及最大嵌套层数检查。保留合法旧式 group 字段的跳过能力；不完整或错误响应会正常报错。
++- 建群使用真实可取消的请求，15 秒超时覆盖获取响应和读取响应体，不再只在外部 Promise.race。不会自动重试创建请求。
++- 严格校验 HTTP 状态、业务成功状态和返回群 ID；不再用“ok”替代缺失的群 ID。
++- 创建成功立即结束提交，通讯录与会话列表在后台刷新。刷新缓慢不会卡住建群对话框。
++- 侧栏和通讯录共用同一建群表单：群名称、简介、默认个人头像地址、提交进度、停止等待和内联错误；失败保留输入。超时或取消后提示先检查群列表，避免重复创建。
++- 同时提交会被拦截，退出或切换账号后不会把旧请求结果写入新账号。
++
++## 聊天框 AI 快捷指令
++
++在聊天框打开 AI 回复，点击“快捷指令”即可输入本次要求。内置“简短一点”“更自然些”“正式一点”“委婉拒绝”“总结重点”“翻译成英文”。支持 Ctrl+Enter 生成，以及在已有 AI 草稿上继续修改。
++
++指令只作用于本次生成，不改系统提示词、人设或会话设置，也不会写入自动记忆。结果先作为 AI 草稿展示，点击“填入输入框”后再按原有方式发送。快捷指令生成不执行群管理动作。
++
++## 可嵌回的 AI 独立浮窗
++
++- 点击 AI 回复条的“独立浮窗”按钮，或按住该按钮拖出软件内容边界，即可打开独立窗口。
++- Windows Tauri 版使用真实独立 WebView 窗口，可拖动标题栏移到软件外、调整大小、置顶和最小化。点击右上角“嵌回聊天框”返回原位置。关闭浮窗也恢复内嵌入口。
++- 浮窗采用紧凑对话布局：顶部会话名和窗口按钮，中间显示指令与 AI 草稿，底部输入要求；支持快捷指令、进度、填回聊天框和深浅色同步。
++- 浮窗跟随主窗口当前会话，不另行登录、不创建第二条 WebSocket，也不再启动一套用户 Bot。AI 请求仍由主窗口的同一个服务执行。
++- 每个浮窗实例有独立标识，过期窗口消息、重复请求和切换会话后的旧指令会被拒绝。锁屏清空浮窗内容并禁止输入，退出账号关闭浮窗，主窗口失去连接后停止操作。
++- 浮窗只具备操作自身窗口的桌面权限，不获得账号凭证或 AI Key 的读取权限。浮窗中的生成操作仅产生草稿，不向群聊发送消息或执行管理动作。
++- 修正原先任意窗口关闭都会终止 sidecar 的逻辑，仅主窗口销毁时清理后台服务。
++- 普通浏览器使用弹出窗口形式；不支持跨窗口通信的旧环境继续使用内嵌回复条。
++
++## 验证与构建
++
++- 175 项离线自动测试：建群 11、聊天 93、设置 11、功能 13、反撤回 13、用户 Bot 34。
++- 真实 Vue 组件的浏览器回归覆盖：建群失败与取消、特殊 ID 成功、通讯录刷新挂起、快捷指令、草稿修改、独立浮窗、结果填回、嵌回、过期指令、锁屏与退出账号；原有通知、图片编辑、通讯录、AI 自动进度、人设和群管理审核回归通过。
++- Vue/TypeScript 类型检查、Vite 生产构建、sidecar 构建及 Windows GNU 目标编译；NSIS 安装器解包核对实际打包资源。
++
++测试使用虚拟账号和模拟接口。未在真实云湖账号上创建群聊，也未在 Windows 实机验证窗口拖拽与多显示器行为。Windows 安装包由当前环境交叉编译生成。
++
++完整源码包括源文件、依赖锁定文件、前端产物、sidecar bundle、说明和测试；不包含 node_modules、Rust 编译缓存及 Windows Node 运行时。保留现有 GitHub Actions 与 scripts/package-windows-local.sh 构建入口。
+--- a/package-lock.json
++++ b/package-lock.json
+@@ -1,12 +1,12 @@
+ {
+   "name": "yunhu-vue",
+-  "version": "1.0.16",
++  "version": "1.0.17",
+   "lockfileVersion": 3,
+   "requires": true,
+   "packages": {
+     "": {
+       "name": "yunhu-vue",
+-      "version": "1.0.16",
++      "version": "1.0.17",
+       "dependencies": {
+         "@capacitor/core": "^8.5.2",
+         "@jodit/image-editor": "0.2.5",
+--- a/package.json
++++ b/package.json
+@@ -1,7 +1,7 @@
+ {
+   "name": "yunhu-vue",
+   "private": true,
+-  "version": "1.0.16",
++  "version": "1.0.17",
+   "type": "module",
+   "description": "云湖牢大版 · Vue3 + 真 cordis 插件内核 + Satori 协议 + WebDAV 网关（仅供学习交流）",
+   "scripts": {
+@@ -31,7 +31,9 @@
+     "test:ui-notifications": "node scripts/test-ui-notifications.mjs",
+     "test:userbot": "node scripts/test-userbot.mjs",
+     "test:ui-userbot": "node scripts/test-ui-userbot.mjs",
+-    "test:sidecar-userbot": "node scripts/test-sidecar-userbot.mjs"
++    "test:sidecar-userbot": "node scripts/test-sidecar-userbot.mjs",
++    "test:group": "node scripts/test-group-create.mjs",
++    "test:ui-group": "node scripts/test-ui-group-create.mjs"
+   },
+   "dependencies": {
+     "@capacitor/core": "^8.5.2",
+--- a/scripts/test-chat-regressions.mjs
++++ b/scripts/test-chat-regressions.mjs
+@@ -333,12 +333,14 @@
+       assert.equal(host.events.size, 2)
+     } finally { h.dispose(); await host.flush(); host.restore() }
+   })
+-  await test('Tauri remote-page commands are covered by generated app permissions in the main capability', async () => {
+-    const [buildRs, mainRs, notifications, links, capability] = await Promise.all([
++  await test('Tauri commands have generated permissions and the detached AI window cannot access account secrets', async () => {
++    const [buildRs, mainRs, notifications, links, capability, panelCapability] = await Promise.all([
+       'src-tauri/build.rs', 'src-tauri/src/main.rs', 'src/core/notifications.ts', 'src/core/links.ts',
+       'src-tauri/capabilities/default.json',
++      'src-tauri/capabilities/ai-panel.json',
+     ].map(path => readFile(join(root, path), 'utf8')))
+     const cap = JSON.parse(capability)
++    const panelCap = JSON.parse(panelCapability)
+     const commandList = buildRs.match(/AppManifest::new\(\)\.commands\(&\[([\s\S]*?)\]/)?.[1] || ''
+     const manifest = [...commandList.matchAll(/"([a-z_]+)"/g)].map(m => m[1])
+     const registered = (mainRs.match(/generate_handler!\[([\s\S]*?)\]/)?.[1] || '')
+@@ -348,10 +350,13 @@
+     assert.ok(invokes.includes('native_notifications_supported'))
+     for (const command of new Set([...invokes, ...registered])) {
+       assert.ok(manifest.includes(command), `missing app manifest command ${command}`)
+-      assert.ok(cap.permissions.includes('allow-' + command.replaceAll('_', '-')), `missing capability ${command}`)
++      const scoped = command === 'ai_panel_action' ? panelCap : cap
++      assert.ok(scoped.permissions.includes('allow-' + command.replaceAll('_', '-')), `missing capability ${command}`)
+     }
+     assert.deepEqual(cap.windows, ['main'])
+     assert.deepEqual(cap.remote.urls, ['http://127.0.0.1:*/*'])
++    assert.deepEqual(panelCap.windows, ['ai-reply'])
++    assert.deepEqual(panelCap.permissions, ['core:default', 'allow-ai-panel-action'])
+     assert.match(mainRs, /on_navigation/)
+     assert.ok(mainRs.includes('url.port_or_known_default() == Some(app_port())'))
+   })
+--- /dev/null
++++ b/scripts/test-group-create.mjs
+@@ -0,0 +1,126 @@
++import { test } from 'node:test'
++import assert from 'node:assert/strict'
++import { build } from 'esbuild'
++import { mkdtemp, rm } from 'node:fs/promises'
++import { resolve, join } from 'node:path'
++import { pathToFileURL } from 'node:url'
++import { Worker } from 'node:worker_threads'
++
++const root = resolve(import.meta.dirname, '..')
++const temp = await mkdtemp(join(root, 'node_modules', '.group-test-'))
++const file = join(temp, 'group.mjs')
++await build({ stdin: { contents: `export { apiPlugin } from './src/plugins/api.ts'; export { socialPlugin } from './src/plugins/social.ts'; export * as pb from './src/core/pb.ts'`, resolveDir: root }, outfile: file,
++  bundle: true, platform: 'node', format: 'esm', packages: 'external', plugins: [{ name: 'sfc-stub', setup(b) { b.onLoad({ filter: /\.vue$/ }, () => ({ contents: 'export default {}', loader: 'js' })) } }] })
++const { apiPlugin, socialPlugin, pb } = await import(pathToFileURL(file))
++const originalFetch = globalThis.fetch
++const response = (id = '3333333', code = 1, msg = '') => new Response(pb.build(pb.fBytes(1, pb.build(pb.fNum(2, code), pb.fStr(3, msg))), pb.fStr(2, id)))
++function apiFixture() {
++  const ctx = { set(k, v) { this[k] = v } }
++  apiPlugin.apply(ctx, { base: 'https://example.test' }); ctx.api.setToken('test-token')
++  return ctx.api
++}
++function socialFixture(api) {
++  const listeners = new Map(), toasts = []
++  const ctx = { api: { ...api, token: '' }, auth: { state: { user: { avatar: 'https://example.test/avatar.png' } } },
++    ui: { toast: (...args) => toasts.push(args) }, console: { addEntry() {} },
++    on(n, f) { listeners.set(n, f) }, set(k, v) { this[k] = v }, get(k) { return this[k] }, setTimeout() {}, effect() {},
++    chat: { loadConversations: async () => {} } }
++  socialPlugin.apply(ctx)
++  return { ctx, social: ctx.social, toasts, logout: () => listeners.get('auth/logout')() }
++}
++await test('documented protobuf create request and scalar group_id response, including formerly freezing IDs', async () => {
++  const api = apiFixture()
++  let calls = 0
++  globalThis.fetch = async (url, opts) => {
++    calls++; assert.equal(url, 'https://example.test/v1/group/create-group'); assert.equal(opts.method, 'POST')
++    assert.equal(opts.headers.token, 'test-token'); assert.equal(opts.headers['Content-Type'], 'application/x-protobuf')
++    const req = pb.decode(opts.body)
++    assert.equal(pb.str(req, 2), '测试群'); assert.equal(pb.str(req, 3), '简介'); assert.equal(pb.str(req, 4), 'avatar/key.png')
++    return response('3333333')
++  }
++  assert.equal(await api.createGroup('测试群', '简介', 'avatar/key.png'), '3333333')
++  assert.equal(calls, 1)
++})
++await test('business errors, missing status or group ID, HTTP and HTML errors never report success', async () => {
++  const api = apiFixture()
++  for (const [res, pattern] of [[response('', 1100, '请求参数错误'), /请求参数错误/], [response(''), /缺少群 ID/],
++    [new Response(pb.fStr(2, '1234567')), /状态/], [new Response('bad gateway', { status: 502 }), /HTTP 502/],
++    [new Response('<html>error</html>'), /有效/], [new Response(new Uint8Array([0x12, 0xff])), /Protobuf/]]) {
++    globalThis.fetch = async () => res
++    await assert.rejects(api.createGroup('测试群', '', 'avatar'), pattern)
++  }
++})
++await test('JSON proxy responses tolerate whitespace and use explicit business status', async () => {
++  const api = apiFixture()
++  globalThis.fetch = async () => new Response(' \n' + JSON.stringify({ code: 1, data: { groupId: '1234567' } }))
++  assert.equal(await api.createGroup('群', '', 'avatar'), '1234567')
++  globalThis.fetch = async () => new Response(JSON.stringify({ code: 1100, msg: '头像不合规' }))
++  await assert.rejects(api.createGroup('群', '', 'avatar'), /头像不合规/)
++})
++await test('timeout aborts the transport even if fetch ignores abort; no automatic create retry', async () => {
++  const api = apiFixture(); let signal, calls = 0
++  globalThis.fetch = (_, opts) => { calls++; signal = opts.signal; return new Promise(() => {}) }
++  await assert.rejects(api.createGroup('群', '', 'avatar', { timeout: 15 }), { name: 'TimeoutError' })
++  assert.equal(signal.aborted, true); assert.equal(calls, 1)
++})
++await test('cancellation covers pending response bodies and pre-cancelled requests', async () => {
++  const api = apiFixture(); const ctrl = new AbortController(); let reads = 0, signal
++  globalThis.fetch = async (_, opts) => { signal = opts.signal; return { arrayBuffer() { reads++; return new Promise(() => {}) } } }
++  const pending = api.createGroup('群', '', 'avatar', { signal: ctrl.signal })
++  await Promise.resolve(); ctrl.abort()
++  await assert.rejects(pending, { name: 'AbortError' }); assert.equal(reads, 1); assert.equal(signal.aborted, true)
++  globalThis.fetch = async () => { throw new Error('must not fetch') }
++  await assert.rejects(api.createGroup('群', '', 'avatar', { signal: ctrl.signal }), { name: 'AbortError' })
++})
++await test('blank name and missing avatar are rejected before sending', async () => {
++  const api = apiFixture(); globalThis.fetch = async () => { throw new Error('must not fetch') }
++  await assert.rejects(api.createGroup(' ', '', 'avatar'), /群名称/)
++  await assert.rejects(api.createGroup('群'), /头像/)
++})
++await test('successful create returns immediately while the address book hangs', async () => {
++  const { social, toasts } = socialFixture({ createGroup: async () => '3333333', addressBook: () => new Promise(() => {}) })
++  assert.equal(await social.createGroup(' 群 ', ' 简介 '), '3333333')
++  assert.equal(social.state.creation.pending, false); assert.equal(social.state.book.groups[0].id, '3333333')
++  assert.equal(toasts.filter(x => x[1] === 'success').length, 1)
++})
++await test('concurrent submits send once; failures release state and permit a manual retry', async () => {
++  let reject, calls = 0
++  const { social } = socialFixture({ createGroup: () => { calls++; return new Promise((_, r) => { reject = r }) } })
++  const first = social.createGroup('群'); assert.equal(await social.createGroup('群'), null); assert.equal(calls, 1)
++  reject(new Error('头像不合规')); assert.equal(await first, null); assert.equal(social.state.creation.pending, false)
++  assert.match(social.state.creation.error, /头像不合规/)
++  const second = social.createGroup('群'); assert.equal(calls, 2); reject(new Error('拒绝')); await second
++})
++await test('stop waiting aborts creation, warns about uncertainty, and releases the form', async () => {
++  const api = apiFixture(); let signal
++  globalThis.fetch = (_, opts) => { signal = opts.signal; return new Promise(() => {}) }
++  const { social, toasts } = socialFixture(api)
++  const pending = social.createGroup('群'); social.cancelCreateGroup()
++  assert.equal(await pending, null); assert.equal(signal.aborted, true); assert.equal(social.state.creation.pending, false)
++  assert.match(social.state.creation.error, /避免重复创建/); assert.equal(toasts[0][1], 'warn')
++})
++await test('logout suppresses late results, refreshes, and notifications from the previous account', async () => {
++  let finish
++  const { social, logout, toasts } = socialFixture({ createGroup: () => new Promise(r => { finish = r }) })
++  const pending = social.createGroup('群'); logout(); finish('3333333')
++  assert.equal(await pending, null); assert.equal(social.state.creation.pending, false)
++  assert.equal(social.state.book.groups.length, 0); assert.equal(toasts.length, 0)
++})
++await test('protobuf groups remain compatible and malformed data always terminates (worker watchdog)', async () => {
++  const worker = new Worker(`const { parentPort } = require('node:worker_threads'); (async () => {
++    const { pb } = await import(${JSON.stringify(pathToFileURL(file).href)});
++    const good = pb.build(pb.tag(3,3), pb.fNum(2,8), pb.tag(4,3), pb.fStr(1,'x'), pb.tag(4,4), pb.tag(3,4), pb.fStr(2,'ok'));
++    if (pb.str(pb.decode(good),2) !== 'ok') throw Error('valid group rejected');
++    const bad = [[0x33], [0x33,0x34,0x34], [0x80], [0x08,...Array(11).fill(0x80)], [0x12,9,1], [0x0d,1], [0x0f], [0], [0x0c], ...Array.from({length:8},(_,i)=>Array.from(new TextEncoder().encode(String(i).repeat(7))))];
++    for (const b of bad) { let rejected=false; try { pb.decode(Uint8Array.from(b)) } catch { rejected=true } if (!rejected) throw Error('invalid data accepted: '+b) }
++    let seed=123; for(let n=0;n<5000;n++){ const b=Uint8Array.from({length:n%64},()=>{ seed=(Math.imul(seed,1664525)+1013904223)>>>0; return seed>>>24 }); try { pb.decode(b) } catch {} }
++    parentPort.postMessage('ok');
++  })().catch(e => { throw e })`, { eval: true })
++  try { await new Promise((resolve, reject) => {
++    const timer = setTimeout(() => reject(new Error('decoder hung')), 5000)
++    worker.once('message', m => { clearTimeout(timer); assert.equal(m, 'ok'); resolve() })
++    worker.once('error', e => { clearTimeout(timer); reject(e) })
++  }) } finally { await worker.terminate() }
++})
++globalThis.fetch = originalFetch
++await rm(temp, { recursive: true, force: true })
+--- /dev/null
++++ b/scripts/test-ui-group-create.mjs
+@@ -0,0 +1,75 @@
++import assert from 'node:assert/strict'
++import { createServer } from 'vite'
++import vue from '@vitejs/plugin-vue'
++import { resolve } from 'node:path'
++
++const root = resolve(import.meta.dirname, '..')
++const { chromium } = await import(process.env.PLAYWRIGHT_MODULE || 'playwright')
++const server = await createServer({ root, configFile: false, plugins: [vue()], server: { host: '127.0.0.1', port: 0 }, logLevel: 'error' })
++await server.listen()
++const browser = await chromium.launch({ headless: true, executablePath: process.env.CHROMIUM_EXECUTABLE || undefined, args: ['--no-sandbox', '--disable-dev-shm-usage', '--disable-gpu'] })
++const page = await browser.newPage({ viewport: { width: 1280, height: 860 } })
++page.setDefaultTimeout(6000)
++const errors = [], bodies = []
++page.on('pageerror', e => errors.push(e.message))
++// Wire fixture follows full.proto: status field 1, scalar group_id field 2.
++const ok = Buffer.from([0x0a, 2, 0x10, 1, 0x12, 7, ...Buffer.from('3333333')])
++let mode = 'failure', release
++await page.route('**/qa-api/v1/group/create-group', async route => {
++  bodies.push(route.request().postDataBuffer())
++  if (mode === 'hold') await new Promise(r => { release = r })
++  try {
++    if (mode === 'failure') await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ code: 1100, msg: '头像不合规' }) })
++    else await route.fulfill({ contentType: 'application/x-protobuf', body: ok })
++  } catch { /* A cancelled request may already have closed. */ }
++})
++try {
++  await page.goto(`http://127.0.0.1:${server.httpServer.address().port}/scripts/ui-fixture/index.html?groupcreate`)
++  await page.waitForFunction(() => !!window.__qa)
++  await page.getByTitle('创建群聊 / 加好友').click()
++  await page.locator('.plus-menu').getByRole('button', { name: '创建群聊', exact: true }).click()
++  const dialog = page.getByRole('dialog', { name: '创建群聊' })
++  await dialog.getByRole('textbox', { name: '群名称', exact: true }).fill('Test1forId')
++  await dialog.getByRole('textbox', { name: '群简介', exact: true }).fill('保留这段简介')
++  await dialog.getByRole('button', { name: '创建群聊', exact: true }).click()
++  await dialog.getByRole('alert').filter({ hasText: '头像不合规' }).waitFor()
++  assert.equal(await dialog.getByRole('textbox', { name: '群名称', exact: true }).inputValue(), 'Test1forId')
++  assert.equal(await dialog.getByRole('textbox', { name: '群简介', exact: true }).inputValue(), '保留这段简介')
++  mode = 'hold'
++  await dialog.getByRole('button', { name: '创建群聊', exact: true }).click()
++  await dialog.getByRole('status').waitFor()
++  assert.equal(await dialog.locator('button[type=submit]').isDisabled(), true)
++  const before = bodies.length
++  await dialog.locator('form').evaluate(el => el.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })))
++  assert.equal(bodies.length, before)
++  if (process.env.UI_QA_SCREENSHOTS) await page.screenshot({ path: resolve(process.env.UI_QA_SCREENSHOTS, 'group-create-pending.png') })
++  await dialog.getByRole('button', { name: '停止等待' }).click()
++  await dialog.waitFor({ state: 'detached' })
++  await page.waitForFunction(() => !window.__qa.ctx.social.state.creation.pending)
++  mode = 'success'; release?.()
++  await page.getByTitle('创建群聊 / 加好友').click()
++  await page.locator('.plus-menu').getByRole('button', { name: '创建群聊', exact: true }).click()
++  await dialog.getByRole('textbox', { name: '群名称', exact: true }).fill('成功建群')
++  await dialog.getByRole('button', { name: '创建群聊', exact: true }).click()
++  await dialog.waitFor({ state: 'detached' })
++  assert.equal(await page.evaluate(() => window.__qa.ctx.social.state.book.groups[0].id), '3333333')
++  assert.equal(await page.evaluate(() => window.__qa.ctx.social.state.creation.pending), false)
++  // Same component and real service from the Contacts entry point.
++  await page.evaluate(() => window.__qa.ctx.console.goto('/contacts'))
++  await page.getByRole('button', { name: '创建群聊', exact: true }).click()
++  const form = page.locator('.contact-form .create-group-form')
++  await form.getByRole('textbox', { name: '群名称', exact: true }).fill('通讯录建群')
++  mode = 'failure'
++  await form.getByRole('button', { name: '创建群聊', exact: true }).click()
++  await form.getByRole('alert').waitFor()
++  for (const theme of ['dark', 'light']) {
++    await page.evaluate(t => window.__qa.ctx.ui.setTheme(t), theme)
++    if (process.env.UI_QA_SCREENSHOTS) await page.screenshot({ path: resolve(process.env.UI_QA_SCREENSHOTS, `group-create-${theme}.png`) })
++    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false)
++  }
++  mode = 'success'
++  await form.getByRole('button', { name: '创建群聊', exact: true }).click()
++  await form.waitFor({ state: 'detached' })
++  assert.deepEqual(errors, [])
++  console.log('PASS: both create-group entries; real API/service; failure retains input, cancellation releases state, duplicate submit blocked, scalar-ID success closes while refresh hangs; light/dark layout')
++} finally { release?.(); await page.close(); await browser.close(); await server.close() }
+--- a/scripts/test-ui-userbot.mjs
++++ b/scripts/test-ui-userbot.mjs
+@@ -191,4 +191,69 @@
+   await page.getByText('本群管理权限：管理员', { exact: true }).waitFor()
+   assert.deepEqual(errors, [])
+   console.log('PASS: searchable per-Bot action permissions, default confirmation, concrete review dialog, cancel/approve and explicit review opt-out')
++  // One-off directions are separate from the actual chat input and persistent prompts.
++  holdResponses = false
++  await page.evaluate(() => {
++    const ctx = window.__qa.ctx
++    ctx.userbot.state.config.conversations['2:normal'].mode = 'manual'
++    ctx.console.goto('/')
++  })
++  await page.getByRole('button', { name: '用户 Bot / AI', exact: true }).click()
++  await page.getByRole('button', { name: '快捷指令', exact: true }).click()
++  const quick = page.getByRole('dialog', { name: 'AI 快捷指令' })
++  await quick.getByRole('button', { name: '简短一点', exact: true }).click()
++  await quick.getByLabel('给 AI 的本次指令').fill('委婉拒绝，只用两句话')
++  const beforeQuick = requests.length
++  await quick.getByRole('button', { name: '按指令生成', exact: true }).click()
++  await quick.waitFor({ state: 'detached' })
++  assert.equal(requests.length, beforeQuick + 1)
++  assert.match(requests.at(-1).payload.messages[0].content, /本次快捷指令[\s\S]*委婉拒绝，只用两句话/)
++  assert.equal(await page.evaluate(() => window.__qa.actionCalls.length), 2)
++  // Detach to a real second browser window. Production uses a native Tauri window.
++  const popupEvent = page.waitForEvent('popup')
++  await page.getByRole('button', { name: '独立浮窗', exact: true }).click()
++  const popup = await popupEvent
++  popup.on('pageerror', e => errors.push(e.message))
++  await popup.getByRole('textbox', { name: '给 AI 发出指令' }).waitFor()
++  await popup.waitForFunction(() => !document.querySelector('textarea').disabled)
++  assert.equal(await popup.evaluate(() => !!window.__qa?.ctx.userbot), false)
++  await page.getByText('AI 回复已在独立浮窗中', { exact: true }).waitFor()
++  await popup.getByRole('textbox', { name: '给 AI 发出指令' }).fill('更正式一点')
++  const beforeFloat = requests.length
++  await popup.getByRole('button', { name: '按指令生成', exact: true }).click()
++  await popup.waitForFunction(() => !document.querySelector('textarea').disabled)
++  assert.equal(requests.length, beforeFloat + 1)
++  assert.match(requests.at(-1).payload.messages[0].content, /更正式一点/)
++  if (process.env.FLOATING_AI_SCREENSHOT) await popup.screenshot({ path: process.env.FLOATING_AI_SCREENSHOT })
++  await popup.getByRole('button', { name: '填入聊天框', exact: true }).click()
++  await page.waitForFunction(() => !window.__qa.ctx.userbot.state.drafts['2:normal'])
++  assert.match(await page.locator('.composer textarea').inputValue(), /这是一条测试草稿/)
++  const closed = popup.waitForEvent('close')
++  await popup.getByRole('button', { name: '嵌回聊天框', exact: true }).click()
++  await closed
++  await page.locator('.ai-menu[aria-label="AI 回复助手"]').waitFor()
++  const secondPopupEvent = page.waitForEvent('popup')
++  await page.getByRole('button', { name: '独立浮窗', exact: true }).click()
++  const secondPopup = await secondPopupEvent
++  secondPopup.setDefaultTimeout(6000)
++  await secondPopup.getByRole('textbox', { name: '给 AI 发出指令' }).waitFor()
++  await secondPopup.waitForFunction(() => document.querySelector('textarea') && !document.querySelector('textarea').disabled)
++  const callsBeforeStale = requests.length
++  await secondPopup.evaluate(() => {
++    const session = new URLSearchParams(location.search).get('ai-panel')
++    const b = new BroadcastChannel('yh-ai-panel-' + session)
++    b.postMessage({ type: 'command', view: new URLSearchParams(location.search).get('ai-view'), id: 'stale-command', action: 'generate', key: '2:normal', revision: -1, instruction: 'stale request' }); b.close()
++  })
++  await secondPopup.getByRole('alert').filter({ hasText: '会话已变化' }).waitFor()
++  assert.equal(requests.length, callsBeforeStale)
++  await page.evaluate(() => { window.__qa.ctx.lock = { isLocked: true } })
++  await secondPopup.getByText('请在主窗口选择会话并解锁', { exact: true }).first().waitFor()
++  assert.equal(await secondPopup.getByRole('textbox', { name: '给 AI 发出指令' }).isDisabled(), true)
++  assert.equal(await secondPopup.locator('.floating-ai-message').count(), 0)
++  const secondClosed = secondPopup.waitForEvent('close')
++  await page.evaluate(() => window.__qa.ctx.emit('auth/logout'))
++  await secondClosed
++  assert.equal(await page.evaluate(() => window.__qa.ctx.aiPanel.state.detached), false)
++  assert.deepEqual(errors, [])
++  console.log('PASS: one-off quick commands, no group mutations, shared AI backend, draft sync/use, docking, stale-command rejection, lock privacy and logout closes the floating view')
+ } finally { await browser.close(); await server.close() }
+--- a/scripts/test-userbot.mjs
++++ b/scripts/test-userbot.mjs
+@@ -520,6 +520,41 @@
+   await assert.rejects(ctx.auth.loginWithToken('new-token'), /安全存储不可用/)
+   assert.equal(writes, 0)
+ })
++await test('manual quick instructions and draft revisions apply once without sending or changing memory and prompts', async () => {
++  const h = fixture()
++  try {
++    await waitFor(() => h.ctx.userbot.state.ready)
++    h.ctx.userbot.state.config.conversations['1:friend'].mode = 'manual'
++    const before = JSON.stringify(h.ctx.userbot.state.config)
++    const first = h.ctx.userbot.runManual({ id: 'friend', type: 1 }, { instruction: '只回复两句话', previousDraft: '尚未发送的长草稿' })
++    await waitFor(() => h.pending.length === 1)
++    const payload = JSON.parse(h.pending[0].opts.body).payload
++    assert.match(payload.messages[0].content, /本次快捷指令[\s\S]*只回复两句话/)
++    assert.ok(payload.messages.some(x => x.role === 'assistant' && x.content.includes('尚未发送的长草稿')))
++    h.pending[0].resolve('改好的草稿'); assert.equal(await first, '改好的草稿')
++    assert.equal(h.sent.length, 0); assert.equal(JSON.stringify(h.ctx.userbot.state.config), before)
++    const second = h.ctx.userbot.runManual({ id: 'friend', type: 1 })
++    await waitFor(() => h.pending.length === 2)
++    assert.doesNotMatch(JSON.parse(h.pending[1].opts.body).payload.messages.map(x => x.content).join('\n'), /只回复两句话|尚未发送的长草稿/)
++    h.pending[1].resolve('普通草稿'); await second
++    await assert.rejects(h.ctx.userbot.runManual({ id: 'friend', type: 1 }, { instruction: '长'.repeat(4001) }), /4000/)
++  } finally { h.dispose() }
++})
++await test('floating reply generation cannot run group actions, including generation without a custom instruction', async () => {
++  const h = fixture(); let scopes = 0
++  try {
++    await waitFor(() => h.ctx.userbot.state.ready)
++    const cfg = h.ctx.userbot.state.config
++    cfg.bots[0].allowed.push('2:group'); cfg.bots[0].management = { enabled: true, requireConfirmation: false, allowed: ['mute'] }
++    cfg.conversations['2:group'] = { ...cfg.conversations['1:friend'], mode: 'manual' }
++    h.ctx.api.groupInfo = async () => { scopes++; return { owner: 'me', admins: [] } }
++    const pending = h.ctx.userbot.runManual({ id: 'group', type: 2 }, { instruction: '', replyOnly: true })
++    const rejection = assert.rejects(pending, /未获得群管理权限/)
++    await waitFor(() => h.pending.length === 1)
++    h.pending[0].resolve(JSON.stringify({ format: 'text', content: '提议', actions: [{ type: 'mute', userId: 'other', seconds: 600, reason: 'test' }] }))
++    await rejection; assert.equal(scopes, 0); assert.equal(h.sent.length, 0)
++  } finally { h.dispose() }
++})
+ await test('bridge requires its per-process capability, sends correct headers, and redacts keys in provider errors', async () => {
+   const oldFetch = realFetch
+   const calls = []
+--- a/scripts/ui-fixture/fixture.ts
++++ b/scripts/ui-fixture/fixture.ts
+@@ -8,6 +8,10 @@
+ import { chatPlugin } from '../../src/plugins/chat'
+ import { uiPlugin } from '../../src/plugins/ui'
+ import { userBotPlugin } from '../../src/plugins/userbot'
++import { apiPlugin } from '../../src/plugins/api'
++import { socialPlugin } from '../../src/plugins/social'
++import { installAiPanelHost } from '../../src/core/ai-panel'
++import FloatingAiPanel from '../../src/components/FloatingAiPanel.vue'
+ import { sanitizeHtml } from '../../src/core/render'
+ import '../../src/styles.css'
+ import '../../src/styles-m3.css'
+@@ -56,17 +60,31 @@
+   set(key: string, value: any) { ctx[key] = value }, effect(fn: any) { const off = fn(); if (off) cleanups.push(off) }, inject() {},
+ }
+ uiPlugin.apply(ctx)
++ctx.auth.state.user.avatar = '/scripts/ui-fixture/animated.gif'
+ chatPlugin.apply(ctx)
+ ctx.chat.state.conversations = conversations.map(c => ({ ...c }))
+ ctx.chat.togglePin('pin'); ctx.chat.togglePin('pin-unread')
+ ctx.chat.toggleMute('pin-unread')
+-if (new URLSearchParams(location.search).has('userbot')) {
++if (new URLSearchParams(location.search).has('groupcreate')) {
++  const wire: any = { set(k: string, value: any) { this[k] = value } }
++  apiPlugin.apply(wire, { base: '/qa-api' })
++  ctx.api.createGroup = wire.api.createGroup
++  ctx.api.addressBook = () => new Promise(() => {}) // Deliberately stalled refresh, independent of creation.
++  ctx.api.friendRequests = async () => []
++  ctx.get = (k: string) => ctx[k]
++  ctx.setTimeout = () => () => {}
++  ctx.console.addEntry = () => {}
++  socialPlugin.apply(ctx)
++}
++if (new URLSearchParams(location.search).has('userbot') && !new URLSearchParams(location.search).has('ai-panel')) {
+   ctx.console.pages = reactive(ctx.console.pages)
+   ctx.console.addEntry = (register: any) => register({ page: (page: any) => ctx.console.pages.push(markRaw(page)), slot: (slot: any) => ctx.console.state.slots.push(markRaw(slot)) })
+   ctx.bots = [{ id: 'me', sendMessage: async () => 'sent' }]
+   userBotPlugin.apply(ctx)
++  installAiPanelHost(ctx)
+ }
+ document.documentElement.dataset.platform = 'web'
+-const app = createApp(Console); app.provide('ctx', ctx); app.mount('#app')
++const panelSession = new URLSearchParams(location.search).get('ai-panel')
++const app = panelSession ? createApp(FloatingAiPanel, { sessionId: panelSession }) : createApp(Console); app.provide('ctx', ctx); app.mount('#app')
+ ;(window as any).__qa = { ctx, sanitizeHtml, messages }
+ window.addEventListener('beforeunload', () => { app.unmount(); for (const cleanup of cleanups.reverse()) cleanup() })
+--- /dev/null
++++ b/src/components/AiInstructionDialog.vue
+@@ -0,0 +1,43 @@
++<script setup lang="ts">
++import { ref, onMounted, onBeforeUnmount } from 'vue'
++import Icon from '../console/components/Icon.vue'
++defineProps<{ busy?: boolean; error?: string; hasDraft?: boolean }>()
++const emit = defineEmits<{ submit: [value: { instruction: string; useDraft: boolean }]; close: [] }>()
++const instruction = ref(''), useDraft = ref(true), box = ref<HTMLElement>(), input = ref<HTMLTextAreaElement>()
++const presets = ['简短一点', '更自然些', '正式一点', '委婉拒绝', '总结重点', '翻译成英文']
++const previous = document.activeElement as HTMLElement | null
++onMounted(() => input.value?.focus())
++onBeforeUnmount(() => previous?.isConnected && previous.focus())
++function add(value: string) { instruction.value = [instruction.value.trim(), value].filter(Boolean).join('；'); input.value?.focus() }
++function trap(e: KeyboardEvent) {
++  if (e.key !== 'Tab') return
++  const items = Array.from(box.value?.querySelectorAll<HTMLElement>('button:not(:disabled),textarea:not(:disabled),input:not(:disabled)') || [])
++  const first = items[0], last = items[items.length - 1]
++  if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last?.focus() }
++  if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first?.focus() }
++}
++</script>
++<template>
++  <Teleport to="body">
++    <div class="ai-command-mask" @click.self="emit('close')" @keydown.esc.stop.prevent="emit('close')" @keydown="trap">
++      <form ref="box" class="ai-command-dialog" role="dialog" aria-modal="true" aria-label="AI 快捷指令" @submit.prevent="!busy && instruction.trim() && emit('submit', { instruction: instruction.trim(), useDraft })">
++        <header><div><strong>给 AI 一条指令</strong><p>结合当前会话生成回复，仅本次生效。</p></div><button type="button" class="ghost" aria-label="关闭快捷指令" @click="emit('close')"><Icon name="close" :size="18" /></button></header>
++        <div class="ai-command-presets"><button v-for="preset in presets" :key="preset" type="button" :disabled="busy" @click="add(preset)">{{ preset }}</button></div>
++        <textarea ref="input" v-model="instruction" aria-label="给 AI 的本次指令" placeholder="例如：帮我委婉拒绝，控制在两句话以内。" rows="4" maxlength="2000" :disabled="busy" @keydown.ctrl.enter.stop.prevent="!busy && instruction.trim() && emit('submit', { instruction: instruction.trim(), useDraft })"></textarea>
++        <label v-if="hasDraft" class="ai-command-check"><input v-model="useDraft" type="checkbox" :disabled="busy" /> 在当前 AI 草稿上修改</label>
++        <p v-if="error" class="ai-command-error" role="alert">{{ error }}</p>
++        <p v-if="busy" class="ai-command-wait" role="status">AI 正在按指令生成回复…</p>
++        <footer><span>Ctrl + Enter 生成</span><button type="button" class="ghost" @click="emit('close')">关闭</button><button type="submit" :disabled="busy || !instruction.trim()">{{ busy ? '生成中…' : '按指令生成' }}</button></footer>
++      </form>
++    </div>
++  </Teleport>
++</template>
++<style scoped>
++.ai-command-mask{position:fixed;inset:0;z-index:120;background:#0006;backdrop-filter:blur(4px);display:grid;place-items:center;padding:18px;animation:command-fade .16s ease}
++.ai-command-dialog{box-sizing:border-box;width:min(460px,100%);max-height:calc(100dvh - 36px);overflow:auto;padding:20px;border:1px solid var(--line);border-radius:20px;background:var(--card);color:var(--fg);box-shadow:0 24px 80px #0004;display:flex;flex-direction:column;gap:14px;animation:command-appear .2s ease}
++header,footer{display:flex;align-items:center;gap:10px}header{justify-content:space-between}header strong{font-size:16px}header p{font-size:12px;color:var(--fg2);margin:6px 0 0}header button{padding:7px}
++.ai-command-presets{display:flex;flex-wrap:wrap;gap:7px}.ai-command-presets button{font-size:12px;border-radius:20px;padding:6px 10px;background:var(--card2);color:var(--fg);border:1px solid var(--line)}
++textarea{box-sizing:border-box;width:100%;min-height:112px;resize:vertical;background:var(--card2);color:var(--fg);border:1px solid var(--line);border-radius:12px;padding:12px;font:inherit;font-size:13px;line-height:1.7}textarea:focus{outline:2px solid var(--acc);outline-offset:2px}
++.ai-command-check{display:flex;align-items:center;gap:8px;font-size:12px}.ai-command-error{color:var(--danger,#d85865);font-size:12px;margin:0;overflow-wrap:anywhere}.ai-command-wait{font-size:12px;color:var(--fg2);margin:0}footer{justify-content:flex-end}footer span{margin-right:auto;color:var(--fg2);font-size:11px}footer button{font-size:12px;white-space:nowrap}
++@keyframes command-fade{from{opacity:0}to{opacity:1}}@keyframes command-appear{from{opacity:0;transform:translateY(10px) scale(.98)}to{opacity:1;transform:none}}@media(prefers-reduced-motion:reduce){.ai-command-mask,.ai-command-dialog{animation:none}}
++</style>
+--- a/src/components/Composer.vue
++++ b/src/components/Composer.vue
+@@ -2,6 +2,7 @@
+ import { mediaMetadata } from '../core/media'
+ import { inject, ref, nextTick, computed, onUnmounted, toRefs, defineAsyncComponent, watch } from 'vue'
+ import QuoteBar from './QuoteBar.vue'
++import AiInstructionDialog from './AiInstructionDialog.vue'
+ const ImageEditor = defineAsyncComponent(() => import('./ImageEditor.vue'))
+ import { h } from '../satori/element'
+ import Icon from '../console/components/Icon.vue'
+@@ -23,6 +24,34 @@
+   && ctx.auth?.state.user?.id === accountId
+ onUnmounted(() => { disposed = true })
+ const aiOpen = ref(false)
++const aiInstructionOpen = ref(false)
++const aiInstructionError = ref('')
++const aiSubmitting = ref(false)
++const aiDetached = computed(() => !!ctx.aiPanel?.state.detached)
++async function detachAi(position?: { x?: number; y?: number; drag?: boolean }) {
++  aiInstructionOpen.value = false
++  await ctx.aiPanel?.detach(position)
++}
++let stopAiDrag: (() => void) | undefined
++function startAiDrag(e: PointerEvent) {
++  if (e.button !== 0 || !ctx.aiPanel) return
++  stopAiDrag?.()
++  const el = e.currentTarget as HTMLElement
++  el.setPointerCapture(e.pointerId)
++  const stop = () => {
++    el.removeEventListener('pointermove', move); el.removeEventListener('pointerup', stop); el.removeEventListener('pointercancel', stop)
++    if (el.hasPointerCapture(e.pointerId)) el.releasePointerCapture(e.pointerId)
++    stopAiDrag = undefined
++  }
++  const move = (p: PointerEvent) => {
++    if (p.clientX < 0 || p.clientX > innerWidth || p.clientY < 0 || p.clientY > innerHeight) {
++      stop(); void detachAi({ x: p.screenX - 180, y: p.screenY - 24, drag: true })
++    }
++  }
++  stopAiDrag = stop
++  el.addEventListener('pointermove', move); el.addEventListener('pointerup', stop); el.addEventListener('pointercancel', stop)
++}
++onUnmounted(() => stopAiDrag?.())
+ const aiKey = keyOf(target)
+ const aiBusy = computed(() => !!ctx.userbot?.state.busy[aiKey])
+ const aiNow = ref(Date.now())
+@@ -39,13 +68,24 @@
+ }, { immediate: true })
+ onUnmounted(() => clearInterval(aiClock))
+ watch(() => ctx.userbot?.state.drafts[aiKey], (value) => { if (value && isCurrent()) aiOpen.value = true })
+-async function generateAiDraft() {
++async function generateAiDraft(manual?: { instruction: string; previousDraft?: string }) {
++  if (aiSubmitting.value || aiActive.value || !isCurrent()) return false
++  aiSubmitting.value = true; aiInstructionError.value = ''
+   try {
+-    const answer = await ctx.userbot.runManual(target)
++    const answer = await ctx.userbot.runManual(target, manual)
+     if (isCurrent()) { ctx.userbot.state.drafts[aiKey] = answer; ctx.userbot.state.draftKinds[aiKey] = ctx.userbot.state.replyKinds[aiKey] || 1 }
++    return true
+   } catch (e: any) {
+-    if (isCurrent() && e?.name !== 'AbortError') ctx.ui?.toast?.('AI 生成失败：' + e.message, 'error', 6000)
+-  }
++    if (isCurrent() && e?.name !== 'AbortError') {
++      aiInstructionError.value = e.message || '生成失败，请重试'
++      ctx.ui?.toast?.('AI 生成失败：' + aiInstructionError.value, 'error', 6000)
++    }
++    return false
++  } finally { aiSubmitting.value = false }
++}
++async function submitAiInstruction(value: { instruction: string; useDraft: boolean }) {
++  const previousDraft = value.useDraft ? ctx.userbot?.state.drafts[aiKey] : undefined
++  if (await generateAiDraft({ instruction: value.instruction, previousDraft }) && isCurrent()) aiInstructionOpen.value = false
+ }
+ function useAiDraft() {
+   const answer = ctx.userbot?.state.drafts[aiKey]
+@@ -511,13 +551,15 @@
+       </span>
+     </div>
+     <Transition name="ai-strip">
+-      <section v-if="aiOpen && ctx.userbot" id="ai-reply-strip" class="ai-menu" aria-label="AI 回复助手" @keydown.esc.stop="aiOpen = false">
++      <section v-if="aiOpen && ctx.userbot && !aiDetached" id="ai-reply-strip" class="ai-menu" aria-label="AI 回复助手" @keydown.esc.stop="aiOpen = false">
+         <div class="ai-strip-row">
+           <span class="ai-badge"><Icon name="robot" :size="18" /></span>
+           <div class="ai-info"><strong>AI 回复</strong><span class="ai-status" role="status"><i v-if="aiActive" class="ai-working"></i>{{ aiStatus }}</span></div>
+           <div class="ai-actions">
+-            <button class="ai-generate" :disabled="aiActive" @click="generateAiDraft">{{ aiActive ? '处理中…' : ctx.userbot.state.drafts[aiKey] ? '重新生成' : '生成回复草稿' }}</button>
++            <button class="ai-generate" :disabled="aiActive || aiSubmitting" @click="generateAiDraft()">{{ aiActive ? '处理中…' : ctx.userbot.state.drafts[aiKey] ? '重新生成' : '生成回复草稿' }}</button>
++            <button class="ai-instruction-trigger" :disabled="aiActive || aiSubmitting" @click="aiInstructionError = ''; aiInstructionOpen = true">快捷指令</button>
+             <button v-if="ctx.userbot.state.drafts[aiKey]" @click="useAiDraft">填入输入框</button>
++            <button v-if="ctx.aiPanel" class="ai-icon ai-detach" title="独立浮窗（可按住拖到软件外）" aria-label="独立浮窗" :disabled="ctx.aiPanel.state.opening" @pointerdown="startAiDrag" @click="detachAi()"><Icon name="copy" :size="17" /></button>
+             <button class="ai-icon" title="当前会话 AI 设置" aria-label="当前会话 AI 设置" @click="ctx.userbot.open(target); aiOpen = false"><Icon name="settings" :size="17" /></button>
+             <button class="ai-icon" title="收起 AI 回复" aria-label="收起 AI 回复" @click="aiOpen = false"><Icon name="close" :size="17" /></button>
+           </div>
+@@ -531,6 +573,8 @@
+         <div v-if="ctx.userbot.state.context[aiKey]" class="ai-context"><span>上下文 ≈ {{ ctx.userbot.state.context[aiKey].percent }}%</span><span v-if="ctx.userbot.state.context[aiKey].updatedAt">记忆已自动更新</span></div>
+       </section>
+     </Transition>
++    <div v-if="aiOpen && aiDetached" class="ai-menu ai-detached-notice" role="status"><span>AI 回复已在独立浮窗中</span><button @click="detachAi()">显示浮窗</button><button @click="ctx.aiPanel.dock()">嵌回聊天框</button></div>
++    <AiInstructionDialog v-if="aiInstructionOpen" :busy="aiSubmitting" :error="aiInstructionError" :has-draft="!!ctx.userbot?.state.drafts[aiKey]" @submit="submitAiInstruction" @close="aiInstructionOpen = false" />
+ 
+     <!-- 待发送附件预览区：图片可点开发送前编辑，可写独立配文 -->
+     <div v-if="pending.length" class="pending">
+@@ -583,6 +627,7 @@
+ <style scoped>
+ .composer { z-index: 4; }
+ .ai-wrap { position: relative; flex: 0 0 auto; }
++.ai-detach{touch-action:none;cursor:grab!important}.ai-detach:active{cursor:grabbing!important}.ai-detached-notice{display:flex;align-items:center;flex-wrap:wrap;gap:8px;font-size:12px;color:var(--fg2)}.ai-detached-notice span{margin-right:auto}
+ .ai-trigger { position: relative; font-weight: 700; }
+ .ai-dot { position: absolute; width: 7px; height: 7px; border-radius: 50%; right: 2px; top: 2px; background: var(--acc); }
+ .ai-trigger.active { background: var(--acc-soft); color: var(--acc); border-color: var(--acc); }
+@@ -612,7 +657,7 @@
+ .ai-strip-leave-active { transition: opacity 170ms ease, transform 190ms ease, max-height 210ms ease, margin 210ms ease, padding 210ms ease; max-height: 260px; pointer-events: none; }
+ .ai-strip-enter-from,.ai-strip-leave-to { opacity: 0; transform: translateY(7px); max-height: 0; margin-bottom: 0; padding-top: 0; padding-bottom: 0; }
+ @keyframes ai-spin { to { transform: rotate(360deg); } }
+-@media(max-width:760px) { .ai-info { align-items: flex-start; flex-direction: column; gap: 3px; }.ai-menu { padding: 9px; }.ai-badge { display: none; }.ai-strip-row { gap: 6px; }.ai-status { max-width: 145px; }.ai-actions { gap: 3px; }.ai-menu button { padding: 6px; } }
++@media(max-width:760px) { .ai-info { align-items: flex-start; flex-direction: column; gap: 3px; }.ai-menu { padding: 9px; }.ai-badge { display: none; }.ai-strip-row { gap: 6px; flex-wrap: wrap; }.ai-status { max-width: 145px; }.ai-actions { gap: 3px; flex-wrap: wrap; }.ai-menu button { padding: 6px; } }
+ @media(prefers-reduced-motion:reduce) { .ai-strip-enter-active,.ai-strip-leave-active,.ai-menu button { transition: none; }.ai-working,.ai-progress span { animation: none; } }
+ .bar-row {
+   display: flex; flex-wrap: nowrap; align-items: center; gap: 6px;
+--- /dev/null
++++ b/src/components/CreateGroupForm.vue
+@@ -0,0 +1,52 @@
++<script setup lang="ts">
++import { inject, reactive, ref, onBeforeUnmount } from 'vue'
++
++const ctx = inject<any>('ctx')
++const emit = defineEmits<{ created: [id: string]; cancel: [] }>()
++const form = reactive({ name: '', introduction: '', avatar: ctx.auth?.state?.user?.avatar || '' })
++const submitting = ref(false)
++const error = ref('')
++let disposed = false
++async function submit() {
++  if (submitting.value || ctx.social?.state?.creation?.pending) return
++  error.value = ''
++  if (!form.name.trim()) { error.value = '群名称不能为空'; return }
++  if (!form.avatar.trim()) { error.value = '请填写群头像地址，或先设置个人头像'; return }
++  submitting.value = true
++  try {
++    const id = await ctx.social.createGroup(form.name, form.introduction, form.avatar)
++    if (disposed) return
++    if (id) emit('created', id)
++    else error.value = ctx.social.state.creation?.error || '创建群聊失败，请检查后重试'
++  } catch (e: any) { if (!disposed) error.value = e?.message || '创建群聊失败' }
++  finally { submitting.value = false }
++}
++function cancel() { if (submitting.value) ctx.social.cancelCreateGroup?.(); emit('cancel') }
++onBeforeUnmount(() => { disposed = true; if (submitting.value) ctx.social.cancelCreateGroup?.() })
++</script>
++
++<template>
++  <form class="create-group-form" :aria-busy="submitting" @submit.prevent="submit">
++    <label>群名称<input v-model="form.name" class="dlg-input" aria-label="群名称" placeholder="输入群名称" maxlength="30" :disabled="submitting" required /></label>
++    <label>群简介<textarea v-model="form.introduction" class="dlg-input" aria-label="群简介" placeholder="群简介（可选）" rows="3" :disabled="submitting"></textarea></label>
++    <label>群头像地址<input v-model="form.avatar" class="dlg-input" aria-label="群头像地址" placeholder="填写已上传的头像地址" :disabled="submitting" required /></label>
++    <p class="group-hint">默认使用你的个人头像，可改为已上传的图片地址。</p>
++    <div v-if="submitting" class="group-pending" role="status"><progress aria-label="正在创建群聊"></progress><span>正在创建群聊，最多等待 15 秒…</span></div>
++    <p v-if="error" class="group-error" role="alert">{{ error }}</p>
++    <div class="dlg-foot">
++      <button class="ghost tiny" type="button" @click="cancel">{{ submitting ? '停止等待' : '取消' }}</button>
++      <button class="primary tiny" type="submit" :disabled="submitting || ctx.social?.state?.creation?.pending">{{ submitting ? '创建中…' : '创建群聊' }}</button>
++    </div>
++  </form>
++</template>
++
++<style scoped>
++.create-group-form{display:flex;flex-direction:column;gap:12px;min-width:0}
++label{display:flex;flex-direction:column;gap:6px;font-size:13px}
++.dlg-input{width:100%;box-sizing:border-box;margin:0}
++.group-hint{font-size:12px;color:var(--fg2);margin:0;line-height:1.5}
++.group-pending{display:flex;flex-direction:column;gap:8px;font-size:12px;color:var(--fg2)}
++progress{width:100%;height:5px;accent-color:var(--acc)}
++.group-error{margin:0;font-size:13px;line-height:1.6;color:var(--danger,#df7777);overflow-wrap:anywhere}
++.dlg-foot{display:flex;justify-content:flex-end;gap:8px;margin-top:4px}
++</style>
+--- /dev/null
++++ b/src/components/FloatingAiPanel.vue
+@@ -0,0 +1,115 @@
++<script setup lang="ts">
++import { ref, reactive, computed, onMounted, onBeforeUnmount, nextTick } from 'vue'
++import Icon from '../console/components/Icon.vue'
++import AiInstructionDialog from './AiInstructionDialog.vue'
++import { PANEL_COLORS, newPanelId } from '../core/ai-panel'
++
++const props = defineProps<{ sessionId: string }>()
++const view = new URLSearchParams(location.search).get('ai-view') || ''
++const bus = new BroadcastChannel('yh-ai-panel-' + props.sessionId)
++const state = reactive<any>({ available: false, active: false, status: '正在连接主窗口…', draft: '', channel: null, revision: -1, key: '' })
++const instruction = ref(''), error = ref(''), pending = ref(''), commandOpen = ref(false), pinned = ref(false)
++const messages = ref<{ role: 'user' | 'assistant'; text: string }[]>([])
++const scroll = ref<HTMLElement>(), input = ref<HTMLTextAreaElement>()
++let lastSeen = Date.now(), lastDraft = '', lastRevision = -1
++const active = computed(() => state.active || !!pending.value)
++const native = !!(window as any).__TAURI_INTERNALS__
++const invoke = (action: string) => (window as any).__TAURI__.core.invoke('ai_panel_action', { action })
++function command(action: string, extra: any = {}) {
++  const id = newPanelId()
++  bus.postMessage({ type: 'command', id, action, view, key: state.key, revision: state.revision, ...extra })
++  return id
++}
++function generate(value?: { instruction: string; useDraft: boolean }) {
++  if (!state.available || active.value) return
++  const text = (value?.instruction ?? instruction.value).trim()
++  error.value = ''
++  pending.value = command('generate', { instruction: text, useDraft: value?.useDraft ?? !!state.draft })
++  messages.value.push({ role: 'user', text: text || '根据当前会话生成回复' }); scrollBottom()
++}
++async function windowAction(action: string) {
++  if (action === 'dock') { command('dock'); return }
++  try {
++    if (native) await invoke(action)
++    else if (action === 'close') { command('dock'); window.close() }
++    if (action === 'pin' && native) pinned.value = !pinned.value
++  } catch (e: any) { error.value = e?.message || '窗口操作失败' }
++}
++function drag(e: PointerEvent) { if (e.button === 0 && native && !(e.target as HTMLElement).closest('button')) void windowAction('drag') }
++function scrollBottom() { void nextTick(() => { if (scroll.value) scroll.value.scrollTop = scroll.value.scrollHeight }) }
++bus.onmessage = ({ data }) => {
++  if (data?.view !== view) return
++  if (data?.type === 'docked') { window.close(); return }
++  if (data?.type === 'snapshot') {
++    lastSeen = Date.now()
++    if (lastRevision !== data.revision || !data.available) {
++      messages.value = []; instruction.value = ''; error.value = ''; pending.value = ''; lastDraft = ''; commandOpen.value = false
++      lastRevision = data.revision
++    }
++    Object.assign(state, data)
++    document.documentElement.dataset.theme = data.theme
++    for (const key of PANEL_COLORS) if (typeof data.colors?.[key] === 'string') document.documentElement.style.setProperty(key, data.colors[key])
++    if (data.available && data.draft && data.draft !== lastDraft && !pending.value) {
++      lastDraft = data.draft
++      messages.value.push({ role: 'assistant', text: data.draft })
++      messages.value = messages.value.slice(-30); scrollBottom()
++    }
++  } else if (data?.type === 'result') {
++    if (data.id === pending.value) {
++      pending.value = ''
++      if (data.error) error.value = data.error
++      else {
++        if (typeof data.draft === 'string' && data.draft) { lastDraft = data.draft; messages.value.push({ role: 'assistant', text: data.draft }); messages.value = messages.value.slice(-30); scrollBottom() }
++        instruction.value = ''; commandOpen.value = false
++      }
++    } else if (data.error) error.value = data.error
++  }
++}
++function disconnect() { bus.postMessage({ type: 'closed', view }) }
++const timer = setInterval(() => {
++  bus.postMessage({ type: 'ping', view })
++  if (Date.now() - lastSeen > 10000) {
++    state.available = false; state.draft = ''; state.status = '主窗口未连接'; messages.value = []; pending.value = ''; instruction.value = ''; commandOpen.value = false
++  }
++}, 1000)
++onMounted(() => { bus.postMessage({ type: 'ready', view }); input.value?.focus(); window.addEventListener('beforeunload', disconnect) })
++onBeforeUnmount(() => { disconnect(); clearInterval(timer); bus.close(); window.removeEventListener('beforeunload', disconnect) })
++</script>
++
++<template>
++  <main class="floating-ai">
++    <header class="floating-ai-header" @pointerdown="drag">
++      <div class="floating-title"><Icon name="robot" :size="17" /><span>{{ state.channel?.name || 'AI 回复' }}</span></div>
++      <div class="floating-window-actions">
++        <button v-if="native" :class="{ on: pinned }" title="置顶浮窗" aria-label="置顶浮窗" @click="windowAction('pin')"><Icon name="pinUp" :size="15" /></button>
++        <button title="嵌回聊天框" aria-label="嵌回聊天框" @click="windowAction('dock')"><Icon name="copy" :size="15" /></button>
++        <button v-if="native" title="最小化" aria-label="最小化" @click="windowAction('minimize')">−</button>
++        <button title="关闭浮窗" aria-label="关闭浮窗" @click="windowAction('close')"><Icon name="close" :size="16" /></button>
++      </div>
++    </header>
++    <section ref="scroll" class="floating-ai-history" aria-label="AI 指令和回复">
++      <div v-if="!messages.length" class="floating-ai-empty"><Icon name="robot" :size="34" /><h2>想怎么回复？</h2><p>{{ state.available ? '给 AI 一条指令，或直接结合当前会话生成。' : state.status }}</p><button :disabled="!state.available || active" @click="generate({ instruction: '', useDraft: false })">根据会话生成回复</button></div>
++      <article v-for="(message, i) in messages" :key="i" :class="['floating-ai-message', message.role]" :aria-label="message.role === 'user' ? '你的指令' : 'AI 回复'">{{ message.text }}</article>
++    </section>
++    <div class="floating-ai-bottom">
++      <div v-if="active" class="floating-progress" role="progressbar" aria-label="AI 回复进度"><span></span></div>
++      <p class="floating-ai-status" role="status">{{ active && !state.active ? '正在处理指令…' : state.status }}</p>
++      <p v-if="error" class="floating-ai-error" role="alert">{{ error }}</p>
++      <button v-if="state.draft" class="floating-use" :disabled="active || !state.available" @click="command('use')">填入聊天框</button>
++      <form class="floating-ai-input" @submit.prevent="generate()">
++        <textarea ref="input" v-model="instruction" aria-label="给 AI 发出指令" placeholder="给 AI 发出指令…" rows="2" maxlength="2000" :disabled="!state.available || active" @keydown.enter.exact.stop.prevent="!$event.isComposing && generate()"></textarea>
++        <div class="floating-input-actions"><button type="button" class="ghost" title="快捷指令" aria-label="快捷指令" :disabled="!state.available || active" @click="error = ''; commandOpen = true"><Icon name="plus" :size="18" /></button><span>仅生成草稿</span><button type="submit" class="floating-send" aria-label="按指令生成" :disabled="!state.available || active || !instruction.trim()">↑</button></div>
++      </form>
++    </div>
++    <AiInstructionDialog v-if="commandOpen" :busy="!!pending" :error="error" :has-draft="!!state.draft" @submit="generate" @close="commandOpen = false" />
++  </main>
++</template>
++
++<style scoped>
++.floating-ai{height:100dvh;display:flex;flex-direction:column;background:var(--card);color:var(--fg);overflow:hidden;border:1px solid var(--line);box-sizing:border-box;border-radius:12px}
++.floating-ai-header{height:48px;display:flex;align-items:center;justify-content:space-between;padding:0 10px 0 15px;gap:10px;flex-shrink:0;cursor:grab;user-select:none}.floating-title{display:flex;align-items:center;gap:9px;min-width:0;color:var(--fg2);font-size:13px}.floating-title span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.floating-window-actions{display:flex;gap:2px}.floating-window-actions button{display:grid;place-items:center;background:transparent;border:0;color:var(--fg2);width:30px;height:30px;padding:4px;border-radius:8px;font-size:18px}.floating-window-actions button:hover,.floating-window-actions button.on{background:var(--acc-soft);color:var(--acc)}
++.floating-ai-history{flex:1;min-height:0;overflow:auto;padding:18px 18px 10px;display:flex;flex-direction:column;gap:18px}.floating-ai-empty{margin:auto;text-align:center;color:var(--fg2);font-size:13px;max-width:280px;line-height:1.7}.floating-ai-empty h2{font-size:19px;color:var(--fg);margin:14px 0 4px}.floating-ai-empty button{font-size:12px;margin-top:12px}.floating-ai-message{font-size:14px;line-height:1.8;white-space:pre-wrap;overflow-wrap:anywhere}.floating-ai-message.user{align-self:flex-end;max-width:85%;padding:10px 14px;border-radius:18px;background:var(--card2)}.floating-ai-message.assistant{padding:0 2px}
++.floating-ai-bottom{flex-shrink:0;padding:0 14px 14px}.floating-ai-status{font-size:11px;color:var(--fg2);margin:8px 3px;overflow-wrap:anywhere}.floating-ai-error{font-size:12px;color:var(--danger,#df7777);margin:8px 0;overflow-wrap:anywhere}.floating-use{display:block;margin:8px 0 10px auto;font-size:12px;background:var(--acc-soft);color:var(--acc);border:1px solid var(--line)}
++.floating-ai-input{border:1px solid var(--line);border-radius:22px;padding:10px;background:var(--card2)}.floating-ai-input textarea{width:100%;box-sizing:border-box;border:0;resize:none;max-height:160px;min-height:42px;background:transparent;color:var(--fg);font:inherit;font-size:13px;line-height:1.6;padding:3px 6px;outline:none}.floating-input-actions{display:flex;align-items:center;gap:8px}.floating-input-actions .ghost{display:grid;place-items:center;padding:5px;border:0}.floating-input-actions span{font-size:11px;color:var(--fg2);margin-right:auto}.floating-send{width:32px;height:32px;border-radius:50%;font-size:20px;padding:0;border:0;background:var(--fg);color:var(--card)}button:disabled{opacity:.45;cursor:default}
++.floating-progress{height:3px;overflow:hidden;background:var(--acc-soft);border-radius:3px}.floating-progress span{display:block;width:35%;height:100%;background:var(--acc);animation:floating-progress 1.4s ease-in-out infinite}@keyframes floating-progress{from{transform:translateX(-100%)}to{transform:translateX(385%)}}@media(prefers-reduced-motion:reduce){.floating-progress span{animation:none}}
++</style>
+--- a/src/components/Sidebar.vue
++++ b/src/components/Sidebar.vue
+@@ -15,6 +15,7 @@
+ import { rankSearchResults } from '../core/search'
+ import Icon from '../console/components/Icon.vue'
+ import ConversationItem from './ConversationItem.vue'
++import CreateGroupForm from './CreateGroupForm.vue'
+ 
+ const ctx = inject<any>('ctx')
+ const auth = ctx.auth
+@@ -141,23 +142,17 @@
+   else document.removeEventListener('click', offPlus)
+ })
+ onUnmounted(() => document.removeEventListener('click', offPlus))
+-const dlg = reactive({ kind: '' as '' | 'group' | 'friend', name: '', intro: '', fid: '', msg: '', busy: false })
++const dlg = reactive({ kind: '' as '' | 'group' | 'friend', fid: '', msg: '', busy: false })
+ function plusPick(k: 'group' | 'friend') {
+   plusOpen.value = false
+   dlg.kind = k
+ }
+-function closeDlg() { dlg.kind = ''; dlg.name = ''; dlg.intro = ''; dlg.fid = ''; dlg.msg = '' }
++function closeDlg() { dlg.kind = ''; dlg.fid = ''; dlg.msg = '' }
+ async function dlgOk() {
+   if (dlg.busy) return
+   dlg.busy = true
+   try {
+-    if (dlg.kind === 'group') {
+-      const n = dlg.name.trim()
+-      if (!n) { ctx.ui?.toast?.('群名称不能为空', 'warn'); return }
+-      const ok = await ctx.social?.createGroup?.(n, dlg.intro.trim())
+-      if (!ok) return                       // 失败提示已由 social 给出，不再误报成功
+-      ctx.chat?.loadConversations?.(true)
+-    } else {
++    if (dlg.kind === 'friend') {
+       const id = dlg.fid.trim()
+       if (!id) { ctx.ui?.toast?.('请填写对方 ID', 'warn'); return }
+       await ctx.social?.apply?.(id, 1, dlg.msg.trim())
+@@ -193,21 +188,18 @@
+     </div>
+ 
+     <!-- 创建群聊 / 加好友 对话框 -->
+-    <div v-if="dlg.kind" class="dlg-mask" @click.self="closeDlg">
+-      <div class="dlg-box">
++    <div v-if="dlg.kind" class="dlg-mask" @click.self="closeDlg" @keydown.esc="closeDlg">
++      <div class="dlg-box" role="dialog" aria-modal="true" :aria-label="dlg.kind === 'group' ? '创建群聊' : '加好友'">
+         <div class="dlg-title">{{ dlg.kind === 'group' ? '创建群聊' : '加好友' }}</div>
+-        <template v-if="dlg.kind === 'group'">
+-          <input v-model="dlg.name" class="dlg-input" placeholder="群名称" maxlength="30" autofocus />
+-          <textarea v-model="dlg.intro" class="dlg-input" placeholder="群简介（可选）" rows="3"></textarea>
+-        </template>
++        <CreateGroupForm v-if="dlg.kind === 'group'" @created="closeDlg" @cancel="closeDlg" />
+         <template v-else>
+           <input v-model="dlg.fid" class="dlg-input" placeholder="对方 ID" autofocus />
+           <textarea v-model="dlg.msg" class="dlg-input" placeholder="验证消息（可选）" rows="2"></textarea>
+-        </template>
+-        <div class="dlg-foot">
++          <div class="dlg-foot">
+           <button class="ghost tiny" @click="closeDlg">取消</button>
+           <button class="primary tiny" :disabled="dlg.busy" @click="dlgOk">{{ dlg.busy ? '提交中…' : '确定' }}</button>
+-        </div>
++          </div>
++        </template>
+       </div>
+     </div>
+ 
+--- a/src/console/pages/ContactsPage.vue
++++ b/src/console/pages/ContactsPage.vue
+@@ -8,6 +8,7 @@
+ import KLayout from '../components/KLayout.vue'
+ import KCard from '../components/KCard.vue'
+ import Icon from '../components/Icon.vue'
++import CreateGroupForm from '../../components/CreateGroupForm.vue'
+ import { resUrl } from '../../core/res'
+ import { fallbackAvatar } from '../../core/util'
+ 
+@@ -20,7 +21,6 @@
+ const addOpen = ref(false)
+ const createOpen = ref(false)
+ const submitting = ref(false)
+-const creating = ref(false)
+ const tabs = [
+   { id: 'users', title: '好友', icon: 'user' },
+   { id: 'groups', title: '群聊', icon: 'contacts' },
+@@ -28,7 +28,6 @@
+   { id: 'discover', title: '发现', icon: 'star' },
+ ] as const
+ const addForm = ref({ targetId: '', chatType: 1, message: '' })
+-const newGroup = ref({ name: '', introduction: '' })
+ 
+ /* ---- 「发现」：推荐分区 + 分区内推荐群（/v1/user/recommend-*） ---- */
+ const discLoading = ref(false)
+@@ -76,16 +75,6 @@
+   finally { submitting.value = false }
+ }
+ 
+-async function doCreateGroup() {
+-  if (!newGroup.value.name.trim()) return ctx.ui.toast('群名不能为空', 'warn')
+-  if (creating.value) return
+-  creating.value = true
+-  try {
+-    const id = await sc.createGroup(newGroup.value.name.trim(), newGroup.value.introduction)
+-    if (id) { newGroup.value = { name: '', introduction: '' }; createOpen.value = false }
+-  } finally { creating.value = false }
+-}
+-
+ /**
+  * 点某个对象 → 跳到对应会话；**本地没有就就地造一个**（仿 TG/QQ：点联系人直接进对话）
+  * 造出来的会话只是本地壳，发消息时按 id/type 直接发到对方即可。
+@@ -141,11 +130,7 @@
+     </Transition>
+     <Transition name="contact-panel">
+       <KCard v-if="createOpen" title="创建群聊" class="contact-form">
+-        <form class="row" @submit.prevent="doCreateGroup">
+-          <input v-model="newGroup.name" aria-label="群名称" placeholder="群名称" />
+-          <input v-model="newGroup.introduction" aria-label="群简介" placeholder="群简介（可选）" />
+-          <button class="small" type="submit" :disabled="creating">{{ creating ? '创建中…' : '创建群聊' }}</button>
+-        </form>
++        <CreateGroupForm @created="createOpen = false" @cancel="createOpen = false" />
+       </KCard>
+     </Transition>
+ 
+--- /dev/null
++++ b/src/core/ai-panel.ts
+@@ -0,0 +1,118 @@
++import { reactive, watch } from 'vue'
++
++export const PANEL_COLORS = ['--bg', '--fg', '--fg2', '--card', '--card2', '--line', '--acc', '--acc-soft', '--rail']
++export function newPanelId() {
++  if (crypto.randomUUID) return crypto.randomUUID()
++  return Array.from(crypto.getRandomValues(new Uint8Array(16)), b => b.toString(16).padStart(2, '0')).join('')
++}
++export function installAiPanelHost(ctx: any) {
++  if (ctx.aiPanel) return ctx.aiPanel
++  if (typeof BroadcastChannel !== 'function' || !globalThis.crypto?.getRandomValues) return
++  const session = newPanelId()
++  let view = newPanelId()
++  const bus = new BroadcastChannel('yh-ai-panel-' + session)
++  const state = reactive({ detached: false, opening: false })
++  const native = !!(window as any).__TAURI_INTERNALS__
++  const invoke = (command: string, args?: any) => (window as any).__TAURI__.core.invoke(command, args)
++  let popup: Window | null = null, disposed = false, identity = '', revision = 0
++  let offNative: (() => void) | undefined
++  const handled = new Set<string>()
++  const post = (value: any) => { if (!disposed) bus.postMessage({ ...value, view }) }
++  function snapshot() {
++    const current = ctx.chat?.state.current, owner = String(ctx.auth?.state.user?.id || '')
++    const locked = !!ctx.lock?.isLocked
++    const available = !!(owner && current && ctx.userbot?.state.ready && !locked)
++    const key = available ? `${current.type}:${current.id}` : ''
++    const nextIdentity = owner + ':' + key + ':' + locked
++    if (identity !== nextIdentity) { identity = nextIdentity; revision++ }
++    const bot = ctx.userbot?.state, queued = bot?.queued?.[key], busy = !!bot?.busy?.[key]
++    const styles = getComputedStyle(document.documentElement)
++    return { type: 'snapshot', revision, key, available, channel: available ? { id: current.id, type: current.type, name: current.name || current.id } : null,
++      draft: available ? bot?.drafts?.[key] || '' : '', kind: available ? bot?.draftKinds?.[key] || 1 : 1,
++      active: available && (busy || !!queued), busy,
++      status: !available ? '请在主窗口选择会话并解锁' : queued && !busy ? '等待合并消息 / 冷却结束' : bot?.context?.[key]?.stage || ctx.userbot.statusFor(current),
++      started: bot?.started?.[key] || 0, error: '', theme: document.documentElement.dataset.theme || 'dark',
++      colors: Object.fromEntries(PANEL_COLORS.map(k => [k, styles.getPropertyValue(k)])) }
++  }
++  const publish = () => post(snapshot())
++  const stopWatch = watch(() => {
++    const current = ctx.chat?.state.current, key = current ? `${current.type}:${current.id}` : '', bot = ctx.userbot?.state
++    return JSON.stringify([current?.id, current?.type, current?.name, ctx.auth?.state.user?.id, ctx.lock?.isLocked,
++      bot?.ready, bot?.drafts[key], bot?.draftKinds[key], bot?.busy[key], bot?.queued[key], bot?.context[key]])
++  }, publish)
++  const observer = new MutationObserver(publish)
++  observer.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme', 'style'] })
++  async function dock(focus = true) {
++    state.detached = false
++    post({ type: 'docked' })
++    if (focus) ctx.console?.goto('/')
++    if (native) await invoke('close_ai_panel', { focus }).catch(() => {})
++    else { popup?.close(); popup = null; if (focus) window.focus() }
++  }
++  async function detach(position?: { x?: number; y?: number; drag?: boolean }) {
++    if (state.opening) return
++    state.opening = true
++    try {
++      if (!snapshot().available) throw new Error('请先选择会话并启用用户 Bot')
++      if (!state.detached) view = newPanelId()
++      if (native) await invoke('open_ai_panel', { sessionId: session, viewId: view, x: position?.x ?? null, y: position?.y ?? null, drag: !!position?.drag })
++      else {
++        const url = new URL(location.href); url.searchParams.set('ai-panel', session); url.searchParams.set('ai-view', view)
++        popup = window.open(url.href, 'yh-ai-panel-' + session, 'popup,width=440,height=610')
++        if (!popup) throw new Error('请允许此页面打开 AI 浮窗')
++        popup.focus()
++      }
++      state.detached = true; publish()
++    } catch (e: any) { ctx.ui?.toast?.('无法打开 AI 浮窗：' + e.message, 'error') }
++    finally { state.opening = false }
++  }
++  bus.onmessage = async ({ data }) => {
++    if (data?.view !== view) return
++    if (data?.type === 'ready' || data?.type === 'ping') { publish(); return }
++    if (data?.type === 'closed') { state.detached = false; return }
++    if (data?.type !== 'command' || typeof data.id !== 'string' || handled.has(data.id)) return
++    handled.add(data.id); if (handled.size > 100) handled.delete(handled.values().next().value!)
++    const s = snapshot(), current = ctx.chat?.state.current, owner = String(ctx.auth?.state.user?.id || '')
++    if (data.action === 'dock') { await dock(); return }
++    if (!state.detached || !s.available || data.revision !== s.revision || data.key !== s.key) { post({ type: 'result', id: data.id, error: '会话已变化，请重新操作' }); publish(); return }
++    try {
++      let replyDraft: string | undefined
++      if (data.action === 'generate') {
++        if (s.active) throw new Error('当前会话正在生成回复')
++        const instruction = typeof data.instruction === 'string' ? data.instruction.trim() : ''
++        const answer = await ctx.userbot.runManual({ ...current }, { instruction, previousDraft: data.useDraft ? s.draft : undefined, replyOnly: true })
++        if (owner === String(ctx.auth?.state.user?.id || '') && snapshot().revision === s.revision) {
++          ctx.userbot.state.drafts[s.key] = answer
++          ctx.userbot.state.draftKinds[s.key] = ctx.userbot.state.replyKinds[s.key] || 1
++          replyDraft = answer
++        }
++      } else if (data.action === 'use') {
++        if (!s.draft) throw new Error('请先生成回复草稿')
++        const draft = ctx.chat.drafts.get(current)
++        draft.text = draft.text ? draft.text.replace(/\s+$/, '') + '\n' + s.draft : s.draft
++        draft.kind = s.kind
++        delete ctx.userbot.state.drafts[s.key]; delete ctx.userbot.state.draftKinds[s.key]
++        ctx.console.goto('/')
++      } else if (data.action === 'settings') ctx.userbot.open(current)
++      else throw new Error('未知操作')
++      post({ type: 'result', id: data.id, draft: replyDraft })
++    } catch (e: any) { post({ type: 'result', id: data.id, error: e?.message || '操作失败' }) }
++    publish()
++  }
++  const heartbeat = setInterval(() => {
++    if (popup?.closed) { popup = null; state.detached = false }
++    if (state.detached) publish()
++  }, 1000)
++  if (native) void (window as any).__TAURI__.event.listen('ai-panel-closed', (event: any) => { if (event.payload === view) state.detached = false }).then((off: () => void) => { if (disposed) off(); else offNative = off }).catch(() => {})
++  const offLogout = ctx.on?.('auth/logout', () => { revision++; identity = ''; post({ ...snapshot(), available: false, draft: '', channel: null }); void dock(false) })
++  function dispose() {
++    if (disposed) return
++    void dock(false); disposed = true; clearInterval(heartbeat); stopWatch(); observer.disconnect(); offNative?.(); offLogout?.(); bus.close()
++    window.removeEventListener('beforeunload', dispose)
++  }
++  window.addEventListener('beforeunload', dispose)
++  const panel = { state, detach, dock, dispose }
++  ctx.set('aiPanel', panel)
++  ctx.effect?.(() => dispose)
++  return panel
++}
+--- a/src/core/augment.ts
++++ b/src/core/augment.ts
+@@ -38,6 +38,7 @@
+     social: any
+     botconsole: any
+     userbot: any
++    aiPanel: any
+     community: any
+     session: any
+     /** 统一事件层：ctx.event.on/emit/history */
+--- a/src/core/pb.ts
++++ b/src/core/pb.ts
+@@ -33,41 +33,55 @@
+ 
+ /* ---------------- 解码 ---------------- */
+ export function decode(u8) {
++  if (!(u8 instanceof Uint8Array)) throw new Error('Protobuf：需要字节数据')
+   let i = 0; const out = {}
++  const fail = () => { throw new Error('Protobuf：响应格式错误或数据不完整') }
+   const rv = () => {
+-    let s = 0n, sh = 0n
+-    for (;;) { const b = u8[i++]; s |= BigInt(b & 127) << sh; if (!(b & 128)) break; sh += 7n }
+-    return s
++    let s = 0n
++    for (let n = 0; n < 10; n++) {
++      if (i >= u8.length) return fail()
++      const b = u8[i++]
++      if (n === 9 && b > 1) return fail()
++      s |= BigInt(b & 127) << BigInt(n * 7)
++      if (!(b & 128)) return s
++    }
++    return fail()
+   }
+-  /**
+-   * 跳过某个字段（含递归跳过 group）。
+-   * ⚠️ 之前只支持 wire type 0/1/2/5，遇到 3（start group）/4（end group）就抛
+-   *    'unsupported wire type 4' —— 云湖某些响应里有已废弃的 group 类型字段，
+-   *    客户端用不到这些字段，正确做法是**跳过**而不是崩溃。
+-   */
+-  const skip = (w) => {
++  const readTag = () => {
++    const t = rv(), f = Number(t >> 3n), w = Number(t & 7n)
++    if (f < 1 || f > 0x1fffffff || w > 5) return fail()
++    return { f, w }
++  }
++  const take = (len) => {
++    if (!Number.isSafeInteger(len) || len < 0 || len > u8.length - i) return fail()
++    const value = u8.slice(i, i + len); i += len
++    return value
++  }
++  // Deprecated groups are allowed, but must terminate with the matching field.
++  // Never loop past EOF: a string misread as a message used to freeze the UI here.
++  const skip = (w, field, depth = 0) => {
+     if (w === 0) { rv(); return }
+-    if (w === 2) { const len = Number(rv()); i += len; return }
+-    if (w === 5) { i += 4; return }
+-    if (w === 1) { i += 8; return }
++    if (w === 2) { take(Number(rv())); return }
++    if (w === 5) { take(4); return }
++    if (w === 1) { take(8); return }
+     if (w === 3) {
+-      // start group：递归跳到匹配的 end group（字段号在 tag 里，这里只按 w 判断）
+-      for (;;) {
+-        const t2 = rv(); const w2 = Number(t2 & 7n)
+-        if (w2 === 4) return  // 遇到 end group，group 结束
+-        skip(w2)
++      if (depth >= 64) return fail()
++      while (i < u8.length) {
++        const next = readTag()
++        if (next.w === 4) { if (next.f !== field) return fail(); return }
++        skip(next.w, next.f, depth + 1)
+       }
+     }
+-    // w === 4（end group）或其它非法值：无 payload，直接返回
++    return fail()
+   }
+   while (i < u8.length) {
+-    const t = rv(); const f = Number(t >> 3n); const w = Number(t & 7n)
++    const { f, w } = readTag()
+     let v
+     if (w === 0) v = Number(rv())
+-    else if (w === 2) { const len = Number(rv()); v = u8.slice(i, i + len); i += len }
+-    else if (w === 5) { v = u8.slice(i, i + 4); i += 4 }
+-    else if (w === 1) { v = u8.slice(i, i + 8); i += 8 }
+-    else { skip(w); continue }  // wire type 3/4 或其它未知：跳过，不崩
++    else if (w === 2) v = take(Number(rv()))
++    else if (w === 5) v = take(4)
++    else if (w === 1) v = take(8)
++    else { skip(w, f); continue }
+     ;(out[f] = out[f] || []).push(v)
+   }
+   return out
+--- a/src/main.ts
++++ b/src/main.ts
+@@ -1,6 +1,4 @@
+ import { createApp } from 'vue'
+-import App from './App.vue'
+-import { ctx, bootstrap } from './app'
+ import { platform, applyPlatformAttr, enableRipple } from './platform'
+ import './styles.css'
+ import './styles-m3.css'   // M3 质感层（Kazumi 式观感），必须后加载覆盖基础变量
+@@ -25,13 +23,21 @@
+   w.__TAURI__.opener.openUrl(href).catch(() => { window.open(href, '_blank') })
+ }, true)
+ 
+-const app = createApp(App)
+-app.provide('ctx', ctx)
+-app.config.errorHandler = (err: any) => ctx.logger?.error('vue error:', err?.message || String(err))
+-
+ ;(async () => {
++  const sessionId = new URLSearchParams(location.search).get('ai-panel')
++  if (sessionId) {
++    // A detached view never bootstraps auth, WebSocket, user Bots or the account vault.
++    const { default: FloatingAiPanel } = await import('./components/FloatingAiPanel.vue')
++    createApp(FloatingAiPanel, { sessionId }).mount('#app')
++    return
++  }
++  const [{ default: App }, { ctx, bootstrap }, { installAiPanelHost }] = await Promise.all([import('./App.vue'), import('./app'), import('./core/ai-panel')])
++  const app = createApp(App)
++  app.provide('ctx', ctx)
++  app.config.errorHandler = (err: any) => ctx.logger?.error('vue error:', err?.message || String(err))
+   try {
+     await bootstrap()
++    installAiPanelHost(ctx)
+   } catch (e: any) {
+     console.error('[bootstrap]', e)
+     showCrash(e)
+--- a/src/plugins/api.ts
++++ b/src/plugins/api.ts
+@@ -63,10 +63,10 @@
+     let token = ''
+     let routes = null
+ 
+-    interface RequestOptions { method?: string; body?: any; timeout?: number; authToken?: string }
++    interface RequestOptions { method?: string; body?: any; timeout?: number; authToken?: string; signal?: AbortSignal }
+     // 默认超时 60s（原 20s 在高负载机器+慢上游时批量上传表情会误 abort，
+     // 用户实测连发多张收藏报「signal is aborted without reason」）
+-    async function request(path: string, { method = 'POST', body, timeout = 60000, authToken = token }: RequestOptions = {}) {
++    async function request(path: string, { method = 'POST', body, timeout = 60000, authToken = token, signal }: RequestOptions = {}) {
+       const headers: Record<string, string> = {}
+       if (authToken) headers.token = authToken
+       // 前端再保险一层：接口请求禁用缓存
+@@ -79,14 +79,32 @@
+         init.body = JSON.stringify(body)
+       }
+       const ctrl = new AbortController()
+-      const timer = setTimeout(() => ctrl.abort(), timeout)
++      let timer: ReturnType<typeof setTimeout>
++      let cancel: () => void
++      const interrupted = new Promise<never>((_, reject) => {
++        cancel = () => { ctrl.abort(); reject(new DOMException('请求已取消', 'AbortError')) }
++        timer = setTimeout(() => {
++          ctrl.abort()
++          reject(new DOMException('请求超时', 'TimeoutError'))
++        }, timeout)
++        signal?.addEventListener('abort', cancel, { once: true })
++      })
+       init.signal = ctrl.signal
+       try {
+-        const res = await fetch(base + path, init)
+-        const buf = new Uint8Array(await res.arrayBuffer())
+-        if (buf[0] === 0x7b) return { json: JSON.parse(new TextDecoder().decode(buf)), http: res.status }
+-        return { pb: pb.decode(buf), raw: buf, http: res.status }
+-      } finally { clearTimeout(timer) }
++        if (signal?.aborted) cancel()
++        return await Promise.race([interrupted, (async () => {
++          if (ctrl.signal.aborted) throw new DOMException('请求已取消', 'AbortError')
++          const res = await fetch(base + path, init)
++          const buf = new Uint8Array(await res.arrayBuffer())
++          const text = new TextDecoder().decode(buf).trimStart()
++          const isJson = /json/i.test(res.headers.get('content-type') || '') || text.startsWith('{')
++          const json = isJson ? JSON.parse(text) : undefined
++          if (!res.ok) throw new Error(json?.msg || json?.message || `请求失败（HTTP ${res.status}）`)
++          if (json) return { json, http: res.status }
++          if (text.startsWith('<')) throw new Error('服务器未返回有效的 API 数据')
++          return { pb: pb.decode(buf), raw: buf, http: res.status }
++        })()])
++      } finally { clearTimeout(timer); signal?.removeEventListener('abort', cancel) }
+     }
+ 
+     function assertOk(r) {
+@@ -342,12 +360,22 @@
+         return assertOk(await request('/v1/friend/delete-friend', { body: { chatId, chatType } }))
+       },
+ 
+-      /** 创建群聊：CreateGroupRequest{ name=2, introduction=3, avatar_url=4 } */
+-      async createGroup(name: string, introduction = '', avatarUrl = '') {
+-        const r = assertOk(await request('/v1/group/create-group', {
++      /** full.proto: CreateGroupResponse { Status status=1; string group_id=2; } */
++      async createGroup(name: string, introduction = '', avatarUrl = '', { signal, timeout = 15000 }: { signal?: AbortSignal; timeout?: number } = {}) {
++        if (!name.trim()) throw new Error('群名称不能为空')
++        if (!avatarUrl.trim()) throw new Error('请填写群头像地址，或先设置个人头像')
++        const r = await request('/v1/group/create-group', {
+           body: pb.build(pb.fStr(2, name), pb.fStr(3, introduction), pb.fStr(4, avatarUrl)),
+-        }))
+-        return pb.str(pb.msg(r.pb, 2) || pb.msg(r.pb, 3) || new Uint8Array(), 2) || ''
++          signal, timeout,
++        })
++        const status = r.json ? r.json : pb.msg(r.pb, 1)
++        const code = r.json ? status.code : pb.num(status, 2)
++        if (code !== 1) throw new Error((r.json ? status.msg : pb.str(status, 3)) || `创建群聊失败（状态 ${code ?? '缺失'}）`)
++        // group_id is a scalar string. Decoding it as a nested message can hang on wire type 3.
++        const value = r.json ? r.json.data?.groupId ?? r.json.data?.group_id : pb.str(r.pb, 2)
++        const id = typeof value === 'string' || typeof value === 'number' ? String(value).trim() : ''
++        if (!id) throw new Error('服务端已返回成功，但缺少群 ID；请先刷新群列表确认，避免重复创建')
++        return id
+       },
+       /** 邀请进群 */
+       async inviteToGroup(groupId: string, userIds: string[]) {
+--- a/src/plugins/social.ts
++++ b/src/plugins/social.ts
+@@ -40,12 +40,17 @@
+       requests: [] as any[],
+       loading: false,
+       loaded: false,
++      creation: { pending: false, error: '' },
+     })
+     let generation = 0
++    let creating: AbortController | undefined
+     ctx.on('auth/logout', () => {
+       generation++
++      creating?.abort(); creating = undefined
++      state.creation.pending = false; state.creation.error = ''
+       state.book = { users: [], groups: [], bots: [] }; state.requests = []; state.loading = false; state.loaded = false
+     })
++    ctx.effect?.(() => () => { generation++; creating?.abort(); creating = undefined })
+ 
+     async function loadBook() {
+       if (api.token === '' && !(ctx as any).auth?.state?.user?.id) return
+@@ -84,27 +89,46 @@
+       } catch (e: any) { ui.toast('操作失败：' + e.message, 'error') }
+     }
+ 
+-    async function createGroup(name: string, introduction = '') {
++    function cancelCreateGroup() { creating?.abort() }
++
++    async function createGroup(name: string, introduction = '', avatarUrl?: string) {
++      if (state.creation.pending) return null
++      state.creation.error = ''
++      const version = generation
++      const controller = new AbortController()
++      creating = controller
++      state.creation.pending = true
+       try {
+-        // 云湖创建群聊强制要头像（avatar_url 空会回「头像不合规」）——默认用发起人自己的头像
+-        const avatar = ctx.get('auth')?.state?.user?.avatar || ''
+-        // 15s 超时兜底：云端偶发不响应时不再让对话框永远「提交中」
+-        const id: string = await Promise.race([
+-          api.createGroup(name, introduction, avatar),
+-          new Promise<string>((_, rej) => setTimeout(() => rej(new Error('创建超时（15s），请检查网络后重试')), 15000)),
+-        ])
+-        ui.toast(id ? `群聊已创建（ID ${id}）` : '群聊已创建', 'success')
+-        ctx.emit('chat/refresh' as any)
+-        await loadBook()
+-        return id || 'ok'
++        name = name.trim(); introduction = introduction.trim()
++        const avatar = (avatarUrl ?? ctx.get('auth')?.state?.user?.avatar ?? '').trim()
++        if (!name) throw new Error('群名称不能为空')
++        if (!avatar) throw new Error('请填写群头像地址，或先设置个人头像')
++        const id: string = await api.createGroup(name, introduction, avatar, { signal: controller.signal, timeout: 15000 })
++        if (version !== generation || controller.signal.aborted) return null
++        if (!id) throw new Error('缺少群 ID，请先刷新群列表确认，避免重复创建')
++        // Commit the confirmed result immediately; background refresh must never hold the form open.
++        if (!state.book.groups.some((g: any) => String(g.id) === id)) state.book.groups.unshift({ id, name, avatar, introduction })
++        ui.toast(`群聊已创建（ID ${id}）`, 'success')
++        void loadBook()
++        void Promise.resolve().then(() => {
++          if (version === generation) return (ctx as any).chat?.loadConversations?.(true)
++        }).catch(() => { /* chat 插件负责刷新失败提示；建群已经成功 */ })
++        return id
+       } catch (e: any) {
+-        ui.toast('创建失败：' + e.message, 'error')
++        if (version !== generation) return null
++        const uncertain = controller.signal.aborted || ['AbortError', 'TimeoutError', 'TypeError'].includes(e?.name)
++        state.creation.error = uncertain
++          ? '已停止等待，建群结果尚未确认。请先刷新群列表检查，避免重复创建。'
++          : (e?.message || '创建群聊失败')
++        ui.toast(state.creation.error, uncertain ? 'warn' : 'error')
+         return null
++      } finally {
++        if (creating === controller) { creating = undefined; state.creation.pending = false }
+       }
+     }
+ 
+     ctx.set('social', {
+-      state, loadBook, loadRequests, apply, handleRequest, createGroup,
++      state, loadBook, loadRequests, apply, handleRequest, createGroup, cancelCreateGroup,
+       /** 通讯录分类 → 云湖 chatType */
+       chatTypeOf(tab: 'users' | 'groups' | 'bots') { return tab === 'groups' ? 2 : tab === 'bots' ? 3 : 1 },
+       users: () => state.book.users || [],
+--- a/src/plugins/userbot.ts
++++ b/src/plugins/userbot.ts
+@@ -196,7 +196,10 @@
+       }).filter(m => m.content.trim())
+     }
+     function valid(version: number, owner: string, controller: AbortController) { return !disposed && !controller.signal.aborted && version === epoch && owner === account() && state.ready }
+-    async function run(channel: any, automatic: boolean, incoming: any[] = []): Promise<string> {
++    async function run(channel: any, automatic: boolean, incoming: any[] = [], manual?: { instruction: string; previousDraft?: string; replyOnly?: boolean }): Promise<string> {
++      const instruction = !automatic ? String(manual?.instruction || '').trim() : ''
++      const replyOnly = !automatic && (!!instruction || manual?.replyOnly === true)
++      if (instruction.length > 4000) throw new Error('本次指令不能超过 4000 字')
+       const owner = account(), version = epoch, k = keyOf(channel)
+       let data: ReturnType<typeof resolve>
+       try { data = resolve(channel) }
+@@ -234,7 +237,7 @@
+         if (snapshot.setting.memoryEnabled) turns = afterMemory(turns, frozenConfig.memoryCursors[memId])
+         turns = turns.slice(-count)
+         let management = null as Awaited<ReturnType<typeof loadActionScope>>, managementSuffix = ''
+-        if (snapshot.bot.management?.enabled === true && Number(channel.type) === 2) {
++        if (!replyOnly && snapshot.bot.management?.enabled === true && Number(channel.type) === 2) {
+           management = await loadActionScope(api, channel, owner, snapshot.bot.management, stillValid)
+           state.managementStatus[k] = management ? (management.role === 'owner' ? '群主' : '管理员') : '当前账号没有本群管理权限'
+           if (management?.allowed.length) managementSuffix = await actionContext(api, management, turns, stillValid)
+@@ -278,7 +281,13 @@
+             }
+           }
+         }
+-        if (estimate(system) + 18 >= limit) throw new Error('系统提示词或记忆已超过上下文 Token 上限，请缩短提示词或提高上限')
++        // One-off directions are applied only after memory compression, so neither the instruction
++        // nor an unsent draft can become conversation memory or affect automatic replies.
++        if (instruction) {
++          system += '\n\n【本次快捷指令】\n' + instruction + '\n以上指令仅用于本次回复草稿，请结合会话上下文生成或修改回复，保持既定输出格式。'
++          if (manual?.previousDraft?.trim()) turns.push({ id: '', ts: 0, senderId: owner, role: 'assistant', content: '【待修改的回复草稿】\n' + clipTokens(manual.previousDraft, Math.floor(limit / 3)) })
++        }
++        if (estimate(system) + 18 >= limit) throw new Error('系统提示词、记忆或本次指令已超过上下文 Token 上限，请缩短内容或提高上限')
+         const bounded = boundedTurns(turns, count, limit - estimate(system) - 12)
+         if (!stillValid()) throw new DOMException('任务已取消', 'AbortError')
+         state.context[k] = { used: contextCost(system, bounded), limit, percent: Math.round(contextCost(system, bounded) / limit * 100), stage: '正在生成回复', updatedAt: frozenConfig.memoryCursors[memId]?.updatedAt }
+@@ -488,7 +497,7 @@
+           return state.managementStatus[k] = role === 'owner' ? '群主' : role === 'admin' ? '管理员' : '当前账号没有本群管理权限'
+         } catch { if (disposed || owner !== account() || version !== epoch) return ''; return state.managementStatus[k] = '读取群权限失败，请重试' }
+       }, getKey, setKey, reload: load,
+-      runManual: (channel: any) => run(channel, false),
++      runManual: (channel: any, manual?: { instruction: string; previousDraft?: string; replyOnly?: boolean }) => run(channel, false, [], manual),
+       fetchModels: async (service: AiService) => models(service, await getKey(service.id)),
+       testService: async (service: AiService) => { const result = await generate(service, await getKey(service.id), '请简短回答。', [{ role: 'user', content: '请回复 OK。' }]); log('服务测试', service.name, '测试成功', '', result.usage); return result },
+       clearLogs() { state.logs = []; scheduleSave() },
+--- a/src-tauri/Cargo.lock
++++ b/src-tauri/Cargo.lock
+@@ -4833,7 +4833,7 @@
+ 
+ [[package]]
+ name = "yunhulaoda-desktop"
+-version = "1.0.16"
++version = "1.0.17"
+ dependencies = [
+  "base64 0.22.1",
+  "serde",
+--- a/src-tauri/Cargo.toml
++++ b/src-tauri/Cargo.toml
+@@ -1,6 +1,6 @@
+ [package]
+ name = "yunhulaoda-desktop"
+-version = "1.0.16"
++version = "1.0.17"
+ description = "云湖牢大版桌面客户端（Tauri 壳 + Node sidecar 服务）"
+ authors = ["yibanm"]
+ edition = "2021"
+--- a/src-tauri/build.rs
++++ b/src-tauri/build.rs
+@@ -12,6 +12,9 @@
+             "secure_write",
+             "secure_delete",
+             "ai_bridge_token",
++            "open_ai_panel",
++            "close_ai_panel",
++            "ai_panel_action",
+         ])),
+     )
+     .expect("failed to build Tauri application permissions");
+--- /dev/null
++++ b/src-tauri/capabilities/ai-panel.json
+@@ -0,0 +1,8 @@
++{
++  "$schema": "../gen/schemas/desktop-schema.json",
++  "identifier": "ai-panel",
++  "description": "AI 回复浮窗，只能操作自身窗口",
++  "windows": ["ai-reply"],
++  "remote": { "urls": ["http://127.0.0.1:*/*"] },
++  "permissions": ["core:default", "allow-ai-panel-action"]
++}
+--- a/src-tauri/capabilities/default.json
++++ b/src-tauri/capabilities/default.json
+@@ -9,6 +9,7 @@
+     "allow-restart-sidecar", "allow-open-external-url",
+     "allow-native-notifications-supported", "allow-show-message-notification",
+     "allow-dismiss-message-notification", "allow-clear-message-notifications",
+-    "allow-secure-read", "allow-secure-write", "allow-secure-delete", "allow-ai-bridge-token"
++    "allow-secure-read", "allow-secure-write", "allow-secure-delete", "allow-ai-bridge-token",
++    "allow-open-ai-panel", "allow-close-ai-panel"
+   ]
+ }
+--- /dev/null
++++ b/src-tauri/permissions/autogenerated/ai_bridge_token.toml
+@@ -0,0 +1,11 @@
++# Automatically generated - DO NOT EDIT!
++
++[[permission]]
++identifier = "allow-ai-bridge-token"
++description = "Enables the ai_bridge_token command without any pre-configured scope."
++commands.allow = ["ai_bridge_token"]
++
++[[permission]]
++identifier = "deny-ai-bridge-token"
++description = "Denies the ai_bridge_token command without any pre-configured scope."
++commands.deny = ["ai_bridge_token"]
+--- /dev/null
++++ b/src-tauri/permissions/autogenerated/ai_panel_action.toml
+@@ -0,0 +1,11 @@
++# Automatically generated - DO NOT EDIT!
++
++[[permission]]
++identifier = "allow-ai-panel-action"
++description = "Enables the ai_panel_action command without any pre-configured scope."
++commands.allow = ["ai_panel_action"]
++
++[[permission]]
++identifier = "deny-ai-panel-action"
++description = "Denies the ai_panel_action command without any pre-configured scope."
++commands.deny = ["ai_panel_action"]
+--- /dev/null
++++ b/src-tauri/permissions/autogenerated/clear_message_notifications.toml
+@@ -0,0 +1,11 @@
++# Automatically generated - DO NOT EDIT!
++
++[[permission]]
++identifier = "allow-clear-message-notifications"
++description = "Enables the clear_message_notifications command without any pre-configured scope."
++commands.allow = ["clear_message_notifications"]
++
++[[permission]]
++identifier = "deny-clear-message-notifications"
++description = "Denies the clear_message_notifications command without any pre-configured scope."
++commands.deny = ["clear_message_notifications"]
+--- /dev/null
++++ b/src-tauri/permissions/autogenerated/close_ai_panel.toml
+@@ -0,0 +1,11 @@
++# Automatically generated - DO NOT EDIT!
++
++[[permission]]
++identifier = "allow-close-ai-panel"
++description = "Enables the close_ai_panel command without any pre-configured scope."
++commands.allow = ["close_ai_panel"]
++
++[[permission]]
++identifier = "deny-close-ai-panel"
++description = "Denies the close_ai_panel command without any pre-configured scope."
++commands.deny = ["close_ai_panel"]
+--- /dev/null
++++ b/src-tauri/permissions/autogenerated/dismiss_message_notification.toml
+@@ -0,0 +1,11 @@
++# Automatically generated - DO NOT EDIT!
++
++[[permission]]
++identifier = "allow-dismiss-message-notification"
++description = "Enables the dismiss_message_notification command without any pre-configured scope."
++commands.allow = ["dismiss_message_notification"]
++
++[[permission]]
++identifier = "deny-dismiss-message-notification"
++description = "Denies the dismiss_message_notification command without any pre-configured scope."
++commands.deny = ["dismiss_message_notification"]
+--- /dev/null
++++ b/src-tauri/permissions/autogenerated/native_notifications_supported.toml
+@@ -0,0 +1,11 @@
++# Automatically generated - DO NOT EDIT!
++
++[[permission]]
++identifier = "allow-native-notifications-supported"
++description = "Enables the native_notifications_supported command without any pre-configured scope."
++commands.allow = ["native_notifications_supported"]
++
++[[permission]]
++identifier = "deny-native-notifications-supported"
++description = "Denies the native_notifications_supported command without any pre-configured scope."
++commands.deny = ["native_notifications_supported"]
+--- /dev/null
++++ b/src-tauri/permissions/autogenerated/open_ai_panel.toml
+@@ -0,0 +1,11 @@
++# Automatically generated - DO NOT EDIT!
++
++[[permission]]
++identifier = "allow-open-ai-panel"
++description = "Enables the open_ai_panel command without any pre-configured scope."
++commands.allow = ["open_ai_panel"]
++
++[[permission]]
++identifier = "deny-open-ai-panel"
++description = "Denies the open_ai_panel command without any pre-configured scope."
++commands.deny = ["open_ai_panel"]
+--- /dev/null
++++ b/src-tauri/permissions/autogenerated/open_external_url.toml
+@@ -0,0 +1,11 @@
++# Automatically generated - DO NOT EDIT!
++
++[[permission]]
++identifier = "allow-open-external-url"
++description = "Enables the open_external_url command without any pre-configured scope."
++commands.allow = ["open_external_url"]
++
++[[permission]]
++identifier = "deny-open-external-url"
++description = "Denies the open_external_url command without any pre-configured scope."
++commands.deny = ["open_external_url"]
+--- /dev/null
++++ b/src-tauri/permissions/autogenerated/restart_sidecar.toml
+@@ -0,0 +1,11 @@
++# Automatically generated - DO NOT EDIT!
++
++[[permission]]
++identifier = "allow-restart-sidecar"
++description = "Enables the restart_sidecar command without any pre-configured scope."
++commands.allow = ["restart_sidecar"]
++
++[[permission]]
++identifier = "deny-restart-sidecar"
++description = "Denies the restart_sidecar command without any pre-configured scope."
++commands.deny = ["restart_sidecar"]
+--- /dev/null
++++ b/src-tauri/permissions/autogenerated/secure_delete.toml
+@@ -0,0 +1,11 @@
++# Automatically generated - DO NOT EDIT!
++
++[[permission]]
++identifier = "allow-secure-delete"
++description = "Enables the secure_delete command without any pre-configured scope."
++commands.allow = ["secure_delete"]
++
++[[permission]]
++identifier = "deny-secure-delete"
++description = "Denies the secure_delete command without any pre-configured scope."
++commands.deny = ["secure_delete"]
+--- /dev/null
++++ b/src-tauri/permissions/autogenerated/secure_read.toml
+@@ -0,0 +1,11 @@
++# Automatically generated - DO NOT EDIT!
++
++[[permission]]
++identifier = "allow-secure-read"
++description = "Enables the secure_read command without any pre-configured scope."
++commands.allow = ["secure_read"]
++
++[[permission]]
++identifier = "deny-secure-read"
++description = "Denies the secure_read command without any pre-configured scope."
++commands.deny = ["secure_read"]
+--- /dev/null
++++ b/src-tauri/permissions/autogenerated/secure_write.toml
+@@ -0,0 +1,11 @@
++# Automatically generated - DO NOT EDIT!
++
++[[permission]]
++identifier = "allow-secure-write"
++description = "Enables the secure_write command without any pre-configured scope."
++commands.allow = ["secure_write"]
++
++[[permission]]
++identifier = "deny-secure-write"
++description = "Denies the secure_write command without any pre-configured scope."
++commands.deny = ["secure_write"]
+--- /dev/null
++++ b/src-tauri/permissions/autogenerated/show_message_notification.toml
+@@ -0,0 +1,11 @@
++# Automatically generated - DO NOT EDIT!
++
++[[permission]]
++identifier = "allow-show-message-notification"
++description = "Enables the show_message_notification command without any pre-configured scope."
++commands.allow = ["show_message_notification"]
++
++[[permission]]
++identifier = "deny-show-message-notification"
++description = "Denies the show_message_notification command without any pre-configured scope."
++commands.deny = ["show_message_notification"]
+--- /dev/null
++++ b/src-tauri/src/ai_panel.rs
+@@ -0,0 +1,60 @@
++//! A view of the main window's AI assistant. No account vault or AI bridge permissions.
++use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
++
++#[tauri::command]
++pub async fn open_ai_panel(app: AppHandle, window: WebviewWindow, session_id: String, view_id: String, x: Option<f64>, y: Option<f64>, drag: Option<bool>) -> Result<(), String> {
++    if window.label() != "main" { return Err("Only the main window can detach the AI panel".into()); }
++    if [&session_id, &view_id].iter().any(|id| id.is_empty() || id.len() > 80 || !id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')) {
++        return Err("Invalid AI panel session".into());
++    }
++    let url = format!("http://127.0.0.1:{}/?ai-panel={}&ai-view={}", super::app_port(), session_id, view_id).parse::<tauri::Url>().map_err(|e| e.to_string())?;
++    if let Some(panel) = app.get_webview_window("ai-reply") {
++        if panel.url().ok().as_ref() != Some(&url) {
++            panel.navigate(url).map_err(|e| e.to_string())?;
++            let handle = app.clone();
++            panel.on_window_event(move |event| {
++                if matches!(event, tauri::WindowEvent::Destroyed) { let _ = handle.emit_to("main", "ai-panel-closed", &view_id); }
++            });
++        }
++        panel.show().map_err(|e| e.to_string())?;
++        return panel.set_focus().map_err(|e| e.to_string());
++    }
++    let mut builder = WebviewWindowBuilder::new(&app, "ai-reply", WebviewUrl::External(url))
++        .title("YH LaoDa · AI 回复")
++        .inner_size(440.0, 610.0).min_inner_size(350.0, 360.0)
++        .decorations(false).resizable(true)
++        .on_navigation(|url| url.scheme() == "http" && url.host_str() == Some("127.0.0.1") && url.port_or_known_default() == Some(super::app_port()));
++    if let (Some(x), Some(y)) = (x, y) {
++        if x.is_finite() && y.is_finite() { builder = builder.position(x, y); }
++    }
++    let panel = builder.build().map_err(|e| e.to_string())?;
++    let handle = app.clone();
++    panel.on_window_event(move |event| {
++        if matches!(event, tauri::WindowEvent::Destroyed) { let _ = handle.emit_to("main", "ai-panel-closed", &view_id); }
++    });
++    panel.show().map_err(|e| e.to_string())?;
++    panel.set_focus().map_err(|e| e.to_string())?;
++    if drag == Some(true) { let _ = panel.start_dragging(); }
++    Ok(())
++}
++
++#[tauri::command]
++pub async fn close_ai_panel(app: AppHandle, window: WebviewWindow, focus: Option<bool>) -> Result<(), String> {
++    if window.label() != "main" { return Err("Only the main window can dock the AI panel".into()); }
++    if let Some(panel) = app.get_webview_window("ai-reply") { panel.close().map_err(|e| e.to_string())?; }
++    if focus == Some(true) { let _ = window.unminimize(); let _ = window.show(); let _ = window.set_focus(); }
++    Ok(())
++}
++
++#[tauri::command]
++pub async fn ai_panel_action(window: WebviewWindow, action: String) -> Result<(), String> {
++    if window.label() != "ai-reply" { return Err("Invalid AI panel window".into()); }
++    let result = match action.as_str() {
++        "drag" => window.start_dragging(),
++        "minimize" => window.minimize(),
++        "close" => window.close(),
++        "pin" => window.set_always_on_top(!window.is_always_on_top().unwrap_or(false)),
++        _ => return Err("Unsupported AI panel action".into()),
++    };
++    result.map_err(|e| e.to_string())
++}
+--- a/src-tauri/src/main.rs
++++ b/src-tauri/src/main.rs
+@@ -12,6 +12,7 @@
+ mod notifications;
+ mod desktop_endpoint;
+ mod userbot_security;
++mod ai_panel;
+ 
+ use std::net::TcpStream;
+ use std::path::PathBuf;
+@@ -320,6 +321,7 @@
+         // WebView2 对 target=_blank 的新窗口导航默认拦截，表现为「点网址没反应」
+         .plugin(tauri_plugin_opener::init())
+         .invoke_handler(tauri::generate_handler![restart_sidecar, open_external_url,
++            ai_panel::open_ai_panel, ai_panel::close_ai_panel, ai_panel::ai_panel_action,
+             userbot_security::secure_read, userbot_security::secure_write, userbot_security::secure_delete,
+             userbot_security::ai_bridge_token,
+             notifications::native_notifications_supported, notifications::show_message_notification,
+@@ -478,6 +480,8 @@
+             Ok(())
+         })
+         .on_window_event(|window, event| {
++            // Floating assistant windows must never stop the sidecar or change main-window visibility.
++            if window.label() != "main" { return; }
+             if matches!(event, tauri::WindowEvent::Resized(_) | tauri::WindowEvent::Focused(_)) {
+                 if let Some(webview) = window.get_webview_window("main") {
+                     let script = if window.is_minimized().unwrap_or(false) {
+@@ -489,6 +493,7 @@
+                 }
+             }
+             if let tauri::WindowEvent::Destroyed = event {
++                if let Some(panel) = window.get_webview_window("ai-reply") { let _ = panel.close(); }
+                 notifications::clear();
+                 // 主窗口关闭 = 清理 sidecar（kill_sidecar 幂等，托盘退出路径已 take 过则为空操作）
+                 kill_sidecar();
+--- a/src-tauri/tauri.conf.json
++++ b/src-tauri/tauri.conf.json
+@@ -1,7 +1,7 @@
+ {
+   "$schema": "https://schema.tauri.app/config/2",
+   "productName": "YunhuLaoda",
+-  "version": "1.0.16",
++  "version": "1.0.17",
+   "identifier": "com.richkobe.yunhulaoda",
+   "build": {
+     "beforeBuildCommand": "",

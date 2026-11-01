@@ -1,231 +1,398 @@
 <script setup lang="ts">
-/**
- * 板块页（community 插件注册）
- * 「板块」= 云湖的文章分区（/v1/community/ba/*）
- *   列表（关注/热门/我的/全部）、创建、编辑、管理（可见范围/发帖权限）、看绑定的群聊
- */
-import { inject, ref, onMounted } from 'vue'
+import { computed, inject, ref, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'
 import KLayout from '../components/KLayout.vue'
-import KCard from '../components/KCard.vue'
-import { resUrl } from '../../core/res'
-import { fmtTime, fallbackAvatar } from '../../core/util'
+import Icon from '../components/Icon.vue'
+import CommunityAvatar from '../components/CommunityAvatar.vue'
+import { fmtTime } from '../../core/util'
 import { renderMarkdown } from '../../core/render'
+import { fixResourceUrls } from '../../core/res'
 
-const ctx = inject<any>('ctx')
-const cm = ctx.community
-const s = cm.state
-
-const tab = ref<'mine' | 'all' | 'hot' | 'follow'>('hot')
-const newBa = ref({ name: '', avatar: '' })
-/** 文章正文按 markdown 渲染 */
-const md = (t: string) => renderMarkdown(t || '')
-const editing = ref<any>(null)
-
-const TABS: Array<[string, number]> = [['我的', 3], ['全部', 4], ['热门', 2], ['关注', 1]]
-/** 当前页签对应的列表类型（刷新按钮用，避免在「热门」页却刷新成「全部」） */
-const TAB_TYPE: Record<'mine' | 'all' | 'hot' | 'follow', number> = { mine: 3, all: 4, hot: 2, follow: 1 }
-
-// 默认「热门」页（用户要求）：进页面即拉热门列表
-onMounted(() => { cm.load(2); cm.loadFollows?.() })
-
-const isFollowed = (id: number) => !!cm.isFollowed?.(id)
-async function toggleFollow(b: any) { await cm.toggleFollow?.(b) }
-
-async function switchTab(t: any) {
-  tab.value = t[0] === '我的' ? 'mine' : t[0] === '全部' ? 'all' : t[0] === '热门' ? 'hot' : 'follow'
-  const hit = TABS.find((x) => x[0] === t[0])
-  await cm.load(hit ? hit[1] : 4)
+const ctx = inject<any>('ctx'), cm = ctx.community, s = cm.state
+const TABS = [{ key: 2, label: '热门' }, { key: 1, label: '关注' }, { key: 3, label: '我的' }, { key: 4, label: '全部' }]
+const search = ref(''), postSearch = ref(''), creating = ref(false), newName = ref('')
+const dialog = ref<HTMLDialogElement>(), articleBody = ref<HTMLElement>()
+const focusReading = ref(true), showLibrary = ref(false), showBoardTools = ref(false)
+const reading = computed(() => !!s.postDetail)
+const libraryCollapsed = computed(() => reading.value && focusReading.value && !showLibrary.value)
+function toggleLibrary() {
+  if (!focusReading.value) { focusReading.value = true; showLibrary.value = false }
+  else showLibrary.value = !showLibrary.value
 }
-async function create() {
-  if (!newBa.value.name.trim()) return ctx.ui.toast('板块名称不能为空', 'warn')
-  if (newBa.value.name.trim().length > 10) return ctx.ui.toast('板块名称最多 10 个字', 'warn')
-  await cm.create(newBa.value.name.trim(), newBa.value.avatar)
-  newBa.value = { name: '', avatar: '' }
+const dialogType = computed(() => creating.value ? 'create' : s.editing ? 'edit' : s.groupsOf ? 'groups' : '')
+const dialogTitle = computed(() => ({ create: '创建板块', edit: '管理板块', groups: '关联群聊' }[dialogType.value] || ''))
+const busy = computed(() => s.creating || s.saving || s.managing || s.binding || s.uploading)
+const norm = (t: any) => String(t ?? '').normalize('NFKC').toLocaleLowerCase()
+const boards = computed(() => s.list.filter((b: any) => norm(`${b.name} ${b.id}`).includes(norm(search.value.trim()))))
+const posts = computed(() => s.posts.filter((p: any) => norm(`${p.title} ${p.senderName || p.senderId}`).includes(norm(postSearch.value.trim()))))
+const owns = (b: any) => cm.owns(b)
+const followed = (b: any) => cm.isFollowed(b.id)
+const followBusy = (b: any) => s.following.includes(Number(b.id))
+const articleHtml = computed(() => renderMarkdown(String(s.postDetail?.content || '')))
+const canBind = typeof ctx.api?.bindBaGroup === 'function'
+const permission = ref('')
+const permissionChoices = [
+  { value: '0:0', label: '公开 · 所有人可发文章' },
+  { value: '0:1', label: '公开 · 仅我可发文章' },
+  { value: '1:2', label: '仅自己可见' },
+]
+const preview = (p: any) => String(p.content || '').replace(/<[^>]*>/g, ' ').replace(/!\[[^\]]*\]\([^)]*\)/g, '[图片]').replace(/[#*`>]/g, '').slice(0, 100)
+function openCreate() { s.newAvatar = ''; newName.value = ''; creating.value = true }
+function editBoard(b: any) {
+  if (!owns(b)) return
+  s.editing = { ...b }
+  const info = Number(s.info?.id) === Number(b.id) ? s.info : b
+  permission.value = info.visibleRange != null && info.publishAuthority != null ? `${info.visibleRange}:${info.publishAuthority}` : ''
 }
+function closeDialog() {
+  if (busy.value) return
+  creating.value = false; s.editing = null; cm.closeGroups(); s.newAvatar = ''
+}
+async function submitCreate() { if (await cm.createWithAvatar(newName.value)) { creating.value = false; newName.value = ''; search.value = '' } }
+async function saveEdit() {
+  const b = s.editing
+  if (await cm.edit(b.id, { name: b.name, avatar: b.avatar })) s.editing = null
+}
+async function savePermissions() {
+  if (!permission.value || !s.editing) return
+  const [visible, publish] = permission.value.split(':').map(Number)
+  await cm.manage(s.editing.id, visible, publish)
+}
+function selectTab(type: number) { search.value = ''; void cm.load(type) }
+function selectBoard(b: any) { postSearch.value = ''; void cm.enter(b) }
+function resetSearch() { search.value = '' }
+function refresh() { void cm.load(s.listType); void cm.loadFollows() }
+watch(dialogType, async type => {
+  await nextTick()
+  if (type && !dialog.value?.open) dialog.value?.showModal()
+  else if (!type && dialog.value?.open) dialog.value.close()
+})
+watch(() => s.viewing?.id, () => { postSearch.value = '' })
+watch(() => s.postDetail?.id, () => {
+  focusReading.value = true; showLibrary.value = false; showBoardTools.value = false
+})
+watch(articleBody, body => { if (body) fixResourceUrls(body) })
+watch(articleHtml, async () => { await nextTick(); fixResourceUrls(articleBody.value) })
+onMounted(() => { void cm.load(s.listType || 2); void cm.mine(); void cm.loadFollows() })
+onBeforeUnmount(() => { creating.value = false; s.editing = null; cm.closeGroups() })
 </script>
 
 <template>
-  <KLayout ns="community" title="板块" desc="云湖文章分区：创建 / 管理 / 绑定群聊">
+  <KLayout class="community-page" :class="{ 'reading-article': reading, 'focus-reading': reading && focusReading }" ns="community" title="板块" desc="发现值得读的内容，找到同好。">
     <template #actions>
-      <button v-for="t in TABS" :key="t[0]" class="ghost small"
-              :class="{ on: (tab === 'mine' && t[0] === '我的') || (tab === 'all' && t[0] === '全部') || (tab === 'hot' && t[0] === '热门') || (tab === 'follow' && t[0] === '关注') }"
-              @click="switchTab(t)">{{ t[0] }} {{ cm.countOf(t[1]) }}</button>
-      <button class="ghost small" @click="cm.load(TAB_TYPE[tab])">刷新</button>
+      <button class="create-button" @click="openCreate"><Icon name="plus" :size="16" />创建板块</button>
     </template>
 
-    <KCard title="创建板块">
-      <div class="row">
-        <input v-model="newBa.name" placeholder="板块名称（最多 10 字）" maxlength="10" />
-        <span class="acts-inline">
-        <label class="ghost small file">
-          <input type="file" accept="image/*" hidden @change="(e: any) => cm.uploadAvatar(e, 'new')" />上传头像
-        </label>
-        <img v-if="s.newAvatar" :src="s.newAvatar" class="pre" alt="" />
-        <span v-else-if="newBa.avatar" class="dim small">已填 URL</span>
-        <button class="small" @click="cm.createWithAvatar(newBa.name.trim())">创建</button>
-        </span>
+    <div class="community-toolbar">
+      <nav class="community-tabs" aria-label="板块分类">
+        <button v-for="t in TABS" :key="t.key" :aria-current="s.listType === t.key ? 'page' : undefined" :class="{ active: s.listType === t.key }" @click="selectTab(t.key)">{{ t.label }}</button>
+      </nav>
+      <div class="toolbar-search">
+        <label class="search-box"><Icon name="search" :size="17" /><input v-model="search" aria-label="筛选已加载板块" placeholder="搜索名称或 ID" /><button v-if="search" class="icon-button" aria-label="清空板块搜索" @click="resetSearch"><Icon name="close" :size="14" /></button></label>
+        <button class="icon-button refresh-button" :disabled="s.loading" aria-label="刷新板块" title="刷新板块" @click="refresh"><Icon name="refresh" :size="17" /></button>
       </div>
-      <p class="dim small">名称最多 10 字；头像可以直接上传图片（不填也行）。</p>
-    </KCard>
+    </div>
 
-    <KCard class="mt" :pad="false">
-      <div class="list">
-        <div class="item" v-for="b in s.list" :key="b.id">
-          <!-- 头像统一走 resUrl 代理（防盗链），空/加载失败兜底首字母块（fallbackAvatar） -->
-          <img :src="b.avatar ? resUrl(b.avatar) : fallbackAvatar(b.name)" alt=""
-               @error="(e: any) => (e.target.src = fallbackAvatar(b.name))" />
-          <div class="imain">
-            <div class="iname">
-              {{ b.name }}
-              <em v-if="s.myIds.includes(b.id)">我创建的</em>
-            </div>
-            <div class="dim small">
-              ID {{ b.id }}
-              <span v-if="b.createTime"> · 建 {{ fmtTime(b.createTime) }}</span>
-              <span v-if="b.lastActive"> · 活跃 {{ fmtTime(b.lastActive) }}</span>
-            </div>
-          </div>
-          <!-- 手机上一行放不下：这组按钮单独一个容器，横向可滑，不再被压扁 -->
-          <div class="acts">
-            <button class="small" @click="cm.enter(b)">进入板块</button>
-            <button class="ghost small" :class="{ on: isFollowed(b.id) }" @click="toggleFollow(b)">
-              {{ isFollowed(b.id) ? '已关注' : '关注' }}
+    <div class="community-workspace" :class="{ 'has-selection': s.viewing, 'library-collapsed': libraryCollapsed }">
+      <aside class="board-library" aria-label="板块列表" :aria-busy="s.loading">
+        <Transition name="status-fade"><div v-if="s.loading" class="reader-loading" role="status" aria-label="正在加载板块"><span></span></div></Transition>
+        <div class="section-label"><span>{{ TABS.find(t => t.key === s.listType)?.label }}板块</span><span>{{ s.list.length }} 个已加载</span></div>
+        <div class="board-list">
+          <p v-if="search" class="search-note">仅筛选已加载的板块</p>
+          <div v-if="s.loading && !s.list.length" class="empty-state" role="status"><Icon name="layers" :size="28" /><b>正在寻找好内容</b><span>板块加载中…</span></div>
+          <TransitionGroup name="board-list-motion" tag="div" class="board-rows">
+          <div v-for="b in boards" :key="b.id" class="board-row" :class="{ selected: Number(s.viewing?.id) === Number(b.id) }">
+            <button class="board-open" :aria-label="`进入板块 ${b.name}`" :aria-pressed="Number(s.viewing?.id) === Number(b.id)" @click="selectBoard(b)">
+              <CommunityAvatar :src="b.avatar" :name="b.name" />
+              <span class="board-copy"><span class="board-name">{{ b.name }}<em v-if="owns(b)">我创建的</em></span><span class="board-id">ID {{ b.id }}<span v-if="b.lastActive"> · {{ fmtTime(b.lastActive) }} 活跃</span></span></span>
             </button>
-            <button class="ghost small" @click="cm.loadGroups(b)">绑定群聊</button>
-            <button class="ghost small" @click="editing = { ...b }">编辑</button>
-            <button class="ghost small" @click="cm.manage(b.id, 0, 0)">设为公开</button>
+            <button class="follow-quick icon-button" :class="{ followed: followed(b) }" :aria-label="`${followed(b) ? '取消关注' : '关注'} ${b.name}`" :aria-pressed="followed(b)" :disabled="followBusy(b)" :title="followed(b) ? '取消关注' : '关注板块'" @click="cm.toggleFollow(b)"><Icon :name="followed(b) ? 'check' : 'plus'" :size="16" /></button>
           </div>
+          </TransitionGroup>
+          <div v-if="s.listError" class="error-state" role="alert"><b>板块加载失败</b><p>{{ s.listError }}</p><button class="secondary" :disabled="s.loading" @click="cm.load(s.listType, s.list.length > 0)">重试</button></div>
+          <div v-else-if="!boards.length && !s.loading" class="empty-state"><Icon name="layers" :size="28" /><b>{{ search ? '没有匹配的板块' : '这里还没有板块' }}</b><span>{{ search ? '换一个名称或 ID，或继续加载' : '试试热门分类，或创建自己的板块' }}</span><button v-if="search" class="secondary" @click="resetSearch">清除筛选</button></div>
+          <button v-if="s.hasMore" class="load-more secondary" :disabled="s.loading" @click="cm.load(s.listType, true)">{{ s.loading ? '加载中…' : '加载更多板块' }}</button>
         </div>
-        <p v-if="!s.list.length" class="dim center">{{ s.loading ? '加载中…' : '这个分类下还没有板块' }}</p>
-      </div>
-    </KCard>
+      </aside>
 
-    <!-- 编辑 + 管理 -->
-    <div v-if="editing" class="mask" @click.self="editing = null">
-      <KCard title="编辑板块" style="width: 460px; max-width: 92vw">
-        <div class="col">
-          <label>名称<input v-model="editing.name" maxlength="10" /></label>
-          <label>头像
-            <div class="row">
-              <input v-model="editing.avatar" placeholder="URL" />
-              <label class="ghost small file">
-                <input type="file" accept="image/*" hidden @change="(e: any) => cm.uploadAvatar(e, 'edit')" />上传
-              </label>
-              <img v-if="editing.avatar" :src="editing.avatar" class="pre" alt="" />
-            </div>
-          </label>
-          <div class="row">
-            <button class="small" @click="cm.edit(editing.id, { name: editing.name, avatar: editing.avatar }); editing = null">保存</button>
-            <button class="ghost small" @click="editing = null">取消</button>
-          </div>
-          <div class="sep"></div>
-          <div class="dim small">可见范围 / 发帖权限：</div>
-          <div class="row">
-            <div class="acts">
-              <button class="ghost small" @click="cm.manage(editing.id, 0, 0)">公开·所有人可发</button>
-              <button class="ghost small" @click="cm.manage(editing.id, 0, 1)">公开·仅我可发</button>
-              <button class="ghost small" @click="cm.manage(editing.id, 1, 2)">仅自己可见</button>
-            </div>
-          </div>
+      <section class="board-reader" aria-label="板块内容">
+        <div v-if="!s.viewing" class="reader-welcome">
+          <span class="welcome-icon"><Icon name="layers" :size="32" /></span>
+          <span class="eyebrow">COMMUNITY</span><h3>从一个兴趣开始</h3><p>选择左侧板块，阅读文章、关注更新，<br />或看看有哪些同好群聊。</p><button class="secondary" @click="openCreate"><Icon name="plus" :size="16" />创建我的板块</button>
         </div>
-      </KCard>
+        <template v-else>
+          <header class="reader-header">
+            <button class="mobile-back icon-button" aria-label="返回板块列表" @click="cm.exitBoard()"><Icon name="chevronLeft" :size="20" /></button>
+            <button v-if="reading" class="library-toggle icon-button" :aria-label="libraryCollapsed ? '展开板块列表' : '收起板块列表'" :title="libraryCollapsed ? '展开板块列表' : '收起板块列表'" :aria-expanded="!libraryCollapsed" @click="toggleLibrary"><Icon name="layers" :size="18" /></button>
+            <CommunityAvatar :src="s.viewing.avatar" :name="s.viewing.name" />
+            <div class="reader-title"><span class="eyebrow">板块 / {{ s.viewing.id }}</span><h3>{{ s.viewing.name }}</h3><div class="reader-stats"><span>{{ s.info?.postNum ?? '—' }} 篇文章</span><span>{{ s.info?.groupNum ?? '—' }} 个群聊</span></div></div>
+            <template v-if="reading">
+              <button class="icon-button" :aria-label="focusReading ? '退出专注阅读' : '专注阅读'" :title="focusReading ? '退出专注阅读' : '专注阅读'" :aria-pressed="focusReading" @click="focusReading = !focusReading; showLibrary = false"><Icon :name="focusReading ? 'collapse' : 'expand'" :size="18" /></button>
+              <button class="icon-button" aria-label="板块操作" title="板块操作" :aria-expanded="showBoardTools" @click="showBoardTools = !showBoardTools"><Icon name="sliders" :size="18" /></button>
+            </template>
+            <button class="icon-button reader-close" aria-label="关闭板块" title="关闭板块" @click="cm.exitBoard()"><Icon name="close" :size="18" /></button>
+          </header>
+          <Transition name="board-tools"><div v-show="!reading || showBoardTools" class="reader-actions">
+            <button class="follow-button" :class="{ 'secondary followed': followed(s.viewing) }" :disabled="followBusy(s.viewing)" :aria-pressed="followed(s.viewing)" @click="cm.toggleFollow(s.viewing)"><Icon :name="followed(s.viewing) ? 'check' : 'plus'" :size="15" />{{ followBusy(s.viewing) ? '处理中…' : followed(s.viewing) ? '已关注' : '关注板块' }}</button>
+            <button class="secondary" @click="cm.loadGroups(s.viewing)"><Icon name="contacts" :size="15" />关联群聊</button>
+            <button v-if="owns(s.viewing)" class="secondary" @click="editBoard(s.viewing)"><Icon name="sliders" :size="15" />管理</button>
+            <button class="icon-button reader-refresh" :disabled="s.loadingPosts || s.loadingDetail" aria-label="刷新文章" title="刷新文章" @click="s.postDetail ? cm.openPost(s.postDetail) : cm.enter(s.viewing)"><Icon name="refresh" :size="16" /></button>
+          </div>
+          </Transition>
+          <Transition name="status-fade"><div v-if="s.loadingPosts || s.loadingDetail" class="reader-loading" role="status" aria-label="正在加载文章"><span></span></div></Transition>
+          <div class="reader-scroll">
+            <Transition name="reader-content" mode="out-in">
+            <div v-if="s.postDetail" :key="'article-' + s.postDetail.id">
+              <div class="article-navigation"><button class="text-button" @click="cm.backToPosts()"><Icon name="chevronLeft" :size="16" />文章列表</button><span>文章详情</span></div>
+              <article class="article-detail">
+                <h1>{{ s.postDetail.title || '无标题文章' }}</h1>
+                <div class="post-meta"><span>{{ s.postDetail.senderName || s.postDetail.senderId || '匿名作者' }}</span><time v-if="s.postDetail.createTime">{{ fmtTime(s.postDetail.createTime) }}</time></div>
+                <p v-if="s.loadingDetail" class="loading-note" role="status">正在加载完整文章…</p>
+                <div v-if="s.detailError" class="error-state" role="alert"><p>{{ s.detailError }}</p><button class="secondary" @click="cm.openPost(s.postDetail)">重试文章</button></div>
+                <div ref="articleBody" class="article-prose" v-html="articleHtml"></div>
+                <div class="article-footer">{{ s.postDetail.likeNum ?? 0 }} 赞<span>·</span>{{ s.postDetail.commentNum ?? 0 }} 评论</div>
+              </article>
+            </div>
+            <div v-else :key="'posts-' + s.viewing.id">
+              <div class="posts-heading"><h4>文章<span>{{ s.posts.length }}</span></h4><label v-if="s.posts.length || postSearch" class="search-box post-search"><Icon name="search" :size="15" /><input v-model="postSearch" placeholder="筛选已加载文章" aria-label="筛选已加载文章" /></label></div>
+              <div v-if="s.loadingPosts && !s.posts.length" class="empty-state" role="status"><Icon name="page" :size="28" /><b>文章加载中…</b></div>
+              <TransitionGroup name="post-list-motion" tag="div" class="post-list">
+              <button v-for="p in posts" :key="p.id" class="post-card" @click="cm.openPost(p)">
+                <span class="post-meta"><span>{{ p.senderName || p.senderId || '匿名作者' }}</span><time v-if="p.createTime">{{ fmtTime(p.createTime) }}</time></span>
+                <strong>{{ p.title || '无标题文章' }}</strong><span v-if="p.content" class="post-excerpt">{{ preview(p) }}</span><span class="post-footer"><span>{{ p.likeNum ?? 0 }} 赞<span class="meta-dot">·</span>{{ p.commentNum ?? 0 }} 评论</span><span class="read-link">阅读全文 <Icon name="chevronRight" :size="14" /></span></span>
+              </button>
+              </TransitionGroup>
+              <div v-if="s.postsError" class="error-state" role="alert"><b>文章加载失败</b><p>{{ s.postsError }}</p><button class="secondary" :disabled="s.loadingPosts" @click="s.posts.length ? cm.loadMorePosts() : cm.enter(s.viewing)">重试文章列表</button></div>
+              <div v-else-if="!posts.length && !s.loadingPosts" class="empty-state"><Icon name="page" :size="28" /><b>{{ postSearch ? '没有匹配的文章' : '这个板块还没有文章' }}</b><span>{{ postSearch ? '试试其他标题或作者名' : '关注板块，之后再来看看吧' }}</span></div>
+              <button v-if="s.hasMorePosts" class="load-more secondary" :disabled="s.loadingPosts" @click="cm.loadMorePosts()">{{ s.loadingPosts ? '加载中…' : '加载更多文章' }}</button>
+              <p v-else-if="s.posts.length && !s.loadingPosts && !s.postsError" class="end-note">已显示全部文章</p>
+            </div>
+            </Transition>
+          </div>
+        </template>
+      </section>
     </div>
 
-    <!-- 进入板块：文章列表 + 详情 -->
-    <div v-if="s.viewing" class="mask" @click.self="cm.exitBoard()">
-      <div class="board">
-        <header>
-          <img v-if="s.viewing.avatar" :src="s.viewing.avatar" class="bav" alt="" />
-          <div>
-            <b>{{ s.viewing.name }}</b>
-            <div class="dim small">
-              板块 {{ s.viewing.id }}
-              <span v-if="s.info"> · {{ s.info.postNum ?? '?' }} 篇文章 · {{ s.info.groupNum ?? '?' }} 个群</span>
-            </div>
+    <Teleport to="body">
+      <dialog ref="dialog" class="community-dialog" :aria-label="dialogTitle" @cancel.prevent="closeDialog" @click="e => { if (e.target === dialog) closeDialog() }">
+        <template v-if="dialogType">
+          <header class="dialog-header"><div><span class="eyebrow">{{ dialogType === 'groups' ? s.groupsOf?.name : 'COMMUNITY' }}</span><h3>{{ dialogTitle }}</h3></div><button class="icon-button" aria-label="关闭对话框" :disabled="busy" @click="closeDialog"><Icon name="close" :size="20" /></button></header>
+          <form v-if="creating" class="dialog-content" @submit.prevent="submitCreate">
+            <p class="dialog-hint">一个名字，一群同好。为你的板块选个名字吧。</p>
+            <div class="avatar-field"><CommunityAvatar :name="newName" :src="s.newAvatar" /><label class="secondary upload-label"><Icon name="image" :size="16" />{{ s.uploading ? '上传中…' : '上传头像' }}<input type="file" accept="image/*" :disabled="busy" hidden @change="cm.uploadAvatar($event, 'new')" /></label><button v-if="s.newAvatar" type="button" class="text-button" :disabled="busy" @click="s.newAvatar = ''">移除</button></div>
+            <label class="field-label">板块名称<input v-model="newName" autofocus maxlength="10" placeholder="例如：物理研习室" :disabled="busy" /></label><span class="field-help">{{ [...newName].length }} / 10 字 · 头像可选，图片不超过 10MB</span>
+            <footer class="dialog-footer"><button type="button" class="secondary" :disabled="busy" @click="closeDialog">取消</button><button type="submit" :disabled="busy || !newName.trim()">{{ s.creating ? '创建中…' : '创建板块' }}</button></footer>
+          </form>
+          <div v-else-if="s.editing" class="dialog-content">
+            <form @submit.prevent="saveEdit">
+              <div class="avatar-field"><CommunityAvatar :src="s.editing.avatar" :name="s.editing.name" /><label class="secondary upload-label"><Icon name="image" :size="16" />{{ s.uploading ? '上传中…' : '更换头像' }}<input type="file" accept="image/*" :disabled="busy" hidden @change="cm.uploadAvatar($event, 'edit')" /></label></div>
+              <label class="field-label">板块名称<input v-model="s.editing.name" maxlength="10" :disabled="busy" /></label>
+              <label class="field-label">头像地址<input v-model="s.editing.avatar" placeholder="可选，也可以直接上传图片" :disabled="busy" /></label>
+              <div class="form-actions"><button type="submit" :disabled="busy || !s.editing.name.trim()">{{ s.saving ? '保存中…' : '保存信息' }}</button></div>
+            </form>
+            <section class="permission-section"><h4><Icon name="lock" :size="16" />访问与发帖权限</h4><p class="dialog-hint">单独保存权限。未获取到当前值时，请先选择。</p><label class="field-label">权限方案<select v-model="permission" :disabled="busy"><option disabled value="">选择权限方案</option><option v-for="p in permissionChoices" :key="p.value" :value="p.value">{{ p.label }}</option></select></label><button class="secondary" :disabled="busy || !permission" @click="savePermissions">{{ s.managing ? '更新中…' : '更新权限' }}</button></section>
           </div>
-          <span class="grow"></span>
-          <button class="ghost small" @click="cm.enter(s.viewing)">刷新</button>
-          <button class="bx" @click="cm.exitBoard()">×</button>
-        </header>
-        <div class="bbody">
-          <div v-if="s.postDetail" class="post-detail">
-            <button class="ghost small" @click="s.postDetail = null">← 返回列表</button>
-            <h3>{{ s.postDetail.title || (s.postDetail.post && s.postDetail.post.title) || '无标题' }}</h3>
-            <div class="pd-meta dim small">
-              {{ s.postDetail.senderName || '' }} · 赞 {{ s.postDetail.likeNum ?? 0 }} · 评论 {{ s.postDetail.commentNum ?? 0 }}
-            </div>
-            <div class="pd-body" v-html="md(s.postDetail.content || (s.postDetail.post && s.postDetail.post.content) || '')"></div>
+          <div v-else-if="s.groupsOf" class="dialog-content">
+            <p class="dialog-hint">{{ owns(s.groupsOf) ? '查看关联群聊，或通过群 ID 绑定新的群聊。' : '查看这个板块关联的群聊。' }}</p>
+            <div class="group-list" :aria-busy="s.loadingGroups"><div v-for="g in s.groups" :key="g.groupId || g.id" class="group-row"><CommunityAvatar :src="g.avatar || g.avatarUrl" :name="g.name" /><div><b>{{ g.name || '未命名群聊' }}</b><span>ID {{ g.groupId || g.id }}</span><p v-if="g.introduction">{{ g.introduction }}</p></div></div><p v-if="s.loadingGroups" class="loading-note" role="status">正在加载群聊…</p><div v-if="s.groupsError" class="error-state" role="alert"><p>{{ s.groupsError }}</p><button class="secondary" @click="cm.loadGroups(s.groupsOf, s.groups.length > 0)">重试群聊</button></div><div v-else-if="!s.groups.length && !s.loadingGroups" class="empty-state"><Icon name="contacts" :size="26" /><b>暂时没有关联群聊</b></div><button v-if="s.hasMoreGroups" class="load-more secondary" :disabled="s.loadingGroups" @click="cm.loadGroups(s.groupsOf, true)">加载更多群聊</button></div>
+            <p v-if="owns(s.groupsOf) && !canBind" class="binding-help">新增关联群聊请在云湖官方客户端操作。</p>
+            <form v-if="owns(s.groupsOf) && canBind" class="bind-form" @submit.prevent="cm.bindGroup(s.groupsOf.id, s.bindGroupId)"><label class="field-label">绑定群聊<input v-model="s.bindGroupId" placeholder="输入你有权管理的群 ID" :disabled="busy" /></label><button type="submit" :disabled="busy || !s.bindGroupId.trim()">{{ s.binding ? '绑定中…' : '绑定' }}</button></form>
           </div>
-          <template v-else>
-            <div class="post" v-for="p in s.posts" :key="p.id" @click="cm.openPost(p)">
-              <b>{{ p.title || '(无标题)' }}</b>
-              <div class="dim small">
-                {{ p.senderName || p.senderId }} · {{ fmtTime(p.createTime) }} · 赞 {{ p.likeNum }} · 评论 {{ p.commentNum }}
-              </div>
-            </div>
-            <div v-if="s.posts.length" class="row" style="justify-content:center">
-          <button class="ghost small" :disabled="s.loadingPosts" @click="cm.loadMorePosts()">加载更多文章</button>
-        </div>
-        <p v-if="!s.posts.length" class="dim center">{{ s.loadingPosts ? '加载中…' : '这个板块还没有文章' }}</p>
-          </template>
-        </div>
-      </div>
-    </div>
-
-    <!-- 绑定群聊 -->
-    <div v-if="s.groupsOf" class="mask" @click.self="s.groupsOf = null">
-      <KCard :title="`绑定的群聊 · ${s.groupsOf.name}`" style="width: 520px; max-width: 92vw">
-        <div class="list" style="max-height: 46vh">
-          <div class="item" v-for="g in s.groups" :key="g.groupId">
-            <div class="imain">
-              <div class="iname">{{ g.name }}</div>
-              <div class="dim small">ID {{ g.groupId }} · {{ g.introduction || '无简介' }}</div>
-            </div>
-          </div>
-        </div>
-        <p v-if="!s.groups.length" class="dim center">这个板块还没绑定群聊</p>
-        <div class="row mt">
-          <input v-model="s.bindGroupId" placeholder="要绑定的群 ID" />
-          <button class="small" @click="cm.bindGroup(s.groupsOf.id, s.bindGroupId)">绑定</button>
-        </div>
-      </KCard>
-    </div>
+        </template>
+      </dialog>
+    </Teleport>
   </KLayout>
 </template>
 
 <style scoped>
-.row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
-.row input { flex: 1; min-width: 130px; }
-.col { display: flex; flex-direction: column; gap: 10px; }
-.col label { display: flex; flex-direction: column; gap: 4px; font-size: 12.5px; color: var(--fg2); }
-.sep { height: 1px; background: var(--line); }
-.list { max-height: 52vh; overflow: auto; }
-.item { display: flex; gap: 10px; align-items: center; padding: 8px 12px; border-bottom: 1px dashed var(--line); flex-wrap: wrap; }
-/* 操作按钮组：手机上横向可滑，不挤压不拉伸 */
-.acts { display: flex; gap: 6px; flex: 1 0 100%; margin-top: 4px;
-        overflow-x: auto; flex-wrap: nowrap; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
-.acts::-webkit-scrollbar { display: none; }
-.acts > * { flex: 0 0 auto; }
-.acts-inline { display: inline-flex; gap: 8px; align-items: center; }
-.item img, .ic { width: 34px; height: 34px; border-radius: 9px; object-fit: cover; background: var(--card2); display: flex; align-items: center; justify-content: center; font-weight: 600; }
-.imain { flex: 1; min-width: 0; }
-.iname { font-size: 13.5px; display: flex; gap: 6px; align-items: center; }
-.iname em { font-style: normal; font-size: 10.5px; padding: 0 5px; border-radius: 4px; background: var(--acc-soft); color: var(--acc); }
-.tabs .on, .ghost.on { background: var(--acc); color: #fff; border-color: transparent; }
-.center { text-align: center; padding: 16px 0; }
-.pre { width: 26px; height: 26px; border-radius: 7px; object-fit: cover; }
-.file { display: inline-flex; align-items: center; cursor: pointer; padding: 3px 10px; font-size: 12px; border-radius: 7px; border: 1px solid var(--line); }
-.board { width: 720px; max-width: 94vw; max-height: 82vh; display: flex; flex-direction: column; background: var(--card); border: 1px solid var(--line); border-radius: 14px; overflow: hidden; box-shadow: var(--shadow); }
-.board > header { display: flex; align-items: center; gap: 10px; padding: 12px 16px; border-bottom: 1px solid var(--line); }
-.board .bav { width: 32px; height: 32px; border-radius: 8px; object-fit: cover; }
-.board .grow { flex: 1; }
-.bx { background: transparent; color: var(--fg2); font-size: 20px; line-height: 1; padding: 0 8px; }
-.bbody { overflow: auto; padding: 12px 16px; }
-.post { padding: 10px 4px; border-bottom: 1px dashed var(--line); cursor: pointer; }
-.post:hover b { color: var(--acc); }
-.post-detail h3 { margin: 12px 0 4px; font-size: 16px; }
-.pd-meta { margin-bottom: 10px; }
-.pd-body { font-size: 13.5px; line-height: 1.65; }
-.mask { position: fixed; inset: 0; background: rgba(0, 0, 0, .45); z-index: 200; display: flex; align-items: center; justify-content: center; }
-.mt { margin-top: 12px; }
+.community-page { height: 100%; min-height: 0; container-type: inline-size; }
+.community-page :deep(.k-header) { position: static; padding: 22px 28px 18px; border-bottom: 0; }
+.community-page :deep(.k-title h2) { font-size: 25px; font-weight: 700; letter-spacing: -.6px; }
+.community-page :deep(.k-title p) { margin-top: 4px; color: var(--fg2); }
+.community-page :deep(.k-body) { flex: 1; min-height: 0; padding: 0 28px 24px; gap: 18px; overflow: hidden; }
+button, .secondary { display: inline-flex; align-items: center; justify-content: center; gap: 7px; flex-shrink: 0; }
+button:focus-visible, .upload-label:focus-within { outline: 2px solid var(--acc); outline-offset: 3px; }
+.create-button { border-radius: 12px; padding: 10px 16px; font-size: 13px; }
+.community-toolbar { display: flex; justify-content: space-between; gap: 16px; align-items: center; }
+.community-tabs { display: flex; padding: 4px; border: 1px solid var(--line); border-radius: 13px; background: var(--card); gap: 3px; }
+.community-tabs button { padding: 7px 17px; background: transparent; color: var(--fg2); border-radius: 9px; font-size: 13px; }
+.community-tabs button:hover { color: var(--fg); background: var(--card2); }
+.community-tabs button.active { background: var(--acc-soft); color: var(--fg); font-weight: 650; }
+.toolbar-search { display: flex; gap: 8px; align-items: center; min-width: 0; }
+.search-box { display: flex; align-items: center; gap: 8px; padding: 0 11px; height: 38px; background: var(--card); border: 1px solid var(--line); border-radius: 11px; min-width: 0; color: var(--fg2); }
+.search-box:focus-within { border-color: var(--acc); }
+.search-box input { border: 0; box-shadow: none; padding: 0; width: 190px; min-width: 0; background: transparent; font-size: 12px; }
+.search-box .icon-button { width: 22px; height: 24px; }
+.icon-button { width: 34px; height: 34px; padding: 0; background: transparent; border-radius: 10px; color: var(--fg2); }
+.icon-button:hover { background: var(--card2); color: var(--fg); }
+.community-workspace { flex: 1; min-height: 0; display: grid; grid-template-columns: clamp(220px, 22cqw, 270px) minmax(0, 1fr); gap: 14px; }
+.board-library, .board-reader { min-width: 0; min-height: 0; border: 1px solid var(--line); background: var(--card); border-radius: 18px; display: flex; flex-direction: column; overflow: hidden; }
+.section-label { display: flex; justify-content: space-between; gap: 8px; padding: 17px 17px 12px; font-size: 12px; color: var(--fg2); }
+.section-label > span:first-child { color: var(--fg); font-weight: 600; }
+.board-list { overflow: auto; padding: 0 8px 10px; flex: 1; scrollbar-gutter: stable; }
+.board-row { display: flex; align-items: center; gap: 4px; padding-right: 8px; border-radius: 12px; margin: 3px 0; border: 1px solid transparent; transition: background .16s; }
+.board-row:hover { background: var(--card2); }
+.board-row.selected { background: var(--acc-soft); border-color: color-mix(in srgb, var(--acc) 24%, transparent); }
+.board-open { flex: 1; min-width: 0; padding: 13px 9px; border-radius: 12px; text-align: left; justify-content: flex-start; gap: 11px; color: var(--fg); background: transparent; }
+.board-open:hover { background: transparent; }
+.board-open .community-avatar { width: 40px; height: 40px; border-radius: 12px; }
+.board-copy { min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.board-name { font-size: 14px; font-weight: 600; display: flex; align-items: center; gap: 5px; flex-wrap: wrap; overflow-wrap: anywhere; line-height: 1.5; }
+.board-name em { font-size: 9px; font-style: normal; padding: 1px 5px; border-radius: 4px; background: var(--card2); color: var(--fg2); font-weight: 400; white-space: nowrap; }
+.board-id { font-size: 11px; color: var(--fg2); overflow-wrap: anywhere; }
+.follow-quick { width: 27px; height: 27px; border-radius: 50%; border: 1px solid var(--line); }
+.followed { color: var(--fg); }
+.reader-welcome { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 30px 18px; }
+.welcome-icon { width: 76px; height: 76px; border-radius: 26px; background: var(--acc-soft); color: var(--acc); display: grid; place-items: center; margin-bottom: 24px; }
+.eyebrow { font-size: 10px; color: var(--fg2); letter-spacing: 1.6px; }
+.reader-welcome h3 { font-size: 23px; margin: 10px 0; font-weight: 650; }
+.reader-welcome p { color: var(--fg2); font-size: 13px; margin: 0 0 24px; line-height: 1.9; }
+.secondary { background: var(--card2); border: 1px solid var(--line); color: var(--fg); padding: 8px 12px; border-radius: 10px; font-size: 12px; }
+.secondary:hover { background: var(--acc-soft); }
+.reader-header { display: flex; align-items: center; padding: 22px 24px 14px; gap: 13px; }
+.reader-header > .community-avatar { width: 52px; height: 52px; border-radius: 16px; }
+.reader-title { flex: 1; min-width: 0; }
+.reader-title h3 { font-size: 21px; line-height: 1.4; margin: 2px 0 6px; overflow-wrap: anywhere; }
+.reader-stats { display: flex; gap: 12px; flex-wrap: wrap; color: var(--fg2); font-size: 11px; }
+.reader-actions { display: flex; align-items: center; gap: 8px; padding: 0 24px 19px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+.follow-button { padding: 8px 13px; font-size: 12px; border: 1px solid transparent; border-radius: 10px; }
+.reader-refresh { margin-left: auto; }
+.reader-scroll { padding: 0 24px 20px; overflow: auto; min-height: 0; flex: 1; scrollbar-gutter: stable; }
+.posts-heading { display: flex; align-items: center; gap: 12px; padding: 20px 0 12px; }
+.posts-heading h4 { margin: 0; display: flex; gap: 8px; align-items: center; font-size: 13px; flex: 1; }
+.posts-heading h4 span { color: var(--fg2); font-weight: 400; font-size: 11px; }
+.post-search { height: 31px; max-width: 55%; background: var(--card2); }
+.post-search input { width: 135px; }
+.post-card { display: flex; flex-direction: column; align-items: stretch; gap: 8px; padding: 18px 0; border-radius: 0; border-bottom: 1px solid var(--line); text-align: left; width: 100%; background: transparent; color: var(--fg); }
+.post-card:hover { background: transparent; }
+.post-card:hover strong, .post-card:hover .read-link { color: var(--acc); }
+.post-card strong { font-size: 17px; font-weight: 600; line-height: 1.5; overflow-wrap: anywhere; transition: color .16s; }
+.post-meta { display: flex; gap: 10px; font-size: 11px; color: var(--fg2); font-weight: 400; flex-wrap: wrap; overflow-wrap: anywhere; }
+.post-excerpt { font-size: 12px; color: var(--fg2); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; line-height: 1.7; font-weight: 400; }
+.post-footer { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: 11px; color: var(--fg2); font-weight: 400; }
+.meta-dot { padding: 0 8px; }
+.read-link { display: inline-flex; align-items: center; gap: 3px; white-space: nowrap; }
+.load-more { margin: 14px auto 4px; display: flex; }
+.empty-state { min-height: 200px; padding: 30px 16px; display: flex; flex-direction: column; align-items: center; text-align: center; gap: 11px; color: var(--fg2); font-size: 12px; overflow-wrap: anywhere; }
+.empty-state b { font-size: 14px; color: var(--fg); font-weight: 500; }
+.error-state { border: 1px solid color-mix(in srgb, var(--err) 25%, var(--line)); border-radius: 10px; padding: 14px; margin: 12px 0; font-size: 12px; color: var(--fg); overflow-wrap: anywhere; }
+.error-state p { color: var(--fg2); margin: 6px 0 12px; }
+.loading-note, .search-note, .end-note { text-align: center; font-size: 11px; color: var(--fg2); margin: 16px 0; }
+.article-navigation { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 17px 0; font-size: 11px; color: var(--fg2); }
+.text-button { background: transparent; color: var(--fg2); padding: 4px 0; font-size: 12px; }
+.text-button:hover { background: transparent; color: var(--acc); }
+.article-detail h1 { font-size: 25px; line-height: 1.45; margin: 12px 0 14px; overflow-wrap: anywhere; }
+.article-detail { width: 100%; max-width: 1000px; margin: 0 auto; }
+.article-prose { font-size: 16px; line-height: 1.85; overflow-wrap: anywhere; padding: 12px 0; }
+.article-prose :deep(img), .article-prose :deep(video) { max-width: 100%; height: auto; border-radius: 10px; }
+.article-prose :deep(pre) { max-width: 100%; overflow: auto; padding: 14px; background: var(--card2); border-radius: 10px; }
+.article-prose :deep(table) { display: block; max-width: 100%; overflow: auto; }
+.article-prose :deep(blockquote) { margin: 12px 0; border-left: 3px solid var(--acc); padding-left: 16px; color: var(--fg2); }
+.article-footer { display: flex; gap: 10px; border-top: 1px solid var(--line); padding: 18px 0; color: var(--fg2); font-size: 12px; }
+.mobile-back { display: none; }
+.community-dialog { width: min(480px, calc(100vw - 28px)); max-height: min(80dvh, 720px); border: 1px solid var(--line); border-radius: 22px; background: var(--card); color: var(--fg); padding: 0; box-shadow: var(--shadow); overflow: auto; }
+.community-dialog[open] { animation: community-in .16s ease-out; }
+.community-dialog::backdrop { background: rgba(0,0,0,.5); }
+.dialog-header { padding: 22px 24px 16px; display: flex; justify-content: space-between; align-items: center; gap: 12px; border-bottom: 1px solid var(--line); }
+.dialog-header h3 { margin: 3px 0 0; font-size: 19px; }
+.dialog-content { padding: 20px 24px 24px; }
+.dialog-hint { margin: 0 0 18px; color: var(--fg2); font-size: 12px; }
+.avatar-field { display: flex; align-items: center; gap: 12px; margin: 0 0 20px; flex-wrap: wrap; }
+.upload-label { cursor: pointer; display: inline-flex; gap: 6px; align-items: center; }
+.upload-label:has(input:disabled) { opacity: .5; cursor: wait; }
+.field-label { display: flex; flex-direction: column; gap: 7px; color: var(--fg); font-size: 12px; margin: 12px 0; }
+.field-label input, .field-label select { width: 100%; min-width: 0; font-size: 13px; }
+.field-help { color: var(--fg2); font-size: 11px; }
+.dialog-footer { display: flex; justify-content: flex-end; gap: 8px; margin-top: 24px; }
+.form-actions { display: flex; justify-content: flex-end; margin-top: 16px; }
+.permission-section { border-top: 1px solid var(--line); margin-top: 24px; padding-top: 16px; }
+.permission-section h4 { display: flex; align-items: center; gap: 6px; font-size: 13px; margin: 0 0 8px; }
+.permission-section .dialog-hint { margin-bottom: 8px; }
+.group-list { max-height: 36vh; overflow: auto; }
+.group-row { display: flex; gap: 12px; padding: 12px 0; border-bottom: 1px solid var(--line); }
+.group-row > div { min-width: 0; overflow-wrap: anywhere; }
+.group-row b { display: block; font-size: 13px; font-weight: 600; }
+.group-row span, .group-row p { font-size: 11px; color: var(--fg2); margin: 3px 0 0; }
+.binding-help { color: var(--fg2); font-size: 12px; border-top: 1px solid var(--line); padding-top: 16px; }
+.bind-form { display: flex; gap: 10px; align-items: flex-end; border-top: 1px solid var(--line); margin-top: 20px; padding-top: 12px; }
+.bind-form label { flex: 1; min-width: 0; margin: 0; }
+.bind-form button { height: 39px; }
+@keyframes community-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+@container (max-width: 960px) {
+  .community-workspace { grid-template-columns: 250px minmax(0,1fr); gap: 12px; }
+  .community-page :deep(.k-body) { padding: 0 18px 18px; }
+  .community-page :deep(.k-header) { padding: 18px; }
+  .reader-header { padding: 18px 18px 14px; }
+  .reader-actions { padding: 0 18px 16px; gap: 6px; }
+  .reader-scroll { padding: 0 18px 16px; }
+}
+@container (max-width: 740px) {
+  .community-toolbar { align-items: stretch; flex-direction: column; gap: 12px; }
+  .community-tabs { width: fit-content; max-width: 100%; }
+  .community-tabs button { flex: 1; min-width: 0; padding: 6px clamp(10px, 2.5cqw, 18px); }
+  .toolbar-search .search-box { flex: 1; }
+  .toolbar-search input { width: 100%; }
+  .community-workspace { grid-template-columns: minmax(0, 1fr); }
+  .board-reader { display: none; }
+  .has-selection .board-library { display: none; }
+  .has-selection .board-reader { display: flex; }
+  .mobile-back { display: flex; }
+  .reader-close { display: none; }
+  .board-list { padding: 0 10px 10px; }
+  .reader-title h3 { font-size: 18px; }
+  .community-page :deep(.k-header) { gap: 8px; }
+  .community-page :deep(.k-title h2) { font-size: 22px; }
+  .community-page :deep(.k-title p) { font-size: 11px; max-width: 165px; }
+  .create-button { padding: 9px 11px; font-size: 12px; }
+}
+/* 阅读时让正文占据整个工作区，仅保留一行板块导航。 */
+.reading-article .reader-header { flex-shrink: 0; padding: 10px 16px; gap: 10px; border-bottom: 1px solid var(--line); }
+.reading-article .reader-header > .community-avatar { width: 30px; height: 30px; border-radius: 9px; }
+.reading-article .reader-title h3 { font-size: 14px; margin: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.reading-article .reader-title .eyebrow, .reading-article .reader-stats { display: none; }
+.reading-article .reader-actions { padding: 10px 16px; }
+.reading-article .reader-scroll { padding: 0 clamp(16px, 3cqw, 40px) 24px; }
+.reading-article .article-navigation { padding: 10px 0; }
+.reading-article .article-detail h1 { margin: 8px 0 10px; }
+.community-page.focus-reading :deep(.k-header), .focus-reading .community-toolbar { max-height: 0; opacity: 0; padding-block: 0; border-width: 0; overflow: hidden; pointer-events: none; visibility: hidden; }
+.community-page.focus-reading :deep(.k-body) { padding: 12px; gap: 0; }
+.community-workspace.library-collapsed { grid-template-columns: 0px minmax(0, 1fr); gap: 0; }
+.library-collapsed .board-library { opacity: 0; visibility: hidden; transform: translateX(-10px); pointer-events: none; }
+@container (max-width: 740px) {
+  .community-workspace.library-collapsed { grid-template-columns: minmax(0, 1fr); }
+  .reading-article .library-toggle { display: none; }
+  .reading-article .reader-header { gap: 6px; padding: 8px; }
+  .reading-article .reader-header > .community-avatar { display: none; }
+  .community-page.focus-reading :deep(.k-body) { padding: 6px; }
+}
+/* 动画只覆盖当前列表与阅读区，不创建轮询或持续的后台动画。 */
+.community-page :deep(.k-header) { flex-shrink: 0; max-height: 120px; transition: max-height .22s ease, padding .22s ease, opacity .16s ease, visibility .22s; }
+.community-toolbar { flex-shrink: 0; max-height: 110px; transition: max-height .22s ease, opacity .16s ease, visibility .22s; }
+.community-page :deep(.k-body) { transition: padding .22s ease, gap .22s ease; }
+.community-workspace { transition: grid-template-columns .24s ease, gap .24s ease; }
+.board-library { transition: opacity .16s ease, transform .24s ease, visibility .24s; }
+.board-rows, .post-list { position: relative; }
+.board-list-motion-move, .post-list-motion-move { transition: transform .2s ease; }
+.board-list-motion-enter-active, .board-list-motion-leave-active,
+.post-list-motion-enter-active, .post-list-motion-leave-active { transition: opacity .16s ease, transform .2s ease; }
+.board-list-motion-enter-from, .board-list-motion-leave-to,
+.post-list-motion-enter-from, .post-list-motion-leave-to { opacity: 0; transform: translateY(6px); }
+.board-list-motion-leave-active, .post-list-motion-leave-active { position: absolute; left: 0; right: 0; pointer-events: none; }
+.reader-content-enter-active, .reader-content-leave-active { transition: opacity .12s ease, transform .12s ease; }
+.reader-content-enter-from { opacity: 0; transform: translateY(5px); }
+.reader-content-leave-to { opacity: 0; transform: translateY(-3px); }
+.board-tools-enter-active, .board-tools-leave-active { max-height: 160px; overflow: hidden; transition: max-height .2s ease, padding .2s ease, opacity .16s ease; }
+.board-tools-enter-from, .board-tools-leave-to { max-height: 0; padding-block: 0 !important; opacity: 0; }
+.board-library, .board-reader { position: relative; }
+.search-box { transition: border-color .16s ease, background-color .16s ease; }
+.reader-loading { position: absolute; top: 0; left: 0; right: 0; height: 2px; overflow: hidden; background: var(--acc-soft); pointer-events: none; z-index: 1; }
+.reader-loading span { display: block; width: 35%; height: 100%; background: var(--acc); animation: reader-progress 1.1s ease-in-out infinite; }
+.status-fade-enter-active, .status-fade-leave-active { transition: opacity .15s ease; }
+.status-fade-enter-from, .status-fade-leave-to { opacity: 0; }
+@keyframes reader-progress { from { transform: translateX(-110%); } to { transform: translateX(390%); } }
+@media (prefers-reduced-motion: reduce) {
+  .community-page :deep(*), .community-page :deep(*::before), .community-page :deep(*::after) { transition-duration: .001ms !important; animation-duration: .001ms !important; animation-iteration-count: 1 !important; }
+  .reader-loading span { width: 100%; animation: none; opacity: .65; }
+}
+@media (max-width: 400px) { .dialog-header { padding: 18px; } .dialog-content { padding: 18px; } }
+@media (prefers-reduced-motion: reduce) { .community-dialog[open] { animation: none; } .board-row, .post-card strong { transition: none; } }
 </style>

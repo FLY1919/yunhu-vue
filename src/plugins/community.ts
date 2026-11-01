@@ -1,228 +1,240 @@
-/**
- * community 插件 —— 板块（云湖的「文章分区」/v1/community/ba/*）
- *
- *   ctx.community.load(typ)         typ 1关注 2热门 3我的 4全部
- *   ctx.community.mine()            我的板块（个人资料页也会用）
- *   ctx.community.create(name, av)  创建板块
- *   ctx.community.edit(id, patch)   改名称/头像
- *   ctx.community.manage(id, vis, pub)  可见范围 / 发帖权限
- *   ctx.community.loadGroups(ba)    看这个板块绑定了哪些群
- *   ctx.community.bindGroup(id, gid) 把群绑到板块
- *
- * 注册控制台页面「板块」。
- */
+/** 板块服务：按请求归属接收结果，避免快速切换时串板、丢页和重复提交。 */
 import Schema from 'schemastery'
 import { reactive } from 'vue'
 import type { Context } from '../core/context'
 import CommunityPage from '../console/pages/CommunityPage.vue'
 
 export const name = 'community'
-
-export interface CommunityCfg {
-  pageSize: number
-  autoLoadMine: boolean
-}
-
+export interface CommunityCfg { pageSize: number; autoLoadMine: boolean }
 export const communityConfig: Schema<CommunityCfg> = Schema.object({
   pageSize: Schema.number().default(20).description('板块文章每页条数'),
   autoLoadMine: Schema.boolean().default(true).description('启动时自动加载我的板块'),
 })
-
 export const communityPlugin = {
-  Config: communityConfig,
-  name: 'community',
-  inject: ['api', 'ui', 'console'],
-  provide: ['community'],
-
+  Config: communityConfig, name: 'community', inject: ['api', 'ui', 'console'], provide: ['community'],
   apply(ctx: Context) {
-    const api: any = ctx.api
-    const ui: any = ctx.ui
-
+    const api: any = ctx.api, ui: any = ctx.ui
+    const PAGE_SIZE = 30
     const state = reactive({
-      list: [] as any[],
-      mine: [] as any[],
-      myIds: [] as number[],
-      followIds: [] as number[],
-      loading: false,
-      groups: [] as any[],
-      groupsOf: null as any,
-      bindGroupId: '',
-      viewing: null as any,       // 正在浏览的板块
-      posts: [] as any[],
-      postPage: 1,         // 该板块的文章
-      postDetail: null as any,    // 文章详情
-      loadingPosts: false,
-      info: null as any,
-      newAvatar: '',              // 创建板块时先上传的头像
-      editing: null as any,       // 编辑中的板块（带 avatar）
+      list: [] as any[], mine: [] as any[], myIds: [] as number[], followIds: [] as number[],
+      listType: 2, listPage: 1, hasMore: false, loading: false, listError: '',
+      groups: [] as any[], groupsOf: null as any, bindGroupId: '', groupPage: 1,
+      hasMoreGroups: false, loadingGroups: false, groupsError: '', binding: false,
+      viewing: null as any, posts: [] as any[], postPage: 1, hasMorePosts: false,
+      postDetail: null as any, loadingPosts: false, loadingDetail: false,
+      postsError: '', detailError: '', info: null as any,
+      newAvatar: '', editing: null as any, creating: false, saving: false, managing: false,
+      uploading: false, following: [] as number[], followReady: false,
     })
+    let listRequest = 0, boardRequest = 0, detailRequest = 0, groupRequest = 0, identityRequest = 0, followsVersion = 0
+    const idOf = (x: any) => Number(x?.id ?? x)
+    const owns = (b: any) => state.myIds.includes(idOf(b))
+    const unique = (items: any[]) => [...new Map(items.map(x => [String(x.id), x])).values()]
+    const fail = (message: string, e: any) => { ui.toast(message + (e?.message || '请稍后重试'), 'error'); return false }
 
-    /** 按类型拉列表；顺手缓存「我的板块」 */
-    async function load(typ = 4) {
-      state.loading = true
+    async function load(typ = state.listType, more = false) {
+      if (more && (state.loading || !state.hasMore)) return false
+      const request = ++listRequest, page = more ? state.listPage + 1 : 1
+      state.listType = typ; state.loading = true; state.listError = ''
+      if (!more) { state.list = []; state.hasMore = false }
       try {
-        const list = await api.baList(typ, { size: 30, page: 1 })
-        state.list = list
-        if (typ === 3) {
-          state.mine = list
-          state.myIds = list.map((b: any) => b.id)
-        }
-      } catch (e: any) {
-        ui.toast('板块列表加载失败：' + e.message, 'error')
-      } finally { state.loading = false }
+        const list = await api.baList(typ, { size: PAGE_SIZE, page })
+        if (request !== listRequest) return false
+        state.list = unique(more ? [...state.list, ...list] : list)
+        state.listPage = page; state.hasMore = list.length >= PAGE_SIZE
+        if (typ === 3) { state.mine = state.list; state.myIds = [...new Set([...state.myIds, ...state.list.map(idOf)])] }
+        if (typ === 1) { state.followIds = [...new Set([...state.followIds, ...list.map(idOf)])]; state.followReady = true }
+        return true
+      } catch (e: any) { if (request === listRequest) state.listError = e?.message || '加载失败'; return false }
+      finally { if (request === listRequest) state.loading = false }
     }
-
-    async function mine() {
-      try {
-        const list = await api.baList(3, { size: 30, page: 1 })
-        state.mine = list
-        state.myIds = list.map((b: any) => b.id)
-        return list
-      } catch { return [] }
-    }
-
-    function countOf(typ: number) { return typ === 3 ? state.myIds.length : '' }
-
-    async function create(name: string, avatar = '') {
-      try {
-        const id = await api.baCreate(name, avatar)
-        ui.toast(id ? `板块已创建（ID ${id}）` : '板块已创建', 'success')
-        await mine()
-        await load(3)
-      } catch (e: any) { ui.toast('创建失败：' + e.message, 'error') }
-    }
-
-    async function edit(baId: number, patch: any) {
-      try {
-        await api.baEdit(baId, patch)
-        ui.toast('已保存', 'success')
-        await load(3)
-      } catch (e: any) { ui.toast('保存失败：' + e.message, 'error') }
-    }
-
-    /** visibleRange 0-公开 1-仅自己；publishAuthority 0/1/2 */
-    async function manage(baId: number, visibleRange = 0, publishAuthority = 0) {
-      try {
-        await api.baManage(baId, visibleRange, publishAuthority)
-        ui.toast('权限已更新', 'success')
-      } catch (e: any) { ui.toast('更新失败：' + e.message, 'error') }
-    }
-
-    async function loadGroups(ba: any) {
-      state.groupsOf = ba
-      state.groups = []
-      try { state.groups = await api.baGroups(ba.id, { size: 30, page: 1 }) }
-      catch (e: any) { ui.toast('群聊列表加载失败：' + e.message, 'error') }
-    }
-
-    async function bindGroup(baId: number, groupId: string) {
-      if (!groupId) return ui.toast('要填群 ID', 'warn')
-      try {
-        await api.bindBaGroup ? await api.bindBaGroup(baId, groupId) : null
-        ui.toast('已提交绑定', 'success')
-        await loadGroups(state.groupsOf)
-      } catch (e: any) { ui.toast('绑定失败：' + e.message, 'error') }
-    }
-
-    /* ---------------- 进入板块：文章列表 / 详情 ---------------- */
-
-    async function enter(ba: any) {
-      state.viewing = ba
-      state.posts = []
-      state.postDetail = null
-      state.postPage = 1
-      state.loadingPosts = true
-      try {
-        state.info = await api.baInfo(ba.id).catch(() => null)
-        state.posts = await api.baPosts(ba.id, { size: 30, page: 1 })
-      } catch (e: any) {
-        ui.toast('文章加载失败：' + e.message, 'error')
-      } finally { state.loadingPosts = false }
-    }
-    function exitBoard() { state.viewing = null; state.posts = []; state.postDetail = null }
-
-    async function openPost(p: any) {
-      try {
-        const d = await api.baPostDetail(p.id)
-        // 详情可能嵌套在 post 里；都没有则回退列表项自带 content
-        const detail = d?.post ? { ...d, content: d.post.content ?? d.content, title: d.post.title ?? d.title } : d
-        state.postDetail = detail?.content || detail?.title ? detail : (p.content || p.title ? p : detail)
-      } catch (e: any) {
-        // 详情接口失败时回退列表项内容，不让用户看空弹窗
-        if (p.content || p.title) { state.postDetail = p; ui.toast('详情接口失败，显示列表缓存内容', 'warn') }
-        else ui.toast('文章打不开：' + e.message, 'error')
+    async function readIdentityList(type: number, identity: number) {
+      const all: any[] = [], seen = new Set<string>()
+      for (let page = 1; ; page++) {
+        const batch = await api.baList(type, { size: PAGE_SIZE, page })
+        if (identity !== identityRequest) return null
+        let added = 0
+        for (const b of batch) if (!seen.has(String(b.id))) { seen.add(String(b.id)); all.push(b); added++ }
+        if (batch.length < PAGE_SIZE || !added) return all
       }
     }
-
-    /** 板块文章分页加载更多 */
+    async function mine() {
+      const request = identityRequest
+      try {
+        const list = await readIdentityList(3, request)
+        if (list && request === identityRequest) { state.mine = list; state.myIds = list.map(idOf) }
+        return list || []
+      } catch { return [] }
+    }
+    function countOf(typ: number) { return typ === 3 ? state.myIds.length : '' }
+    async function create(name: string, avatar = '') {
+      name = name.trim()
+      if (!name || [...name].length > 10) { ui.toast('板块名称应为 1～10 个字', 'warn'); return false }
+      if (state.creating) return false
+      state.creating = true
+      const identity = identityRequest
+      try {
+        const id = await api.baCreate(name, avatar)
+        if (identity !== identityRequest) return false
+        state.newAvatar = ''; ui.toast(id ? `板块已创建（ID ${id}）` : '板块已创建', 'success')
+        await mine(); await load(3)
+        return true
+      } catch (e) { return fail('创建失败：', e) }
+      finally { state.creating = false }
+    }
+    function updateBoard(id: number, patch: any) {
+      for (const list of [state.list, state.mine]) for (const b of list) if (idOf(b) === Number(id)) Object.assign(b, patch)
+      for (const b of [state.viewing, state.info, state.groupsOf]) if (b && idOf(b) === Number(id)) Object.assign(b, patch)
+    }
+    async function edit(id: number, patch: any) {
+      if (!owns(id) || state.saving) return false
+      const name = String(patch.name || '').trim()
+      if (!name || [...name].length > 10) { ui.toast('板块名称应为 1～10 个字', 'warn'); return false }
+      state.saving = true
+      const identity = identityRequest
+      try { await api.baEdit(id, { ...patch, name }); if (identity !== identityRequest) return false; updateBoard(id, { ...patch, name }); ui.toast('板块信息已保存', 'success'); return true }
+      catch (e) { return fail('保存失败：', e) }
+      finally { state.saving = false }
+    }
+    async function manage(id: number, visibleRange = 0, publishAuthority = 0) {
+      if (!owns(id) || state.managing) return false
+      state.managing = true
+      const identity = identityRequest
+      try { await api.baManage(id, visibleRange, publishAuthority); if (identity !== identityRequest) return false; updateBoard(id, { visibleRange, publishAuthority }); ui.toast('权限已更新', 'success'); return true }
+      catch (e) { return fail('更新失败：', e) }
+      finally { state.managing = false }
+    }
+    async function loadGroups(ba: any, more = false) {
+      if (!ba || (more && (state.loadingGroups || !state.hasMoreGroups))) return false
+      const request = ++groupRequest, page = more ? state.groupPage + 1 : 1
+      state.groupsOf = ba; state.groupsError = ''; state.loadingGroups = true
+      if (!more) { state.groups = []; state.hasMoreGroups = false; state.bindGroupId = '' }
+      try {
+        const groups = await api.baGroups(ba.id, { size: PAGE_SIZE, page })
+        if (request !== groupRequest) return false
+        const merged = more ? [...state.groups, ...groups] : groups
+        state.groups = [...new Map(merged.map(g => [String(g.groupId ?? g.id), g])).values()]
+        state.groupPage = page; state.hasMoreGroups = groups.length >= PAGE_SIZE
+        return true
+      } catch (e: any) { if (request === groupRequest) state.groupsError = e?.message || '群聊加载失败'; return false }
+      finally { if (request === groupRequest) state.loadingGroups = false }
+    }
+    function closeGroups() { ++groupRequest; state.groupsOf = null; state.groups = []; state.loadingGroups = false }
+    async function bindGroup(baId: number, groupId: string) {
+      groupId = String(groupId || '').trim()
+      if (!groupId) { ui.toast('请填写群 ID', 'warn'); return false }
+      if (!owns(baId) || state.binding) return false
+      if (typeof api.bindBaGroup !== 'function') { ui.toast('当前 API 不支持绑定群聊', 'error'); return false }
+      state.binding = true
+      const ba = state.groupsOf, identity = identityRequest
+      try {
+        await api.bindBaGroup(baId, groupId); if (identity !== identityRequest) return false; ui.toast('群聊已绑定', 'success')
+        if (state.groupsOf === ba) await loadGroups(ba)
+        return true
+      } catch (e) { return fail('绑定失败：', e) }
+      finally { state.binding = false }
+    }
+    async function enter(ba: any) {
+      if (!ba) return false
+      const request = ++boardRequest; ++detailRequest
+      state.viewing = ba; state.info = null; state.posts = []; state.postDetail = null
+      state.postPage = 1; state.hasMorePosts = false; state.loadingPosts = true
+      state.loadingDetail = false; state.postsError = ''; state.detailError = ''
+      // 资料失败不阻塞文章，也不把上一个板块的统计留在标题里。
+      void api.baInfo(ba.id).then(info => { if (request === boardRequest) state.info = info }).catch(() => {})
+      try {
+        const posts = await api.baPosts(ba.id, { size: PAGE_SIZE, page: 1 })
+        if (request !== boardRequest) return false
+        state.posts = unique(posts); state.hasMorePosts = posts.length >= PAGE_SIZE
+        return true
+      } catch (e: any) { if (request === boardRequest) state.postsError = e?.message || '文章加载失败'; return false }
+      finally { if (request === boardRequest) state.loadingPosts = false }
+    }
+    function backToPosts() { ++detailRequest; state.postDetail = null; state.loadingDetail = false; state.detailError = '' }
+    function exitBoard() { ++boardRequest; backToPosts(); state.viewing = null; state.posts = []; state.info = null; state.loadingPosts = false }
+    async function openPost(p: any) {
+      if (!state.viewing) return false
+      const request = ++detailRequest, board = boardRequest
+      state.postDetail = p; state.loadingDetail = true; state.detailError = ''
+      try {
+        const d = await api.baPostDetail(p.id)
+        if (request !== detailRequest || board !== boardRequest) return false
+        if (!d) throw new Error('服务端未返回文章内容')
+        state.postDetail = { ...p, ...d, ...(d.post || {}) }
+        return true
+      } catch (e: any) {
+        if (request === detailRequest && board === boardRequest) state.detailError = '完整文章加载失败：' + (e?.message || '请重试')
+        return false
+      } finally { if (request === detailRequest && board === boardRequest) state.loadingDetail = false }
+    }
     async function loadMorePosts() {
-      const ba = state.viewing
-      if (!ba || state.loadingPosts) return
-      state.postPage = (state.postPage || 1) + 1
-      state.loadingPosts = true
+      if (!state.viewing || state.loadingPosts || !state.hasMorePosts) return false
+      const request = boardRequest, ba = state.viewing, page = state.postPage + 1
+      state.loadingPosts = true; state.postsError = ''
       try {
-        const more = await api.baPosts(ba.id, { size: 30, page: state.postPage })
-        const ids = new Set(state.posts.map((x: any) => x.id))
-        state.posts = [...state.posts, ...more.filter((x: any) => !ids.has(x.id))]
-      } catch (e: any) { ui.toast('加载更多失败：' + e.message, 'error') }
-      finally { state.loadingPosts = false }
+        const more = await api.baPosts(ba.id, { size: PAGE_SIZE, page })
+        if (request !== boardRequest) return false
+        state.posts = unique([...state.posts, ...more]); state.postPage = page; state.hasMorePosts = more.length >= PAGE_SIZE
+        return true
+      } catch (e: any) { if (request === boardRequest) state.postsError = e?.message || '加载更多失败'; return false }
+      finally { if (request === boardRequest) state.loadingPosts = false }
     }
-
-    /** 上传板块头像：选图 → 上传 → 回填 URL（比手输 URL 友好） */
     async function uploadAvatar(ev: any, target: 'new' | 'edit') {
-      const f = ev?.target?.files?.[0]
-      if (!f) return
+      const f = ev?.target?.files?.[0], editing = state.editing
+      if (!f || state.uploading) return false
+      if (!f.type.startsWith('image/') || f.size > 10 * 1024 * 1024) { ui.toast('请选择 10MB 以内的图片', 'warn'); ev.target.value = ''; return false }
+      state.uploading = true
+      const identity = identityRequest
       try {
-        const res: any = await api.uploadFile(f, 'image')
-        const key = typeof res === 'string' ? res : res?.key
-        const url = (res?.url) || `https://chat-img.jwznb.com/${key}`
+        const res = await api.uploadFile(f, 'image'), key = typeof res === 'string' ? res : res?.key
+        if (identity !== identityRequest) return false
+        if (!res?.url && !key) throw new Error('未返回图片地址')
+        const url = res?.url || (/^https?:\/\//.test(key) ? key : `https://chat-img.jwznb.com/${key}`)
         if (target === 'new') state.newAvatar = url
-        else if (state.editing) state.editing.avatar = url
-        ui.toast('头像已上传', 'success')
-      } catch (e: any) { ui.toast('上传失败：' + e.message, 'error') }
-      ev.target.value = ''
+        else if (state.editing === editing && editing) editing.avatar = url
+        return true
+      } catch (e) { return fail('上传失败：', e) }
+      finally { state.uploading = false; ev.target.value = '' }
     }
-
-    /** 直接创建（带上已上传的头像） */
-    async function createWithAvatar(name: string) {
-      return create(name, state.newAvatar || '')
-    }
-
-    /** 从别处（用户资料）跳过来时：定位到这个板块并直接进入浏览 */
+    const createWithAvatar = (name: string) => create(name, state.newAvatar || '')
     function focus(ba: any) {
       if (!ba) return
-      state.list = state.list.some((b: any) => b.id === ba.id) ? state.list : [ba, ...state.list]
-      ctx.setTimeout(() => { enter(ba) }, 300)
+      if (!state.list.some(b => idOf(b) === idOf(ba))) state.list = [ba, ...state.list]
+      void enter(ba)
     }
-
-    /* ---- 关注（/v1/community/ba/user-follow-ba / unfollow） ---- */
     async function loadFollows() {
+      const request = identityRequest, version = followsVersion
       try {
-        const list = await api.baList(1, { size: 50, page: 1 })
-        state.followIds = list.map((b: any) => b.id)
-      } catch { state.followIds = [] }
+        const list = await readIdentityList(1, request)
+        if (list && request === identityRequest && version === followsVersion && !state.following.length) { state.followIds = list.map(idOf); state.followReady = true }
+      } catch { /* 失败不把已知关注状态清空，避免误操作。 */ }
     }
-    function isFollowed(id: number) { return state.followIds.includes(id) }
+    const isFollowed = (id: number) => state.followIds.includes(Number(id))
     async function toggleFollow(b: any) {
+      const id = idOf(b)
+      if (!state.followReady) { await loadFollows(); if (!state.followReady) { ui.toast('关注状态未加载，请重试', 'warn'); return false } }
+      if (state.following.includes(id)) return false
+      state.following.push(id); ++followsVersion
+      const identity = identityRequest
       try {
-        if (isFollowed(b.id)) { await api.unfollowBoard(b.id); state.followIds = state.followIds.filter((x: number) => x !== b.id); ui.toast('已取消关注', 'success') }
-        else { await api.followBoard(b.id); state.followIds = [...state.followIds, b.id]; ui.toast('已关注', 'success') }
-      } catch (e: any) { ui.toast('操作失败：' + e.message, 'error') }
+        if (isFollowed(id)) { await api.unfollowBoard(id); if (identity !== identityRequest) return false; state.followIds = state.followIds.filter(x => x !== id); if (state.listType === 1) state.list = state.list.filter(x => idOf(x) !== id) }
+        else { await api.followBoard(id); if (identity !== identityRequest) return false; state.followIds = [...state.followIds, id] }
+        return true
+      } catch (e) { return fail('关注操作失败：', e) }
+      finally { state.following = state.following.filter(x => x !== id) }
     }
-
-    ctx.set('community', { state, load, mine, countOf, create, createWithAvatar, edit, manage, loadGroups, bindGroup, enter, exitBoard, openPost, uploadAvatar, focus, loadFollows, isFollowed, toggleFollow, loadMorePosts })
-
-    // 插件装载时可能还没登录完，接口会失败 → 服务就绪后补拉一次（不然「我的板块」一直是空的）
+    ctx.set('community', { state, load, mine, countOf, owns, create, createWithAvatar, edit, manage, loadGroups, closeGroups, bindGroup, enter, exitBoard, backToPosts, openPost, uploadAvatar, focus, loadFollows, isFollowed, toggleFollow, loadMorePosts })
+    function resetAccount() {
+      ++identityRequest; ++listRequest; ++followsVersion; exitBoard(); closeGroups()
+      state.list = []; state.mine = []; state.myIds = []; state.followIds = []; state.followReady = false
+      state.following = []; state.editing = null; state.newAvatar = ''; state.loading = false; state.listError = ''
+    }
     ctx.on('auth/ready' as any, () => mine())
-    ctx.on('auth/login' as any, () => mine())
+    ctx.on('auth/login' as any, () => { resetAccount(); void mine() })
+    ctx.on('auth/logout' as any, resetAccount)
     mine()
     ctx.setTimeout(() => { if (!state.mine.length) mine() }, 3000)
     ctx.setTimeout(() => { if (!state.mine.length) mine() }, 8000)
-
-    ctx.logger?.info('community 插件已加载（板块 / 文章分区）')
-
-    ctx.console.addEntry((cc: any) => {
-      cc.page({ name: '板块', path: '/community', icon: 'layers', order: 170, component: CommunityPage })
-    })
+    ctx.console.addEntry((cc: any) => { cc.page({ name: '板块', path: '/community', icon: 'layers', order: 170, component: CommunityPage }) })
   },
 }

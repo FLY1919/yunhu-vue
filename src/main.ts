@@ -1,6 +1,4 @@
 import { createApp } from 'vue'
-import App from './App.vue'
-import { ctx, bootstrap } from './app'
 import { platform, applyPlatformAttr, enableRipple } from './platform'
 import './styles.css'
 import './styles-m3.css'   // M3 质感层（Kazumi 式观感），必须后加载覆盖基础变量
@@ -25,20 +23,28 @@ document.addEventListener('click', (e) => {
   w.__TAURI__.opener.openUrl(href).catch(() => { window.open(href, '_blank') })
 }, true)
 
-const app = createApp(App)
-app.provide('ctx', ctx)
-app.config.errorHandler = (err: any) => ctx.logger?.error('vue error:', err?.message || String(err))
-
 ;(async () => {
+  const sessionId = new URLSearchParams(location.search).get('ai-panel')
+  if (sessionId) {
+    // A detached view never bootstraps auth, WebSocket, user Bots or the account vault.
+    const { default: FloatingAiPanel } = await import('./components/FloatingAiPanel.vue')
+    createApp(FloatingAiPanel, { sessionId }).mount('#app')
+    return
+  }
+  const [{ default: App }, { ctx, bootstrap }, { installAiPanelHost }] = await Promise.all([import('./App.vue'), import('./app'), import('./core/ai-panel')])
+  const app = createApp(App)
+  app.provide('ctx', ctx)
+  app.config.errorHandler = (err: any) => ctx.logger?.error('vue error:', err?.message || String(err))
   try {
     await bootstrap()
+    installAiPanelHost(ctx)
   } catch (e: any) {
     console.error('[bootstrap]', e)
     showCrash(e)
   }
   app.mount('#app')
   // 启动时尝试恢复上次登录
-  ;(ctx as any).auth?.restore?.()
+  ;(ctx as any).auth?.restore?.()?.catch?.(() => {})
   // 调试句柄：控制台里可直接查看插件/服务/页面状态
   ;(window as any).__yunhu = ctx
 })()

@@ -2,7 +2,31 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
   "description": "云湖牢大版桌面端默认权限",
-  "windows": ["main"],
-  "remote": { "urls": ["http://127.0.0.1:8902/*"] },
-  "permissions": ["core:default", "core:window:default", "core:webview:default", "opener:default"]
+  "windows": [
+    "main"
+  ],
+  "remote": {
+    "urls": [
+      "http://127.0.0.1:*/*"
+    ]
+  },
+  "permissions": [
+    "core:default",
+    "core:window:default",
+    "core:webview:default",
+    "opener:default",
+    "allow-restart-sidecar",
+    "allow-open-external-url",
+    "allow-native-notifications-supported",
+    "allow-show-message-notification",
+    "allow-dismiss-message-notification",
+    "allow-clear-message-notifications",
+    "allow-secure-read",
+    "allow-secure-write",
+    "allow-secure-delete",
+    "allow-ai-bridge-token",
+    "allow-open-ai-panel",
+    "allow-close-ai-panel",
+    "allow-set-privacy"
+  ]
 }

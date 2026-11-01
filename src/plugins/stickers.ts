@@ -1,3 +1,4 @@
+import { mediaMetadata } from '../core/media'
 /**
  * stickers 插件 —— 表情收藏面板 + 语音发送
  *
@@ -66,6 +67,7 @@ export const stickersPlugin = {
     /* ---------------- 表情收藏 ---------------- */
 
     async function load(silent = false) {
+      if (api.token === '' && !(ctx as any).auth?.state?.user?.id) return
       state.loading = true
       try { state.list = await api.expressionList() }
       catch (e: any) { if (!silent) ui.toast('表情收藏加载失败：' + e.message, 'error') }
@@ -267,11 +269,12 @@ export const stickersPlugin = {
     async function sendVideo(blob: Blob, seconds = 0) {
       try {
         const ext = blob.type.includes('mp4') ? 'mp4' : blob.type.includes('webm') ? 'webm' : 'mp4'
-        const file = new File([blob], `video_${Date.now()}.${ext}`, { type: blob.type || 'video/mp4' })
+        const file = blob instanceof File ? blob : new File([blob], `video_${Date.now()}.${ext}`, { type: blob.type || 'video/mp4' })
         const res: any = await api.uploadFile(file, 'video')
         const key = typeof res === 'string' ? res : res?.key
         if (!key) throw new Error('上传没拿到 key')
-        await chat.sendMedia([h.video(key, seconds || 0)])
+        const meta = await mediaMetadata(file, 'video')
+        await chat.sendMedia([{ ...h.video(key, seconds || meta.time), attrs: { src: key, ...meta, time: seconds || meta.time, name: file.name, size: file.size } }])
       } catch (e: any) { ui.toast('视频发送失败：' + e.message, 'error') }
     }
 
@@ -315,6 +318,7 @@ export const stickersPlugin = {
     /* ---------------- 表情包管理 ---------------- */
 
     async function loadPacks() {
+      if (api.token === '' && !(ctx as any).auth?.state?.user?.id) return
       state.packsLoading = true
       try { state.packs = await api.stickerPacks() }
       catch (e: any) { ui.toast('表情包加载失败：' + e.message, 'error') }
@@ -427,6 +431,7 @@ export const stickersPlugin = {
     // 同上：走聊天插槽，浮层只在聊天区域内
     ctx.effect(() => chat.slot({ type: 'global', component: StickerPanel, order: 60 }, ctx))
 
+    ctx.on('auth/login', () => { load(); loadPacks() })
     load()
     loadPacks()
     ctx.logger?.info('stickers 插件已加载（表情收藏 / 表情包 / 语音 / 视频）')

@@ -30,7 +30,7 @@ const pages = computed(() => console_.pages || [])
 /** 主导航只留「消息 / 通讯录」两项（QQ 语义），其余全部进左下 ☰ 菜单 */
 const MAIN_PATHS = ['/', '/contacts']
 /** 固定菜单项已覆盖的页面路径，动态列表里去重，避免同页两项 */
-const COVERED_PATHS = ['/theme', '/logs', '/settings-user', '/plugins', '/about']
+const COVERED_PATHS = ['/account', '/config', '/theme', '/logs', '/settings-user', '/plugins', '/about']
 const railPages = computed(() => pages.value.filter((p: any) => MAIN_PATHS.includes(p.path)))
 /** 「更多功能」宫格展示的插件页（≡ 菜单不再一锅端堆插件页） */
 const morePages = computed(() => pages.value.filter((p: any) => !MAIN_PATHS.includes(p.path) && !COVERED_PATHS.includes(p.path)))
@@ -50,6 +50,8 @@ function dropPin(target: string) {
 const totalUnread = computed(() =>
   (ctx.chat?.state?.conversations || []).reduce((n: number, c: any) =>
     n + (ctx.chat?.isMuted?.(c.id) ? 0 : (c.unread || 0)), 0))
+const mutedUnread = computed(() => (ctx.chat?.state?.conversations || []).reduce((n: number, c: any) =>
+  n + (ctx.chat?.isMuted?.(c.id) ? (c.unread || 0) : 0), 0))
 
 /**
  * 当前页对象。
@@ -135,7 +137,8 @@ async function checkUpdate() {
                 class="rail-btn" :class="{ on: active === p }"
                 :title="p.name" @click="current = p.path">
           <Icon :name="p.icon" />
-          <span v-if="p.path === '/' && totalUnread" class="badge rail-badge">{{ totalUnread > 99 ? '99+' : totalUnread }}</span>
+          <span v-if="p.path === '/' && (totalUnread || mutedUnread)" class="badge rail-badge" :class="{ 'unread-dot': !totalUnread }"
+            :aria-label="`${totalUnread + mutedUnread} 条未读消息`">{{ totalUnread ? (totalUnread > 99 ? '99+' : totalUnread) : '' }}</span>
         </button>
         <!-- 常驻功能项（更多功能里自定义）：图标进 rail，群聊(通讯录)下方 -->
         <button v-for="p in pinnedPages" :key="p.path"
@@ -153,6 +156,12 @@ async function checkUpdate() {
         </button>
       </div>
       <div class="rail-foot">
+        <button v-if="has('/account') || has('/config')" class="rail-btn"
+                :class="{ on: current === '/account' || current === '/config' }"
+                title="账号与配置" aria-label="账号与配置"
+                @click="go(has('/account') ? '/account' : '/config')">
+          <Icon name="settings" />
+        </button>
         <button class="rail-btn" :title="ui.state.theme === 'auto' ? '跟随系统（当前' + ui.effectiveTheme + '）' : (ui.effectiveTheme === 'dark' ? '切换到浅色' : '切换到深色')"
                 @click="ui.toggleTheme()">
           <Icon :name="ui.effectiveTheme === 'dark' ? 'moon' : 'sun'" />

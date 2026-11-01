@@ -20,11 +20,28 @@ const SANITIZE_OPTS = {
 
 export function renderMarkdown(md: string): string {
   const html = marked.parse(String(md ?? ''), { async: false }) as string
-  return DOMPurify.sanitize(html, SANITIZE_OPTS as any) as unknown as string
+  return sanitizeHtml(html)
 }
 
 export function sanitizeHtml(html: string): string {
-  return DOMPurify.sanitize(String(html ?? ''), SANITIZE_OPTS as any) as unknown as string
+  const fragment = DOMPurify.sanitize(String(html ?? ''), {
+    ...SANITIZE_OPTS, RETURN_DOM_FRAGMENT: true,
+  }) as unknown as DocumentFragment
+  // 作者指定的黑字、紫底、透明度会与客户端主题冲突。保留排版，颜色交给主题。
+  // 在净化后的惰性 DOM 中处理，包含嵌套节点和 !important，不改写消息原文。
+  for (const el of fragment.querySelectorAll<HTMLElement>('*')) {
+    for (const attr of ['color', 'bgcolor', 'text', 'link', 'vlink', 'alink']) el.removeAttribute(attr)
+    if (!el.style) continue
+    for (const property of ['color', 'background', 'background-color', 'background-image',
+      'opacity', 'filter', 'mix-blend-mode', 'text-shadow', '-webkit-text-fill-color',
+      '-webkit-text-stroke', '-webkit-text-stroke-color', 'visibility']) {
+      el.style.removeProperty(property)
+    }
+    if (!el.getAttribute('style')?.trim()) el.removeAttribute('style')
+  }
+  const container = document.createElement('div')
+  container.append(fragment)
+  return container.innerHTML
 }
 
 /** 渲染完成后统一把资源链接改写到 /res 代理 */

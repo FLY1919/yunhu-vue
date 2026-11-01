@@ -1,0 +1,989 @@
+diff --git a/package.json b/package.json
+--- a/package.json
++++ b/package.json
+@@ -1,7 +1,7 @@
+ {
+   "name": "yunhu-vue",
+   "private": true,
+-  "version": "1.0.10",
++  "version": "1.0.11",
+   "type": "module",
+   "description": "云湖牢大版 · Vue3 + 真 cordis 插件内核 + Satori 协议 + WebDAV 网关（仅供学习交流）",
+   "scripts": {
+@@ -24,7 +24,9 @@
+     "test:features": "node scripts/test-features-regressions.mjs",
+     "test:recall": "node --test scripts/test-recall-regressions.mjs && node --no-warnings --experimental-loader ./scripts/test-recall-loader.mjs --test scripts/test-recall-chat.mjs",
+     "test:ui-features": "node scripts/test-ui-features.mjs",
+-    "test:ui-recall": "node scripts/test-ui-recall.mjs"
++    "test:ui-recall": "node scripts/test-ui-recall.mjs",
++    "test:ui-stickers": "node scripts/test-ui-sticker-panel.mjs",
++    "test:ui-scroll": "node scripts/test-ui-chat-scroll.mjs"
+   },
+   "dependencies": {
+     "@capacitor/core": "^8.5.2",
+diff --git a/package-lock.json b/package-lock.json
+--- a/package-lock.json
++++ b/package-lock.json
+@@ -1,12 +1,12 @@
+ {
+   "name": "yunhu-vue",
+-  "version": "1.0.10",
++  "version": "1.0.11",
+   "lockfileVersion": 3,
+   "requires": true,
+   "packages": {
+     "": {
+       "name": "yunhu-vue",
+-      "version": "1.0.10",
++      "version": "1.0.11",
+       "dependencies": {
+         "@capacitor/core": "^8.5.2",
+         "@jodit/image-editor": "0.2.5",
+diff --git a/src-tauri/Cargo.toml b/src-tauri/Cargo.toml
+--- a/src-tauri/Cargo.toml
++++ b/src-tauri/Cargo.toml
+@@ -1,6 +1,6 @@
+ [package]
+ name = "yunhulaoda-desktop"
+-version = "1.0.10"
++version = "1.0.11"
+ description = "云湖牢大版桌面客户端（Tauri 壳 + Node sidecar 服务）"
+ authors = ["yibanm"]
+ edition = "2021"
+diff --git a/src-tauri/Cargo.lock b/src-tauri/Cargo.lock
+--- a/src-tauri/Cargo.lock
++++ b/src-tauri/Cargo.lock
+@@ -4833,7 +4833,7 @@
+ 
+ [[package]]
+ name = "yunhulaoda-desktop"
+-version = "1.0.10"
++version = "1.0.11"
+ dependencies = [
+  "base64 0.22.1",
+  "serde",
+diff --git a/src-tauri/tauri.conf.json b/src-tauri/tauri.conf.json
+--- a/src-tauri/tauri.conf.json
++++ b/src-tauri/tauri.conf.json
+@@ -1,7 +1,7 @@
+ {
+   "$schema": "https://schema.tauri.app/config/2",
+   "productName": "YunhuLaoda",
+-  "version": "1.0.10",
++  "version": "1.0.11",
+   "identifier": "com.richkobe.yunhulaoda",
+   "build": {
+     "beforeBuildCommand": "",
+diff --git a/src/core/sticker-order.ts b/src/core/sticker-order.ts
+new file mode 100644
+--- /dev/null
++++ b/src/core/sticker-order.ts
+@@ -0,0 +1,21 @@
++/** 本机合集顺序：未记录的新合集保持服务端相对顺序，失效 ID 不影响显示。 */
++export function orderStickerPacks<T extends { id: unknown }>(packs: T[], saved: string[]): T[] {
++  const ranks = new Map(saved.map((id, index) => [String(id), index]))
++  return [...packs].sort((a, b) => {
++    const aRank = ranks.get(String(a.id)) ?? Number.MAX_SAFE_INTEGER
++    const bRank = ranks.get(String(b.id)) ?? Number.MAX_SAFE_INTEGER
++    return aRank - bRank
++  })
++}
++
++export type StickerMove = 'top' | 'up' | 'down' | 'bottom'
++export function moveStickerPack(ids: string[], target: string, direction: StickerMove): string[] {
++  const result = [...ids]
++  const from = result.indexOf(String(target))
++  if (from < 0) return result
++  const to = direction === 'top' ? 0 : direction === 'bottom' ? result.length - 1
++    : direction === 'up' ? Math.max(0, from - 1) : Math.min(result.length - 1, from + 1)
++  result.splice(from, 1)
++  result.splice(to, 0, String(target))
++  return result
++}
+diff --git a/src/components/StickerPanel.vue b/src/components/StickerPanel.vue
+--- a/src/components/StickerPanel.vue
++++ b/src/components/StickerPanel.vue
+@@ -9,27 +9,93 @@
+  */
+ import { inject, computed, ref, watch, onUnmounted, nextTick } from 'vue'
+ import { resUrl } from '../core/res'
++import { orderStickerPacks, moveStickerPack, type StickerMove } from '../core/sticker-order'
+ import Icon from '../console/components/Icon.vue'
+ 
+ const ctx = inject<any>('ctx')
+ const st = ctx.stickers
+ const s = st.state
+-const favAsk = ref<any>(null)
+-let favMenuTimer: ReturnType<typeof setTimeout> | undefined
+ const renaming = ref<{ id: number; name: string } | null>(null)
++const packRenaming = ref<{ id: number; name: string } | null>(null)
++const packActionBusy = ref(false)
++type PanelMenu = { kind: 'favorites' | 'pack' | 'favorite-item' | 'pack-item' | 'browse-item'; item?: any; pack?: any; x: number; y: number }
++const menu = ref<PanelMenu | null>(null)
++const menuEl = ref<HTMLElement | null>(null)
++
++function closeMenu() { menu.value = null }
++function openMenu(kind: PanelMenu['kind'], ev: MouseEvent, item?: any, pack?: any) {
++  ev.preventDefault()
++  ev.stopPropagation()
++  const target = ev.currentTarget as HTMLElement
++  const rect = target.getBoundingClientRect()
++  // 键盘或“更多”按钮从按钮边缘展开；右键从鼠标位置展开。
++  const x = ev.type === 'contextmenu' && (ev.clientX || ev.clientY) ? ev.clientX : rect.right
++  const y = ev.type === 'contextmenu' && (ev.clientX || ev.clientY) ? ev.clientY : rect.bottom
++  menu.value = { kind, item, pack, x, y }
++  nextTick(() => {
++    if (!menu.value || !menuEl.value) return
++    const bounds = menuEl.value.getBoundingClientRect()
++    menu.value.x = Math.max(8, Math.min(x, window.innerWidth - bounds.width - 8))
++    menu.value.y = Math.max(8, Math.min(y, window.innerHeight - bounds.height - 8))
++    menuEl.value.querySelector<HTMLButtonElement>('button:not(:disabled)')?.focus({ preventScroll: true })
++  })
++}
++function navigateMenu(ev: KeyboardEvent) {
++  if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(ev.key) || !menuEl.value) return
++  const items = Array.from(menuEl.value.querySelectorAll<HTMLButtonElement>('button:not(:disabled)'))
++  if (!items.length) return
++  ev.preventDefault()
++  const current = items.indexOf(document.activeElement as HTMLButtonElement)
++  const next = ev.key === 'Home' ? 0 : ev.key === 'End' ? items.length - 1
++    : ev.key === 'ArrowDown' ? (current + 1) % items.length : (current <= 0 ? items.length - 1 : current - 1)
++  items[next].focus({ preventScroll: true })
++}
++function dismissMenuOnPointer(ev: PointerEvent) {
++  if (menu.value && !menuEl.value?.contains(ev.target as Node)) closeMenu()
++}
++function dismissMenuOnKey(ev: KeyboardEvent) {
++  if (ev.key === 'Escape' && menu.value) { ev.preventDefault(); ev.stopPropagation(); closeMenu() }
++}
++function dismissMenuOnScroll(ev: Event) {
++  if (menu.value && !menuEl.value?.contains(ev.target as Node)) closeMenu()
++}
+ 
+ /** 页签：收藏 / 各表情包组（之前面板只渲染收藏，表情包组识别不到 —— 补上） */
+ const normalizeTab = (t: any): 'fav' | number => t === 'fav' ? 'fav' : Number(t)
+ const tab = ref<'fav' | number>(normalizeTab(s.activeTab || 'fav'))
+ const packKeyword = ref('')
+-const filteredPacks = computed(() => (s.packs || []).filter((p: any) =>
++const accountId = computed(() => String(ctx.auth?.state?.user?.id || ''))
++const orderKey = computed(() => accountId.value ? `yh.stickers.packOrder.${accountId.value}` : '')
++const packOrder = ref<string[]>([])
++watch(orderKey, key => {
++  try {
++    const value = key ? JSON.parse(localStorage.getItem(key) || '[]') : []
++    packOrder.value = Array.isArray(value) ? [...new Set(value.map(String))] : []
++  } catch { packOrder.value = [] }
++}, { immediate: true })
++const orderedPacks = computed<any[]>(() => orderStickerPacks<any>(s.packs || [], packOrder.value))
++const filteredPacks = computed(() => orderedPacks.value.filter((p: any) =>
+   matches(packKeyword.value, p.name, p.id)))
++function isOwnPack(pack: any): boolean {
++  return !!accountId.value && !!pack?.createBy && String(pack.createBy) === accountId.value
++}
++function savePackOrder(ids: string[]) {
++  if (!orderKey.value) { ctx.ui?.toast?.('请登录后调整排序', 'warn'); return }
++  try { localStorage.setItem(orderKey.value, JSON.stringify(ids)); packOrder.value = ids }
++  catch { ctx.ui?.toast?.('无法保存排序，请检查本地存储', 'error') }
++}
++function movePack(pack: any, direction: StickerMove) {
++  savePackOrder(moveStickerPack(orderedPacks.value.map((p: any) => String(p.id)), String(pack.id), direction))
++}
++function packPosition(pack: any) { return orderedPacks.value.findIndex((p: any) => String(p.id) === String(pack?.id)) }
++function resetPackOrder() { savePackOrder([]) }
+ function pickTab(t: 'fav' | number) {
+   tab.value = normalizeTab(t)
+   s.activeTab = tab.value
+   s.keyword = ''
+-  closeFavMenu()
++  closeMenu()
+   renaming.value = null
++  packRenaming.value = null
+   st.closeBrowse()
+   s.locateSticker = null          // 手动切页签即取消圈线定位
+   if (t !== 'fav' && !s.packs.length) st.loadPacks?.()
+@@ -41,8 +107,9 @@
+     tab.value = t
+     s.keyword = ''
+     packKeyword.value = ''
+-    closeFavMenu()
++    closeMenu()
+     renaming.value = null
++    packRenaming.value = null
+     if (t !== 'fav' && !s.packs.length && !s.packsLoading) st.loadPacks?.()
+   }
+ })
+@@ -176,10 +243,29 @@
+   }
+ }
+ watch(() => s.panelOpen, (v) => {
+-  if (v) document.addEventListener('paste', onPaste)
+-  else { document.removeEventListener('paste', onPaste); closeFavMenu() }
++  if (v) {
++    document.addEventListener('paste', onPaste)
++    document.addEventListener('pointerdown', dismissMenuOnPointer, true)
++    document.addEventListener('keydown', dismissMenuOnKey, true)
++    window.addEventListener('scroll', dismissMenuOnScroll, true)
++    window.addEventListener('resize', closeMenu)
++  } else {
++    document.removeEventListener('paste', onPaste)
++    document.removeEventListener('pointerdown', dismissMenuOnPointer, true)
++    document.removeEventListener('keydown', dismissMenuOnKey, true)
++    window.removeEventListener('scroll', dismissMenuOnScroll, true)
++    window.removeEventListener('resize', closeMenu)
++    closeMenu()
++  }
+ }, { immediate: true })
+-onUnmounted(() => { document.removeEventListener('paste', onPaste); closeFavMenu() })
++onUnmounted(() => {
++  document.removeEventListener('paste', onPaste)
++  document.removeEventListener('pointerdown', dismissMenuOnPointer, true)
++  document.removeEventListener('keydown', dismissMenuOnKey, true)
++  window.removeEventListener('scroll', dismissMenuOnScroll, true)
++  window.removeEventListener('resize', closeMenu)
++  closeMenu()
++})
+ 
+ /** 表情显示名：完整文件名（含后缀），截断交给 CSS 省略号 */
+ function nameOf(e: any): string {
+@@ -188,29 +274,6 @@
+   return u.split('/').pop() || String(e.id)
+ }
+ 
+-/** 收藏项重命名：云端无 expression rename 接口，如实提示 */
+-async function renameFav(e: any) {
+-  favAsk.value = null
+-  ctx.ui?.toast?.('个人收藏不支持改名（云端无接口）；表情包内贴纸可改名', 'warn')
+-}
+-function closeFavMenu() {
+-  clearTimeout(favMenuTimer)
+-  document.removeEventListener('click', closeFavMenu)
+-  favAsk.value = null
+-}
+-function askFav(e: any, ev: MouseEvent) {
+-  closeFavMenu()
+-  favAsk.value = e
+-  // 点面板其它地方收起
+-  favMenuTimer = setTimeout(() => {
+-    document.addEventListener('click', closeFavMenu)
+-  }, 0)
+-  ev.stopPropagation()
+-}
+-async function doFav(e: any) {
+-  favAsk.value = null
+-  await favFromPack(e)
+-}
+ async function favFromPack(e: any) {
+   const u = e.urlOriginal || e.url || ''
+   if (!u) { ctx.ui?.toast?.('这张表情没有可用地址', 'warn'); return }
+@@ -242,6 +305,7 @@
+   } catch (e: any) { ctx.ui?.toast?.('收藏失败：' + e.message, 'error') }
+ }
+ async function renameSticker(e: any) {
++  if (!isOwnPack(curPack.value) || s.browsePack) return
+   renaming.value = { id: e.id, name: e.name || '' }
+ }
+ async function renameStickerOk() {
+@@ -254,13 +318,75 @@
+     await st.loadPacks()
+   } catch (err: any) { ctx.ui?.toast?.('重命名失败：' + err.message, 'error') }
+ }
+-async function removeSticker(e: any) {
+-  if (!(await ctx.ui?.confirm?.('删除贴纸', `从表情包中删除这张贴纸？`, { danger: true }))) return
++async function removeSticker(e: any, pack: any = curPack.value) {
++  if (!isOwnPack(pack) || !e?.id) return
++  if (!(await ctx.ui?.confirm?.('删除表情', `从「${pack.name}」中删除「${nameOf(e)}」？此操作会影响该合集。`, { danger: true }))) return
+   try {
+-    await ctx.api.stickerRemoveSticker(tab.value as number, e.id)
++    await ctx.api.stickerRemoveSticker(Number(pack.id), e.id)
+     ctx.ui?.toast?.('已删除', 'success')
+     await st.loadPacks()
+   } catch (err: any) { ctx.ui?.toast?.('删除失败：' + err.message, 'error') }
++}
++async function removeFavorite(e: any) {
++  if (!e?.id || !(await ctx.ui?.confirm?.('删除收藏表情', `从收藏中删除「${nameOf(e)}」？`, { danger: true }))) return
++  await st.remove(e)
++}
++async function removePack(pack: any, permanently: boolean) {
++  if (!pack?.id || packActionBusy.value || (permanently && !isOwnPack(pack))) return
++  const title = permanently ? '删除表情包' : '移出表情包'
++  const detail = permanently
++    ? `永久删除自己创建的「${pack.name}」？合集中的表情也会被删除，其他用户将无法使用。`
++    : `将「${pack.name}」从我的表情包中移出？合集本身不会被删除，以后可以重新收藏。`
++  if (!(await ctx.ui?.confirm?.(title, detail, { danger: true }))) return
++  packActionBusy.value = true
++  try {
++    if (permanently) await ctx.api.stickerDeletePack(Number(pack.id))
++    else await ctx.api.stickerRemovePack(Number(pack.id))
++    s.packs = s.packs.filter((p: any) => Number(p.id) !== Number(pack.id))
++    if (Number(tab.value) === Number(pack.id) && !s.browsePack) pickTab('fav')
++    ctx.ui?.toast?.(permanently ? '表情包已删除' : '表情包已移出', 'success')
++    await st.loadPacks()
++  } catch (err: any) { ctx.ui?.toast?.(`${title}失败：${err.message}`, 'error') }
++  finally { packActionBusy.value = false }
++}
++async function renamePackOk() {
++  const pending = packRenaming.value
++  const pack = pending && s.packs.find((p: any) => Number(p.id) === Number(pending.id))
++  if (!pending || !isOwnPack(pack) || !pending.name.trim() || packActionBusy.value) return
++  packActionBusy.value = true
++  try {
++    await ctx.api.stickerRenamePack(pending.id, pending.name.trim())
++    packRenaming.value = null
++    ctx.ui?.toast?.('表情包已重命名', 'success')
++    await st.loadPacks()
++  } catch (err: any) { ctx.ui?.toast?.('重命名失败：' + err.message, 'error') }
++  finally { packActionBusy.value = false }
++}
++function menuAction(action: string) {
++  const selected = menu.value
++  if (!selected) return
++  closeMenu()
++  const { item, pack, kind } = selected
++  if (action === 'refresh') { void st.load(); return }
++  if (action === 'reset-order') { resetPackOrder(); return }
++  if (action === 'move-top' || action === 'move-up' || action === 'move-down' || action === 'move-bottom') {
++    if (kind === 'pack' && pack) movePack(pack, action.slice(5) as StickerMove)
++    return
++  }
++  if (action === 'rename-pack' && kind === 'pack' && isOwnPack(pack)) {
++    packRenaming.value = { id: Number(pack.id), name: pack.name || '' }; return
++  }
++  if (action === 'remove-pack' && kind === 'pack') { void removePack(pack, false); return }
++  if (action === 'delete-pack' && kind === 'pack') { void removePack(pack, true); return }
++  if (action === 'favorite' && (kind === 'pack-item' || kind === 'browse-item')) { void favFromPack(item); return }
++  if (action === 'top-favorite' && kind === 'favorite-item') { void st.topping(item); return }
++  if (action === 'delete-favorite' && kind === 'favorite-item') { void removeFavorite(item); return }
++  if (action === 'rename-item' && kind === 'pack-item' && isOwnPack(pack)) {
++    // 如果菜单指向的合集已不在当前页，先切换再编辑。
++    if (Number(tab.value) !== Number(pack.id) || s.browsePack) pickTab(Number(pack.id))
++    void renameSticker(item); return
++  }
++  if (action === 'delete-item' && kind === 'pack-item') void removeSticker(item, pack)
+ }
+ /* ---- 快捷回复条（从输入区迁移至此；quickreply.enabled 默认 false，用户在设置或此处开启） ---- */
+ const qr = ctx.quickreply
+@@ -326,14 +452,16 @@
+             <option v-for="p in filteredPacks" :key="p.id" :value="p.id">{{ p.name }}（{{ p.items?.length || 0 }}）</option>
+           </select>
+           <button class="sp-pack sp-fav" :class="{ on: tab === 'fav' && !s.browsePack }"
+-                  :aria-current="tab === 'fav' && !s.browsePack ? 'true' : undefined" @click="pickTab('fav')">
++                  :aria-current="tab === 'fav' && !s.browsePack ? 'true' : undefined" @click="pickTab('fav')"
++                  @contextmenu.prevent="openMenu('favorites', $event)">
+             <Icon name="star" :size="16" /><span class="sp-pack-name">收藏</span><em>{{ list.length }}</em>
+           </button>
+           <div class="sp-pack-list" ref="packListEl">
+             <button v-for="p in filteredPacks" :key="p.id" class="sp-pack"
+                     :class="{ on: tab === Number(p.id) && !s.browsePack }"
+                     :aria-current="tab === Number(p.id) && !s.browsePack ? 'true' : undefined"
+-                    :title="`${p.name} · ${p.items?.length || 0} 张 · ID ${p.id}`" @click="pickTab(p.id)">
++                    :title="`${p.name} · ${p.items?.length || 0} 张 · ID ${p.id} · 右键管理`" @click="pickTab(p.id)"
++                    @contextmenu.prevent="openMenu('pack', $event, undefined, p)">
+               <span class="sp-pack-name">{{ p.name }}</span><em>{{ p.items?.length || 0 }}</em>
+             </button>
+             <p v-if="!filteredPacks.length" class="sp-nav-empty dim small">
+@@ -348,6 +476,13 @@
+               <strong :title="currentTitle">{{ currentTitle }}</strong>
+               <span class="dim small">{{ s.keyword.trim() ? `${visibleCount} / ${currentTotal}` : currentTotal }} 张{{ s.browsePack ? ' · 未收藏' : '' }}</span>
+             </div>
++            <div v-if="curPack && !s.browsePack && tab !== 'fav'" class="sp-pack-actions">
++              <button class="ghost small" :disabled="packActionBusy" :title="isOwnPack(curPack) ? '永久删除自己创建的合集' : '从我的表情包中移出'"
++                      @click="removePack(curPack, isOwnPack(curPack))">
++                <Icon name="trash" :size="14" /> {{ isOwnPack(curPack) ? '删除合集' : '移出合集' }}
++              </button>
++              <button class="ghost small" aria-label="管理当前表情包" aria-haspopup="menu" @click="openMenu('pack', $event, undefined, curPack)">···</button>
++            </div>
+             <input v-model="s.keyword" type="search" placeholder="搜索表情名称 / ID" aria-label="搜索当前表情" />
+           </div>
+           <div v-if="s.browsePack" class="sp-addrow">
+@@ -369,46 +504,48 @@
+             <button class="ghost tiny" @click="renameStickerOk">保存</button>
+             <button class="ghost tiny" @click="renaming = null">取消</button>
+           </div>
++          <div v-if="packRenaming" class="sp-addrow">
++            <input v-model="packRenaming.name" aria-label="表情包名称" @keyup.enter="renamePackOk" @keyup.esc="packRenaming = null" autofocus />
++            <button class="ghost tiny" :disabled="packActionBusy || !packRenaming.name.trim()" @click="renamePackOk">保存名称</button>
++            <button class="ghost tiny" @click="packRenaming = null">取消</button>
++          </div>
+ 
+           <div class="sp-body" ref="bodyEl" role="region" aria-label="表情列表" tabindex="0">
+             <div class="grid" :style="{ '--sticker-cell-size': cellSize }">
+               <template v-if="s.browsePack">
+-                <button v-for="e in browseItems" :key="e.id" class="cell"
++                <div v-for="e in browseItems" :key="e.id" class="cell"
+                         :class="{ located: Number(e.id) === Number(s.browsePack.locateId) }"
+-                        :title="nameOf(e) + ' · 点击发送'" @click="st.send(e)">
+-                  <img :src="src(e)" alt="" loading="lazy" decoding="async"
+-                       @error="(ev: any) => { ev.target.style.visibility = 'hidden' }" />
+-                  <span class="cell-name" :title="nameOf(e)">{{ nameOf(e) }}</span>
+-                </button>
++                        @contextmenu.prevent="openMenu('browse-item', $event, e)">
++                  <button class="cell-send" :title="nameOf(e) + ' · 点击发送 · 右键更多'" @click="st.send(e)">
++                    <img :src="src(e)" alt="" loading="lazy" decoding="async" @error="(ev: any) => { ev.target.style.visibility = 'hidden' }" />
++                    <span class="cell-name" :title="nameOf(e)">{{ nameOf(e) }}</span>
++                  </button>
++                  <div class="cell-actions"><button class="cell-action" :aria-label="`管理表情 ${nameOf(e)}`" aria-haspopup="menu" @click="openMenu('browse-item', $event, e)">···</button></div>
++                </div>
+               </template>
+               <template v-else-if="tab === 'fav'">
+-                <button v-for="e in visibleFavs" :key="e.id" class="cell" :class="{ located: isLocated(e) }" :title="nameOf(e) + ' · 点击发送 · 右键更多'"
+-                        @click="st.send(e)" @contextmenu.prevent="askFav(e, $event)">
+-                  <img :src="src(e)" alt="" loading="lazy" decoding="async"
+-                       @error="(ev: any) => { ev.target.style.visibility = 'hidden' }" />
+-                  <span class="cell-name" :title="nameOf(e)">{{ nameOf(e) }}</span>
+-                  <span class="top" @click.stop="st.topping(e)" title="置顶">↑</span>
+-                  <span class="del" @click.stop="st.remove(e)" title="从收藏删除">×</span>
+-                  <span v-if="favAsk?.id === e.id" class="fav-ask menu" @click.stop>
+-                    <button @click.stop="renameFav(e)">重命名</button>
+-                  </span>
+-                </button>
++                <div v-for="e in visibleFavs" :key="e.id" class="cell" :class="{ located: isLocated(e) }" @contextmenu.prevent="openMenu('favorite-item', $event, e)">
++                  <button class="cell-send" :title="nameOf(e) + ' · 点击发送 · 右键更多'" @click="st.send(e)">
++                    <img :src="src(e)" alt="" loading="lazy" decoding="async" @error="(ev: any) => { ev.target.style.visibility = 'hidden' }" />
++                    <span class="cell-name" :title="nameOf(e)">{{ nameOf(e) }}</span>
++                  </button>
++                  <div class="cell-actions">
++                    <button class="cell-action danger" :aria-label="`删除收藏表情 ${nameOf(e)}`" title="从收藏删除" @click="removeFavorite(e)"><Icon name="trash" :size="13" /></button>
++                    <button class="cell-action" :aria-label="`管理表情 ${nameOf(e)}`" aria-haspopup="menu" @click="openMenu('favorite-item', $event, e)">···</button>
++                  </div>
++                </div>
+               </template>
+               <template v-else>
+-                <button v-for="e in visiblePackItems" :key="e.id" class="cell" :class="{ located: isLocated(e) }" :title="nameOf(e) + ' · 点击发送 · 右键更多'"
+-                        @click="st.send(e)" @contextmenu.prevent="askFav(e, $event)">
+-                  <img :src="src(e)" alt="" loading="lazy" decoding="async"
+-                       @error="(ev: any) => { ev.target.style.visibility = 'hidden' }" />
+-                  <span class="cell-name" :title="nameOf(e)">{{ nameOf(e) }}</span>
+-                  <span v-if="favAsk?.id === e.id" class="fav-ask menu" @click.stop>
+-                    <button @click.stop="doFav(e)"><Icon name="star" :size="12" /> 收藏</button>
+-                    <button @click.stop="renameSticker(e)">重命名</button>
+-                  </span>
+-                  <span class="cell-acts">
+-                    <span class="ca" title="重命名" @click.stop="renameSticker(e)">✎</span>
+-                    <span class="ca del" title="从包中删除" @click.stop="removeSticker(e)">×</span>
+-                  </span>
+-                </button>
++                <div v-for="e in visiblePackItems" :key="e.id" class="cell" :class="{ located: isLocated(e) }" @contextmenu.prevent="openMenu('pack-item', $event, e, curPack)">
++                  <button class="cell-send" :title="nameOf(e) + ' · 点击发送 · 右键更多'" @click="st.send(e)">
++                    <img :src="src(e)" alt="" loading="lazy" decoding="async" @error="(ev: any) => { ev.target.style.visibility = 'hidden' }" />
++                    <span class="cell-name" :title="nameOf(e)">{{ nameOf(e) }}</span>
++                  </button>
++                  <div class="cell-actions">
++                    <button v-if="isOwnPack(curPack)" class="cell-action danger" :aria-label="`删除合集表情 ${nameOf(e)}`" title="从合集中删除" @click="removeSticker(e, curPack)"><Icon name="trash" :size="13" /></button>
++                    <button class="cell-action" :aria-label="`管理表情 ${nameOf(e)}`" aria-haspopup="menu" @click="openMenu('pack-item', $event, e, curPack)">···</button>
++                  </div>
++                </div>
+               </template>
+             </div>
+             <p v-if="!visibleCount" class="dim center">
+@@ -442,6 +579,39 @@
+       </div>
+     </div>
+   </div>
++  <Teleport to="body">
++    <div v-if="s.panelOpen && menu" ref="menuEl" class="sp-context" role="menu"
++         :style="{ left: `${menu.x}px`, top: `${menu.y}px` }" @contextmenu.prevent @keydown="navigateMenu">
++      <div class="sp-context-title">{{ menu.kind === 'favorites' ? '收藏' : menu.kind === 'pack' ? menu.pack?.name : nameOf(menu.item) }}</div>
++      <template v-if="menu.kind === 'favorites'">
++        <div class="sp-context-note">收藏栏不可删除</div>
++        <button role="menuitem" @click="menuAction('refresh')"><Icon name="refresh" :size="15" /> 刷新收藏</button>
++      </template>
++      <template v-else-if="menu.kind === 'pack'">
++        <div class="sp-context-note">调整顺序 · 仅在本机生效</div>
++        <button role="menuitem" :disabled="packPosition(menu.pack) <= 0" @click="menuAction('move-top')">移到顶部</button>
++        <button role="menuitem" :disabled="packPosition(menu.pack) <= 0" @click="menuAction('move-up')">上移一位</button>
++        <button role="menuitem" :disabled="packPosition(menu.pack) < 0 || packPosition(menu.pack) >= orderedPacks.length - 1" @click="menuAction('move-down')">下移一位</button>
++        <button role="menuitem" :disabled="packPosition(menu.pack) < 0 || packPosition(menu.pack) >= orderedPacks.length - 1" @click="menuAction('move-bottom')">移到末尾</button>
++        <button role="menuitem" :disabled="!packOrder.length" @click="menuAction('reset-order')">恢复默认顺序</button>
++        <div class="sp-context-divider"></div>
++        <button v-if="isOwnPack(menu.pack)" role="menuitem" @click="menuAction('rename-pack')"><Icon name="pencil" :size="15" /> 重命名合集</button>
++        <button role="menuitem" @click="menuAction('remove-pack')"><Icon name="folder" :size="15" /> 从我的表情包移出</button>
++        <button v-if="isOwnPack(menu.pack)" class="danger" role="menuitem" @click="menuAction('delete-pack')"><Icon name="trash" :size="15" /> 永久删除合集</button>
++      </template>
++      <template v-else-if="menu.kind === 'favorite-item'">
++        <button role="menuitem" @click="menuAction('top-favorite')"><Icon name="pinUp" :size="15" /> 置顶表情</button>
++        <button class="danger" role="menuitem" @click="menuAction('delete-favorite')"><Icon name="trash" :size="15" /> 删除这张收藏</button>
++      </template>
++      <template v-else>
++        <button role="menuitem" @click="menuAction('favorite')"><Icon name="star" :size="15" /> 收藏这张表情</button>
++        <template v-if="menu.kind === 'pack-item' && isOwnPack(menu.pack)">
++          <button role="menuitem" @click="menuAction('rename-item')"><Icon name="pencil" :size="15" /> 重命名表情</button>
++          <button class="danger" role="menuitem" @click="menuAction('delete-item')"><Icon name="trash" :size="15" /> 从合集中删除</button>
++        </template>
++      </template>
++    </div>
++  </Teleport>
+ </template>
+ 
+ <style scoped>
+@@ -470,6 +640,8 @@
+ .sp-content-head { flex: 0 0 auto; display: flex; align-items: center; gap: 12px; min-width: 0; padding: 10px 12px; border-bottom: 1px solid var(--line); }
+ .sp-current { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+ .sp-current strong { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; overflow-wrap: anywhere; line-height: 1.4; font-size: 13px; }
++.sp-pack-actions { display: flex; align-items: center; gap: 4px; flex: 0 0 auto; }
++.sp-pack-actions button { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
+ .sp-content-head input { flex: 0 1 190px; width: 36%; min-width: 100px; padding: 7px 9px; font-size: 12px; }
+ .sp-body { flex: 1 1 0; min-height: 0; min-width: 0; overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain; scrollbar-gutter: stable; padding: 12px; }
+ .sp-addrow { flex: 0 0 auto; display: flex; align-items: center; gap: 6px; padding: 6px 12px; }
+@@ -481,27 +653,30 @@
+ .sp-pagination { display: flex; align-items: center; justify-content: flex-end; gap: 10px; padding: 8px 12px; border-top: 1px solid var(--line); flex: 0 0 auto; font-size: 12px; }
+ .sp-pagination label { margin-right: auto; }
+ .sp-pagination select { padding: 3px; }
+-.cell { position: relative; display: flex; flex-direction: column; min-width: 0; aspect-ratio: 1; border: 1px solid var(--line); border-radius: 9px; background: var(--card2); padding: 4px; cursor: pointer; overflow: hidden; }
++.cell { position: relative; min-width: 0; aspect-ratio: 1; border: 1px solid var(--line); border-radius: 9px; background: var(--card2); overflow: hidden; }
+ .cell:hover { border-color: var(--acc); }
+-.cell img { flex: 1 1 0; min-height: 0; width: 100%; object-fit: contain; }
++.cell-send { display: flex; flex-direction: column; width: 100%; height: 100%; min-width: 0; padding: 4px; border: 0; border-radius: 0; background: transparent; cursor: pointer; }
++.cell-send img { flex: 1 1 0; min-height: 0; width: 100%; object-fit: contain; }
+ .cell-name { display: block; flex: 0 0 auto; width: 100%; font-size: 11px; color: var(--fg2); text-align: center; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 2px 2px 0; }
+-.cell-acts { position: absolute; top: 2px; left: 2px; display: none; gap: 3px; }
+-.cell:hover .cell-acts, .cell:focus-within .cell-acts { display: flex; }
+-.cell-acts .ca { width: 18px; height: 18px; border-radius: 50%; background: rgba(0, 0, 0, .6); color: #fff; font-size: 11px; line-height: 1; display: grid; place-items: center; cursor: pointer; }
+-.cell-acts .ca.del:hover { background: var(--err); }
+-.top, .del { position: absolute; top: 2px; font-size: 12px; color: var(--fg2); background: var(--card); border-radius: 50%; width: 18px; height: 18px; display: grid; place-items: center; line-height: 1; opacity: 0; }
+-.top { left: 4px; } .del { right: 4px; }
+-.cell:hover .top, .cell:hover .del, .cell:focus-within .top, .cell:focus-within .del { opacity: .9; }
+-.top:hover { color: var(--acc); } .del:hover { color: var(--err); }
++.cell-actions { position: absolute; top: 4px; right: 4px; display: flex; gap: 4px; opacity: 0; transition: opacity .15s ease; }
++.cell:hover .cell-actions, .cell:focus-within .cell-actions { opacity: 1; }
++.cell-action { width: 26px; height: 26px; padding: 0; border: 1px solid rgba(255,255,255,.2); border-radius: 7px; background: rgba(20,20,25,.85); color: white; display: grid; place-items: center; line-height: 1; cursor: pointer; }
++.cell-action:hover { background: #41404b; }
++.cell-action.danger:hover { background: #a82e37; }
+ /* 保留已有聊天表情定位的圈线高亮。 */
+ .cell.located { border-color: var(--acc); box-shadow: 0 0 0 2px var(--acc), 0 0 12px color-mix(in srgb, var(--acc) 60%, transparent); animation: cell-locate 1.6s ease-in-out infinite; }
+ @keyframes cell-locate { 0%, 100% { box-shadow: 0 0 0 2px var(--acc), 0 0 8px color-mix(in srgb, var(--acc) 45%, transparent); } 50% { box-shadow: 0 0 0 3px var(--acc), 0 0 16px color-mix(in srgb, var(--acc) 75%, transparent); } }
+ /* 快捷回复有自己的高度上限，不能再次挤占整个图片区。 */
+ .sp-qr { flex: 0 0 auto; max-height: min(96px, 16vh); max-height: min(96px, 16dvh); overflow-y: auto; overscroll-behavior: contain; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; padding: 8px 12px; border-top: 1px solid var(--line); background: var(--card2); }
+ .qr-chip { max-width: 100%; overflow-wrap: anywhere; }
+-.fav-ask.menu { position: absolute; inset: auto; left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: 6; display: flex; flex-direction: column; gap: 2px; padding: 4px; background: var(--card); border: 1px solid var(--line); border-radius: 9px; box-shadow: 0 6px 20px rgba(0, 0, 0, .45); min-width: 76px; }
+-.fav-ask.menu button { display: flex; align-items: center; gap: 5px; white-space: nowrap; padding: 5px 10px; border: none; border-radius: 6px; background: transparent; color: var(--fg); font-size: 12px; font-weight: 400; cursor: pointer; width: 100%; text-align: left; }
+-.fav-ask.menu button:hover { background: var(--card2); color: var(--acc); }
++.sp-context { position: fixed; z-index: 90; width: max-content; min-width: 190px; max-width: min(280px, calc(100vw - 16px)); max-height: calc(100vh - 16px); overflow-y: auto; display: flex; flex-direction: column; gap: 2px; padding: 6px; background: var(--card); color: var(--fg); border: 1px solid var(--line); border-radius: 11px; box-shadow: 0 10px 30px rgba(0,0,0,.35); }
++.sp-context-title { overflow: hidden; padding: 6px 9px 4px; font-size: 12px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
++.sp-context-note { padding: 3px 9px 6px; font-size: 11px; color: var(--fg2); }
++.sp-context-divider { height: 1px; margin: 3px 5px; background: var(--line); }
++.sp-context button { width: 100%; display: flex; align-items: center; gap: 8px; padding: 7px 9px; border: 0; border-radius: 7px; background: transparent; color: var(--fg); font-size: 12px; font-weight: 400; text-align: left; cursor: pointer; }
++.sp-context button:hover, .sp-context button:focus-visible { background: var(--card2); outline: none; }
++.sp-context button:disabled { opacity: .4; cursor: default; }
++.sp-context button.danger { color: var(--err); }
+ .file { display: inline-flex; align-items: center; cursor: pointer; padding: 3px 10px; font-size: 12px; border-radius: 7px; border: 1px solid var(--line); }
+ .file.disabled { opacity: .5; cursor: not-allowed; }
+ .center { text-align: center; padding: 22px 0; }
+@@ -514,8 +689,10 @@
+   .sp-mobile-select { display: block; grid-column: 1; grid-row: 1; width: 100%; min-width: 0; font-size: 12px; padding: 7px; }
+   .sp-pack-search { grid-column: 2; grid-row: 1; }
+   .sp-content-head { gap: 8px; padding: 8px; }
+-  .sp-content-head input { flex-basis: 130px; }
++  .sp-content-head { flex-wrap: wrap; }
++  .sp-content-head input { order: 3; flex: 1 1 100%; width: 100%; }
+   .sp-body { padding: 10px; }
+ }
++@media (hover: none) { .cell-actions { opacity: 1; } }
+ @media (prefers-reduced-motion: reduce) { .cell.located { animation: none; } }
+ </style>
+diff --git a/src/components/ChatView.vue b/src/components/ChatView.vue
+--- a/src/components/ChatView.vue
++++ b/src/components/ChatView.vue
+@@ -115,7 +115,16 @@
+   nextTick(() => seek())
+ }
+ 
+-function toBottom() { nextTick(() => { if (box.value && !chat.state.jumpedAway) box.value.scrollTop = box.value.scrollHeight }) }
++function toBottom() {
++  const current = chat.state.current
++  nextTick(() => {
++    if (box.value && chat.state.current === current && !chat.state.jumpedAway) {
++      box.value.scrollTop = box.value.scrollHeight
++      chat.setAtBottom?.(true)
++      showJump.value = false
++    }
++  })
++}
+ 
+ /** 搜索跳转历史后一键回最新：重载最新消息并滚到底 */
+ async function backLatest() {
+@@ -132,6 +141,8 @@
+ function onScroll() {
+   const el = box.value
+   if (!el) return
++  // 打开会话时 DOM 会先显示缓存/加载占位；其滚动事件不能触发历史分页或覆盖贴底意图。
++  if (chat.state.loadingMsgs && !chat.state.jumpedAway) return
+   const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 40
+   ctx.chat?.setAtBottom?.(atBottom)
+   showJump.value = !atBottom
+diff --git a/src/plugins/chat.ts b/src/plugins/chat.ts
+--- a/src/plugins/chat.ts
++++ b/src/plugins/chat.ts
+@@ -660,7 +660,9 @@
+           // 翻历史时保留阅读窗口，不能因后台轮询删掉最上方的旧消息。
+           if (atBottom() && state.messages.length > maxMessages) state.messages.splice(0, state.messages.length - maxMessages)
+           // pending 只在对应服务端 ID 确认后清除，避免新消息把未对账的发送吞掉。
+-          if (atBottom()) ctx.emit('chat/scroll-bottom')
++          // 主动打开/刷新会话时，即便旧 DOM 的滚动事件刚把贴底状态改成 false，也要展示最新消息。
++          // 定位历史消息可能在请求期间开始；此时保留定位，不抢回底部。
++          if ((atBottom() || !silent) && !state.jumpedAway) ctx.emit('chat/scroll-bottom')
+         } else if (!silent) {
+           ctx.emit('chat/scroll-bottom')
+         }
+diff --git a/scripts/test-chat-regressions.mjs b/scripts/test-chat-regressions.mjs
+--- a/scripts/test-chat-regressions.mjs
++++ b/scripts/test-chat-regressions.mjs
+@@ -53,7 +53,7 @@
+   removeItem(key) { this.data.delete(key) }
+ }
+ globalThis.localStorage = new MemoryStorage()
+-globalThis.window = Object.assign(new EventTarget(), { innerHeight: 800 })
++globalThis.window = Object.assign(new EventTarget(), { innerHeight: 800, innerWidth: 1280 })
+ globalThis.document = Object.assign(new EventTarget(), { hidden: false, visibilityState: 'visible', documentElement: { dataset: {} } })
+ const deferred = () => {
+   let resolve, reject
+@@ -113,15 +113,24 @@
+   const calls = []
+   const state = reactive({ panelOpen: true, list: [], packs: [], keyword: '', activeTab: 'fav',
+     loading: false, packsLoading: false, locateSticker: null, browsePack: null, ...initial })
+-  const ctx = { stickers: { state, load: async () => { calls.push(['load']) },
++  const ctx = { auth: { state: reactive({ user: { id: 'me' } }) }, confirmation: true,
++    api: {
++      stickerDeletePack: async id => { calls.push(['deletePack', id]) },
++      stickerRemovePack: async id => { calls.push(['removePack', id]) },
++      stickerRemoveSticker: async (packId, id) => { calls.push(['removeSticker', packId, id]) },
++      stickerRenamePack: async (id, name) => { calls.push(['renamePack', id, name]) },
++    },
++    stickers: { state, load: async () => { calls.push(['load']) },
+     loadPacks: async () => { calls.push(['loadPacks']) },
+     closeBrowse: () => { state.browsePack = null },
+     addFileToTarget: (file, tab) => { calls.push(['upload', file, tab]) },
+-  }, ui: { toast: (...args) => calls.push(['toast', ...args]) } }
++    remove: async item => { calls.push(['removeFavorite', item.id]); state.list = state.list.filter(x => x.id !== item.id) },
++    topping: async item => { calls.push(['topFavorite', item.id]) },
++  }, ui: { toast: (...args) => calls.push(['toast', ...args]), confirm: async (...args) => { calls.push(['confirm', ...args]); return ctx.confirmation } } }
+   const app = renderer.createApp({ ...StickerPanel, render: () => null })
+   app.provide('ctx', ctx)
+   app.mount({})
+-  return { state, calls, setup: app._instance.setupState, unmount: () => app.unmount() }
++  return { ctx, state, calls, setup: app._instance.setupState, unmount: () => app.unmount() }
+ }
+ const key = (changes = {}) => ({ key: 'Enter', isComposing: false, keyCode: 13,
+   shiftKey: false, ctrlKey: false, metaKey: false, preventDefault() {}, ...changes })
+@@ -407,12 +416,12 @@
+   await test('an initially closed sticker panel mounts safely and cleans pending context-menu listeners on close', async () => {
+     const p = mountStickerPanel({ panelOpen: false, packs: [{ id: 2, items: [] }] })
+     try {
+-      assert.equal(p.setup.favAsk, null)
++      assert.equal(p.setup.menu, null)
+       p.state.panelOpen = true; await turn()
+-      p.setup.askFav({ id: 9 }, { stopPropagation() {} })
+-      assert.equal(p.setup.favAsk.id, 9)
++      p.setup.openMenu('favorite-item', { type: 'contextmenu', clientX: 10, clientY: 10, preventDefault() {}, stopPropagation() {}, currentTarget: { getBoundingClientRect: () => ({ right: 10, bottom: 10 }) } }, { id: 9 })
++      assert.equal(p.setup.menu.item.id, 9)
+       p.state.panelOpen = false; await turn()
+-      assert.equal(p.setup.favAsk, null)
++      assert.equal(p.setup.menu, null)
+     } finally { p.unmount() }
+   })
+   await test('large sticker collections keep pack and item searches independent and normalize string pack IDs', async () => {
+@@ -436,12 +445,12 @@
+     const p = mountStickerPanel({ packs: [{ id: '2', name: '合集二', items: [{ id: 9, url: '9.png' }] }],
+       browsePack: { id: 99, name: '其他合集', items: [], locateId: 3 } })
+     try {
+-      p.state.keyword = 'old'; p.setup.favAsk = { id: 1 }; p.setup.renaming = { id: 1, name: 'old' }
++      p.state.keyword = 'old'; p.setup.menu = { kind: 'favorite-item', item: { id: 1 }, x: 10, y: 10 }; p.setup.renaming = { id: 1, name: 'old' }
+       p.setup.pickTab('2'); await turn()
+       assert.equal(p.state.activeTab, 2)
+       assert.equal(p.state.browsePack, null)
+       assert.equal(p.state.keyword, '')
+-      assert.equal(p.setup.favAsk, null)
++      assert.equal(p.setup.menu, null)
+       assert.equal(p.setup.renaming, null)
+       assert.equal(p.setup.visiblePackItems[0].id, 9)
+     } finally { p.unmount() }
+@@ -497,6 +506,103 @@
+       p.state.panelOpen = true; await turn()
+     } finally { p.unmount() }
+     assert.equal(paste(), false)
++  })
++  await test('pack ordering survives refresh and is isolated by account, while new packs remain visible', async () => {
++    localStorage = new MemoryStorage()
++    const packs = [{ id: 1, name: '一', items: [] }, { id: 2, name: '二', items: [] }, { id: 3, name: '三', items: [] }]
++    const p = mountStickerPanel({ packs })
++    try {
++      p.setup.movePack(packs[2], 'top'); await turn()
++      assert.deepEqual(p.setup.orderedPacks.map(x => x.id), [3, 1, 2])
++      assert.deepEqual(JSON.parse(localStorage.getItem('yh.stickers.packOrder.me')), ['3', '1', '2'])
++      p.state.packs = [{ id: 1 }, { id: 2 }, { id: 3 }, { id: 4 }]
++      assert.deepEqual(p.setup.orderedPacks.map(x => x.id), [3, 1, 2, 4])
++      p.ctx.auth.state.user = { id: 'other' }; await turn()
++      assert.deepEqual(p.setup.orderedPacks.map(x => x.id), [1, 2, 3, 4])
++      p.ctx.auth.state.user = { id: 'me' }; await turn()
++      assert.deepEqual(p.setup.orderedPacks.map(x => x.id), [3, 1, 2, 4])
++      p.setup.resetPackOrder()
++      assert.deepEqual(p.setup.orderedPacks.map(x => x.id), [1, 2, 3, 4])
++    } finally { p.unmount() }
++  })
++  await test('sticker removal requires confirmation and only owners can alter pack contents or delete packs', async () => {
++    const own = { id: 1, name: '我创建的', createBy: 'me', items: [{ id: 11, name: '自己的', url: '11.png' }] }
++    const other = { id: 2, name: '别人创建的', createBy: 'other', items: [{ id: 22, url: '22.png' }] }
++    const favorite = { id: 5, url: 'fav.png' }
++    const p = mountStickerPanel({ packs: [own, other], list: [favorite], activeTab: 1 })
++    try {
++      p.ctx.confirmation = false
++      await p.setup.removeFavorite(favorite)
++      await p.setup.removePack(own, true)
++      assert.equal(p.state.list.length, 1)
++      assert.equal(p.calls.some(c => c[0] === 'deletePack' || c[0] === 'removeFavorite'), false)
++      p.ctx.confirmation = true
++      await p.setup.removeSticker(other.items[0], other)
++      await p.setup.removePack(other, true)
++      assert.equal(p.calls.some(c => c[0] === 'deletePack' || c[0] === 'removeSticker'), false)
++      await p.setup.removeFavorite(favorite)
++      assert.equal(p.state.list.length, 0)
++      assert.equal(p.state.packs.length, 2)
++      await p.setup.removeSticker(own.items[0], own)
++      assert.ok(p.calls.some(c => c[0] === 'removeSticker' && c[1] === 1 && c[2] === 11))
++      await p.setup.removePack(own, true)
++      assert.equal(p.state.activeTab, 'fav')
++      assert.deepEqual(p.state.packs.map(x => x.id), [2])
++      assert.ok(p.calls.some(c => c[0] === 'deletePack' && c[1] === 1))
++      await p.setup.removePack(other, false)
++      assert.ok(p.calls.some(c => c[0] === 'removePack' && c[1] === 2))
++      assert.equal(p.state.activeTab, 'fav')
++    } finally { p.unmount() }
++  })
++  await test('a failed cloud pack removal keeps the selected pack and reports the error', async () => {
++    const pack = { id: 2, name: '网络失败合集', createBy: 'other', items: [] }
++    const p = mountStickerPanel({ packs: [pack], activeTab: 2 })
++    try {
++      p.ctx.api.stickerRemovePack = async () => { throw new Error('网络不可用') }
++      await p.setup.removePack(pack, false)
++      assert.equal(p.state.activeTab, 2)
++      assert.equal(p.state.packs.length, 1)
++      assert.ok(p.calls.some(c => c[0] === 'toast' && String(c[1]).includes('网络不可用')))
++    } finally { p.unmount() }
++  })
++  await test('opening a conversation reaches the newest messages even if stale scrolling changes the bottom flag', async () => {
++    const pending = deferred(); let history = 0
++    const h = harness({ messages: async id => id === 'b' ? pending.promise : [message('old')],
++      messagesBefore: async () => { history++; return [] } })
++    const app = renderer.createApp({ ...ChatView, render: () => null })
++    app.provide('ctx', h.ctx); app.mount({})
++    const p = app._instance.setupState
++    try {
++      await h.chat.open(channel('a')); await turn()
++      const el = { scrollTop: 0, scrollHeight: 600, clientHeight: 200 }
++      p.box = el
++      const opening = h.chat.open(channel('b')); await turn()
++      p.onScroll()
++      assert.equal(history, 0)
++      h.chat.setAtBottom(false) // e.g. an old DOM scroll event races the latest-page response
++      pending.resolve([message('newest', 500)])
++      await opening; await turn()
++      assert.equal(el.scrollTop, 600)
++      assert.deepEqual(h.chat.state.messages.map(x => x.id), ['newest'])
++      assert.equal(p.showJump, false)
++    } finally { app.unmount(); h.dispose() }
++  })
++  await test('an explicit history location started during loading is never forced back to the bottom', async () => {
++    const pending = deferred()
++    const h = harness({ messages: async () => pending.promise })
++    const app = renderer.createApp({ ...ChatView, render: () => null })
++    app.provide('ctx', h.ctx); app.mount({})
++    const p = app._instance.setupState
++    try {
++      const opening = h.chat.open(channel('a')); await turn()
++      const el = { scrollTop: 22, scrollHeight: 600, clientHeight: 200 }
++      p.box = el
++      h.chat.state.jumpedAway = true
++      h.chat.setAtBottom(false)
++      pending.resolve([message('latest', 500)])
++      await opening; await turn()
++      assert.equal(el.scrollTop, 22)
++    } finally { app.unmount(); h.dispose() }
+   })
+   await test('slow old conversation cannot overwrite a newly opened conversation', async () => {
+     const slow = deferred()
+diff --git a/scripts/test-ui-chat-scroll.mjs b/scripts/test-ui-chat-scroll.mjs
+new file mode 100644
+--- /dev/null
++++ b/scripts/test-ui-chat-scroll.mjs
+@@ -0,0 +1,49 @@
++// Exercises the real chat list and scrolling DOM with delayed, offline messages.
++import assert from 'node:assert/strict'
++import { createServer } from 'vite'
++import vue from '@vitejs/plugin-vue'
++const { chromium } = await import(process.env.PLAYWRIGHT_MODULE || 'playwright')
++const server = await createServer({ root: process.cwd(), configFile: false, plugins: [vue()], server: { host: '127.0.0.1', port: 0 }, logLevel: 'error' })
++await server.listen()
++const browser = await chromium.launch({ headless: true, executablePath: process.env.CHROMIUM_EXECUTABLE || undefined, args: ['--no-sandbox', '--disable-dev-shm-usage', '--disable-gpu'] })
++const page = await browser.newPage({ viewport: { width: 1200, height: 750 } })
++const errors = []
++page.on('pageerror', error => errors.push(error.message))
++try {
++  await page.goto(`http://127.0.0.1:${server.httpServer.address().port}/scripts/ui-fixture/index.html`)
++  await page.waitForFunction(() => !!window.__qa)
++  await page.evaluate(() => {
++    const make = (id, n = 40) => Array.from({ length: n }, (_, i) => ({ id: `${id}-${i}`, ts: Date.now() + i,
++      senderId: 'other', sender: '虚拟用户', type: 1, content: { text: `消息 ${id} ${i}` } }))
++    window.__qa.makeMessages = make
++    window.__qa.ctx.api.messages = id => id === 'other'
++      ? new Promise(resolve => { window.__qa.resolveLatest = () => resolve(make(id)) })
++      : Promise.resolve(make(id))
++  })
++  await page.locator('.convs .cname').filter({ hasText: '云湖群' }).click()
++  await page.locator('[data-mid="normal-39"]').waitFor()
++  await page.waitForFunction(() => { const e = document.querySelector('.messages'); return e.scrollHeight - e.clientHeight - e.scrollTop < 3 })
++  await page.locator('.convs .cname').filter({ hasText: '其他会话' }).click()
++  await page.waitForFunction(() => !!window.__qa.resolveLatest)
++  await page.evaluate(() => {
++    // Recreate the old DOM's late scroll event while the new request is pending.
++    const box = document.querySelector('.messages'); box.scrollTop = 0; box.dispatchEvent(new Event('scroll'))
++    window.__qa.ctx.chat.setAtBottom(false)
++    window.__qa.resolveLatest()
++  })
++  await page.locator('[data-mid="other-39"]').waitFor()
++  await page.waitForFunction(() => { const e = document.querySelector('.messages'); return e.scrollHeight - e.clientHeight - e.scrollTop < 3 })
++  const current = await page.evaluate(() => window.__qa.ctx.chat.state.current.id)
++  assert.equal(current, 'other')
++  await page.evaluate(() => {
++    const chat = window.__qa.ctx.chat
++    chat.state.hasMore = false
++    const box = document.querySelector('.messages'); box.scrollTop = 0; box.dispatchEvent(new Event('scroll'))
++    window.__qa.ctx.api.messages = async id => window.__qa.makeMessages(id, 41)
++  })
++  await page.evaluate(() => window.__qa.ctx.chat.loadMessages(true))
++  await page.locator('[data-mid="other-40"]').waitFor()
++  assert.ok(await page.locator('.messages').evaluate(e => e.scrollTop < 10))
++  assert.deepEqual(errors, [])
++  console.log('PASS: clicking a conversation scrolls to its newest loaded message; polling preserves a manually opened history position')
++} finally { await browser.close(); await server.close() }
+diff --git a/scripts/test-ui-sticker-panel.mjs b/scripts/test-ui-sticker-panel.mjs
+new file mode 100644
+--- /dev/null
++++ b/scripts/test-ui-sticker-panel.mjs
+@@ -0,0 +1,57 @@
++// Browser regression: install Playwright separately or set PLAYWRIGHT_MODULE and CHROMIUM_EXECUTABLE.
++import assert from 'node:assert/strict'
++import { createServer } from 'vite'
++import vue from '@vitejs/plugin-vue'
++const { chromium } = await import(process.env.PLAYWRIGHT_MODULE || 'playwright')
++const server = await createServer({ root: process.cwd(), configFile: false, plugins: [vue()], server: { host: '127.0.0.1', port: 0 }, logLevel: 'error' })
++await server.listen()
++const browser = await chromium.launch({ headless: true, executablePath: process.env.CHROMIUM_EXECUTABLE || undefined, args: ['--no-sandbox', '--disable-dev-shm-usage', '--disable-gpu'] })
++const page = await browser.newPage({ viewport: { width: 1100, height: 760 } })
++const errors = []
++page.on('pageerror', error => errors.push(error.message))
++try {
++  const url = `http://127.0.0.1:${server.httpServer.address().port}/scripts/ui-fixture/sticker-panel.html`
++  await page.goto(url)
++  await page.waitForFunction(() => !!window.__stickerQA)
++  const menu = page.getByRole('menu')
++  await page.locator('.sp-fav').click({ button: 'right' })
++  assert.equal(await menu.getByText('收藏栏不可删除').count(), 1)
++  assert.equal(await menu.getByRole('menuitem', { name: /删除|移出/ }).count(), 0)
++  await page.locator('.sp-fav').click()
++  await page.locator('.cell').first().click({ button: 'right' })
++  assert.equal(await menu.getByRole('menuitem', { name: '删除这张收藏' }).count(), 1)
++  assert.match(await page.evaluate(() => document.activeElement.textContent), /置顶/)
++  await page.keyboard.press('ArrowDown')
++  assert.match(await page.evaluate(() => document.activeElement.textContent), /删除/)
++  await menu.getByRole('menuitem', { name: '删除这张收藏' }).click()
++  assert.equal(await page.locator('.cell').count(), 1)
++  assert.deepEqual(await page.evaluate(() => window.__stickerQA.calls.filter(x => x[0] === 'removeFavorite').map(x => x[1])), [101])
++  await page.locator('.sp-pack-list .sp-pack').last().click({ button: 'right' })
++  const bounds = await menu.boundingBox()
++  assert.ok(bounds.x >= 0 && bounds.y >= 0 && bounds.x + bounds.width <= 1100 && bounds.y + bounds.height <= 760)
++  await menu.getByRole('menuitem', { name: '移到顶部' }).click()
++  assert.deepEqual(await page.locator('.sp-pack-list .sp-pack-name').allTextContents(), ['其他合集', '我创建的'])
++  await page.reload()
++  assert.deepEqual(await page.locator('.sp-pack-list .sp-pack-name').allTextContents(), ['其他合集', '我创建的'])
++  await page.getByRole('button', { name: /其他合集/ }).click()
++  assert.equal(await page.getByRole('button', { name: '移出合集' }).count(), 1)
++  await page.locator('.cell').first().click({ button: 'right' })
++  assert.equal(await menu.getByRole('menuitem', { name: /删除|重命名/ }).count(), 0)
++  await page.keyboard.press('Escape')
++  await page.getByRole('button', { name: /我创建的/ }).click()
++  assert.equal(await page.getByRole('button', { name: '删除合集', exact: true }).count(), 1)
++  await page.locator('.cell').first().click({ button: 'right' })
++  assert.equal(await menu.getByRole('menuitem', { name: '从合集中删除' }).count(), 1)
++  if (process.env.UI_QA_SCREENSHOTS) await page.screenshot({ path: process.env.UI_QA_SCREENSHOTS + '/sticker-panel-dark.png' })
++  await menu.getByRole('menuitem', { name: '从合集中删除' }).click()
++  assert.deepEqual(await page.evaluate(() => window.__stickerQA.calls.filter(x => x[0] === 'removeSticker').map(x => x.slice(1))), [[1, 11]])
++  await page.setViewportSize({ width: 420, height: 760 })
++  await page.evaluate(() => { document.documentElement.dataset.theme = 'light' })
++  await page.getByRole('button', { name: '管理当前表情包' }).click()
++  assert.equal(await menu.getByRole('menuitem', { name: '永久删除合集' }).count(), 1)
++  const mobile = await menu.boundingBox()
++  assert.ok(mobile.x >= 0 && mobile.x + mobile.width <= 420 && mobile.y + mobile.height <= 760)
++  if (process.env.UI_QA_SCREENSHOTS) await page.screenshot({ path: process.env.UI_QA_SCREENSHOTS + '/sticker-panel-mobile.png' })
++  assert.deepEqual(errors, [])
++  console.log('PASS: actual sticker menus, deletion and permissions, account-local ordering, viewport bounds, dark and mobile light layouts')
++} finally { await browser.close(); await server.close() }
+diff --git a/scripts/ui-fixture/sticker-panel.html b/scripts/ui-fixture/sticker-panel.html
+new file mode 100644
+--- /dev/null
++++ b/scripts/ui-fixture/sticker-panel.html
+@@ -0,0 +1 @@
++<!doctype html><html lang="zh-CN" data-theme="dark" data-platform="web"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>表情面板回归</title></head><body><div id="app"></div><script type="module" src="./sticker-panel.ts"></script></body></html>
+diff --git a/scripts/ui-fixture/sticker-panel.ts b/scripts/ui-fixture/sticker-panel.ts
+new file mode 100644
+--- /dev/null
++++ b/scripts/ui-fixture/sticker-panel.ts
+@@ -0,0 +1,29 @@
++import { createApp, reactive } from 'vue'
++import StickerPanel from '../../src/components/StickerPanel.vue'
++import '../../src/styles.css'
++import '../../src/styles-m3.css'
++
++const image = 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="80" height="80"%3E%3Crect width="80" height="80" fill="%23677cb5"/%3E%3C/svg%3E'
++const state = reactive({ panelOpen: true, list: [{ id: 101, name: '收藏一', url: image }, { id: 102, name: '收藏二', url: image }],
++  packs: [{ id: 1, name: '我创建的', createBy: 'me', items: [{ id: 11, name: '我的表情', url: image }] },
++    { id: 2, name: '其他合集', createBy: 'other', items: [{ id: 21, name: '别人的表情', url: image }] }],
++  keyword: '', activeTab: 'fav' as string | number, locateSticker: null as any, browsePack: null as any, loading: false, packsLoading: false })
++const calls: any[] = []
++const ctx: any = {
++  auth: { state: reactive({ user: { id: 'me' } }) }, confirmResult: true,
++  api: {
++    stickerRemovePack: async (id: number) => calls.push(['removePack', id]),
++    stickerDeletePack: async (id: number) => calls.push(['deletePack', id]),
++    stickerRemoveSticker: async (packId: number, id: number) => { calls.push(['removeSticker', packId, id]); const pack = state.packs.find(p => p.id === packId); if (pack) pack.items = pack.items.filter(i => i.id !== id) },
++    stickerRenamePack: async (id: number, name: string) => { const pack = state.packs.find(p => p.id === id); if (pack) pack.name = name },
++    stickerRenameSticker: async () => {},
++  },
++  ui: { toast: (...args: any[]) => calls.push(['toast', ...args]), confirm: async (...args: any[]) => { calls.push(['confirm', ...args]); return ctx.confirmResult } },
++  stickers: { state, suggestPack: { id: 0 }, load: async () => {}, loadPacks: async () => {}, closeBrowse: () => { state.browsePack = null },
++    send: (item: any) => calls.push(['send', item.id]), close: () => { state.panelOpen = false },
++    topping: (item: any) => calls.push(['topFavorite', item.id]),
++    remove: async (item: any) => { calls.push(['removeFavorite', item.id]); state.list = state.list.filter(i => i.id !== item.id) },
++    addFromUrl: (url: string) => calls.push(['addFromUrl', url]), addFileToTarget: () => {}, },
++}
++createApp(StickerPanel).provide('ctx', ctx).mount('#app')
++;(window as any).__stickerQA = { ctx, state, calls }
+diff --git a/RELEASE_NOTES_1.0.11.md b/RELEASE_NOTES_1.0.11.md
+new file mode 100644
+--- /dev/null
++++ b/RELEASE_NOTES_1.0.11.md
+@@ -0,0 +1,26 @@
++# YH LaoDa 1.0.11
++
++基于 1.0.10 完整源码，保留原有消息、表情发送、搜索、分页和聊天定位逻辑。
++
++## 表情包面板
++
++- 右键表情包分类或点击当前合集的“···”打开管理菜单；可将合集移到顶部、上移、下移、移到末尾，或恢复默认顺序。排序保存在本机，并按账号隔离，不会改动其他设备的顺序。
++- 当前合集提供直接操作按钮。其他人创建的合集可以从我的表情包中移出；自己创建的合集还可以重命名或永久删除。两种删除类操作均有确认提示。
++- 收藏栏始终保留，不提供删除整个收藏栏的操作。收藏中的单张表情可以右键置顶或删除，也可使用格子上的删除按钮。
++- 合集中的单张表情可以收藏；自己创建的合集中的表情还可重命名或删除。浏览他人未收藏的合集时不会提供修改其内容的操作。
++- 菜单不会受表情格或面板边缘裁切，支持点击空白处、滚动或按 Esc 关闭；删除失败时保留原有列表并显示错误。
++
++## 会话跳转
++
++- 修复打开会话时旧列表的滚动事件与最新消息加载竞争，可能导致停在旧消息位置的问题。
++- 主动打开或刷新会话会回到最新消息；主动翻阅历史时后台轮询不会把位置拉回底部，引用和通知跳转也不会被加载中的自动滚动覆盖。
++
++## 验证
++
++- `npm run typecheck`、`npm run build` 通过；服务端 sidecar 已从源码重新构建。
++- `npm run test:chat`：79 项通过，包含排序隔离、删除确认、权限、失败保留、会话切换时序及通知定位回归。
++- `npm run test:features`、`npm run test:settings`、`npm run test:recall` 通过。
++- `npm run test:ui`、`npm run test:ui-stickers` 和 `npm run test:ui-scroll` 已在 Chromium 中以离线数据验证实际页面交互；后两项需要 Playwright 和 Chromium，可通过 `PLAYWRIGHT_MODULE`、`CHROMIUM_EXECUTABLE` 指定。
++- 云湖账号上的真实删除、排序及消息操作需在用户环境确认；Windows 安装包为本机交叉编译，未在 Windows 实机运行验收。
++
++源码包不包含构建缓存、`node_modules`、Windows 构建目标目录或 Node 运行时二进制。Windows 打包时需按项目工作流准备 `src-tauri/resources/node.exe`、WebView2 引导程序和工具链。

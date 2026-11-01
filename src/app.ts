@@ -45,6 +45,7 @@ import { communityPlugin } from './plugins/community'
 import { stickersPlugin } from './plugins/stickers'
 import { commandsPlugin } from './plugins/commands'
 import { lockPlugin } from './plugins/lock'
+import { userBotPlugin } from './plugins/userbot'
 
 enableMobileDebug()  // 安卓内置调试浮层（仅 native 环境生效，最早捕获初始化错误）
 
@@ -89,6 +90,7 @@ export const registry: RegistryItem[] = [
   { key: 'session', plugin: sessionEventPlugin, desc: 'session/event 服务 · ctx.session() 与统一事件层', provide: ['session', 'event'], deps: ['chat', 'bots', 'satori'] },
   { key: 'charbg', plugin: { name: 'charbg', inject: ['api', 'chat', 'ui'], apply: charbgPlugin }, desc: '聊天背景 · /v1/chat-background（会话/全局）', provide: ['charbg'], deps: ['api', 'chat', 'ui', 'console'] },
   { key: 'lock', plugin: lockPlugin, desc: '锁屏 · 手机端弹窗解锁（PIN 兜底，无摄像头方案）', provide: ['lock'], deps: ['storage', 'auth', 'ui', 'console'] },
+  { key: 'userbot', plugin: userBotPlugin, desc: '用户 Bot · 会话规则、人设和 AI 服务', provide: ['userbot'], deps: ['auth', 'chat', 'api', 'storage', 'console', 'ui'] },
 ]
 
 /** 服务实例变化时 +1，组件靠它建立响应式依赖（插件热插拔后 UI 才会跟着刷新） */

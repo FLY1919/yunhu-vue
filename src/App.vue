@@ -14,7 +14,8 @@ const ctx = inject<any>('ctx')
 </script>
 
 <template>
-  <div v-if="!ctx.auth || ctx.auth.state.status !== 'ready'" class="login-wrap">
+  <div v-if="ctx.auth?.state.status === 'switching'" class="login-wrap" role="status" aria-live="polite">正在切换账号，重新连接中…</div>
+  <div v-else-if="!ctx.auth || ctx.auth.state.status !== 'ready'" class="login-wrap">
     <Login />
   </div>
   <Console v-else />

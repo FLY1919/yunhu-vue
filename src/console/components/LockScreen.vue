@@ -152,7 +152,7 @@ async function forgotReset() {
 
 <style scoped>
 .ls-mask {
-  position: fixed; inset: 0; z-index: 95; display: grid; place-items: center;
+  position: fixed; inset: 0; z-index: 20000; display: grid; place-items: center;
   background: rgba(18, 18, 22, .72); backdrop-filter: blur(22px) saturate(1.2);
 }
 .ls-box {

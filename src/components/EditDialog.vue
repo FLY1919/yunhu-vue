@@ -29,9 +29,10 @@ async function save() {
   const v = text.value.trim()
   if (!v || busy.value) return
   busy.value = true
+  const id = ma.value.state.editingId
   try {
-    await chat.value.edit(ma.value.state.editingId, v)
-    close()
+    await chat.value.edit(id, v)
+    if (ma.value.state.editingId === id) close()
   } catch (e: any) {
     ctx.ui?.toast?.('编辑失败：' + e.message, 'error')
   } finally { busy.value = false }

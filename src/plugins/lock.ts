@@ -14,6 +14,7 @@
  */
 import { reactive } from 'vue'
 import LockScreen from '../console/components/LockScreen.vue'
+import { createAutoLock, type AutoLockPreferences } from '../core/auto-lock'
 
 const REQ_TTL = 5 * 60 * 1000
 
@@ -41,6 +42,7 @@ export const lockPlugin = {
     const state = reactive({
       locked: false,
       hasPin: false,
+      preferences: { minimize: false, blurMinutes: 0, startup: false, captureProtection: false } as AutoLockPreferences,
       /** 桌面端发出的解锁请求 nonce（等手机应答用） */
       reqNonce: null as string | null,
       reqStatus: '' as '' | 'waiting' | 'denied' | 'expired',
@@ -50,6 +52,23 @@ export const lockPlugin = {
 
     let pinHash = ''
     let relayCache: any = null
+    const autoLock = createAutoLock(() => state.preferences, () => { if (state.hasPin && auth.state.status === 'ready') lock() })
+    function persistLock() { return storage.save('lock', { locked: state.locked, preferences: { ...state.preferences }, ts: Date.now() }) }
+    async function setAutoLock(patch: Partial<AutoLockPreferences>) {
+      if (!state.hasPin && (patch.minimize || patch.blurMinutes || patch.startup)) throw new Error('请先设置锁定 PIN')
+      const previous = { ...state.preferences }
+      state.preferences = { ...state.preferences, ...patch }
+      state.preferences.blurMinutes = Math.max(0, Math.min(1440, Number(state.preferences.blurMinutes) || 0))
+      try { autoLock.configure(); await syncPrivacy(); await persistLock() }
+      catch (e) { state.preferences = previous; autoLock.configure(); await syncPrivacy().catch(() => {}); throw e }
+    }
+
+    async function syncPrivacy() {
+      window.dispatchEvent(new CustomEvent('yh-media-locked', { detail: state.locked }))
+      const invoke = (window as any).__TAURI__?.core?.invoke
+      if (invoke) await invoke('set_privacy', { locked: state.locked, capture: !!state.preferences.captureProtection })
+      else if (state.preferences.captureProtection) throw new Error('反截屏需要 Windows 桌面版')
+    }
 
     async function relay(): Promise<any> {
       relayCache = await storage.load('relay').catch(() => ({})) || {}
@@ -69,15 +88,23 @@ export const lockPlugin = {
       ])
       state.hasPin = !!p.hash
       pinHash = p.hash || ''
-      if (l.locked) state.locked = true
+      state.preferences = { minimize: !!l.preferences?.minimize, blurMinutes: Math.max(0, Math.min(1440, Number(l.preferences?.blurMinutes) || 0)), startup: !!l.preferences?.startup, captureProtection: !!l.preferences?.captureProtection }
+      state.locked = state.hasPin && (!!l.locked || !!state.preferences.startup)
+      if (state.locked) ctx.ui?.dismissMessages?.()
+      await syncPrivacy().catch(() => ctx.ui?.toast?.('安全设置应用失败，请重试', 'error'))
+      if (document.hidden || !document.hasFocus()) autoLock.blur()
     }
 
     function lock() {
       if (state.locked) return
       state.locked = true
+      ctx.ui?.dismissMessages?.()
+      void syncPrivacy().catch(() => {})
+      ;(document.activeElement as HTMLElement | null)?.blur?.()
+      if (document.fullscreenElement && document.exitFullscreen) void document.exitFullscreen().catch(() => {})
       state.reqNonce = null
       state.reqStatus = ''
-      storage.save('lock', { locked: true, ts: Date.now() }).catch(() => {})
+      autoLock.stop(); persistLock().catch(() => {})
     }
 
     async function unlock() {
@@ -85,7 +112,9 @@ export const lockPlugin = {
       state.reqNonce = null
       state.reqStatus = ''
       state.pending = null
-      await storage.save('lock', { locked: false }).catch(() => {})
+      await syncPrivacy().catch(() => {})
+      ctx.emit('app/unlock')
+      await persistLock().catch(() => {})
       // 清掉中继里的旧请求/应答，避免下次误触
       await putRelay({ lockreq: null, lockres: null })
     }
@@ -99,9 +128,9 @@ export const lockPlugin = {
     /** 首次锁定前设置 PIN（4-6 位数字） */
     async function setPin(pin: string): Promise<boolean> {
       if (!/^\d{4,6}$/.test(pin)) return false
-      pinHash = await sha256(pin)
-      state.hasPin = true
-      await storage.save('pin', { hash: pinHash }).catch(() => {})
+      const hash = await sha256(pin)
+      await storage.save('pin', { hash })
+      pinHash = hash; state.hasPin = true
       return true
     }
 
@@ -150,13 +179,34 @@ export const lockPlugin = {
     ctx.effect(() => {
       restore()
       watchDesk()
-      return () => { clearInterval(deskTimer) }
+      const focus = () => { if (!document.hidden) autoLock.focus() }
+      const blur = () => autoLock.blur()
+      const visibility = () => {
+        if (document.hidden) {
+          autoLock.blur()
+          if (!(window as any).__TAURI__ && !/Electron/i.test(navigator.userAgent)) autoLock.minimize(true)
+        } else if (document.hasFocus()) autoLock.focus()
+      }
+      const focused = (event: Event) => { if ((event as CustomEvent).detail === true) focus(); else blur() }
+      window.addEventListener('yh-window-focused', focused)
+      const minimized = (event: Event) => autoLock.minimize(!!(event as CustomEvent).detail)
+      window.addEventListener('focus', focus); window.addEventListener('blur', blur)
+      window.addEventListener('yh-window-minimized', minimized); document.addEventListener('visibilitychange', visibility)
+      return () => {
+        clearInterval(deskTimer); autoLock.stop()
+        window.removeEventListener('yh-window-focused', focused)
+        window.removeEventListener('focus', focus); window.removeEventListener('blur', blur)
+        window.removeEventListener('yh-window-minimized', minimized); document.removeEventListener('visibilitychange', visibility)
+      }
     })
 
     ctx.on('app/lock', () => lock())
+    ctx.on('auth/logout', () => { autoLock.stop(); state.locked = false; state.hasPin = false; pinHash = ''; state.preferences = { minimize: false, blurMinutes: 0, startup: false, captureProtection: false }; void syncPrivacy().catch(() => {}) })
+    ctx.on('auth/login', () => restore())
 
     const lockApi = {
-      state, lock, unlock, checkPin, setPin, clearPin, requestRemoteUnlock,
+      captureSupported: !!(window as any).__TAURI__ && /Windows/i.test(navigator.userAgent),
+      state, lock, unlock, checkPin, setPin, clearPin, requestRemoteUnlock, setAutoLock,
       get isLocked() { return state.locked },
     }
     ctx.set('lock', lockApi)

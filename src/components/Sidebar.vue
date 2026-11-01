@@ -10,9 +10,12 @@
  *   · 右键会话 = 分组菜单（替代旧的 window.prompt 交互）
  */
 import { inject, computed, ref, reactive, watch, onUnmounted } from 'vue'
-import { fmtTime, fallbackAvatar } from '../core/util.js'
+import { fallbackAvatar } from '../core/util.js'
 import { resUrl } from '../core/res.js'
+import { rankSearchResults } from '../core/search'
 import Icon from '../console/components/Icon.vue'
+import ConversationItem from './ConversationItem.vue'
+import CreateGroupForm from './CreateGroupForm.vue'
 
 const ctx = inject<any>('ctx')
 const auth = ctx.auth
@@ -24,20 +27,28 @@ function open(c: any) { chat.open(c) }
 /* ---- 全局搜索（Enter 触发 /v1/search/home-search：人/群/机器人混合结果） ---- */
 const GS_TYPE: Record<number, string> = { 1: '用户', 2: '群聊', 3: '机器人' }
 const gsResults = ref<any[]>([])
+let gsRequest = 0
+watch(() => chat.state.keyword, () => { gsRequest++; gsResults.value = [] }, { flush: 'sync' })
+onUnmounted(() => { gsRequest++ })
 async function globalSearch() {
+  const request = ++gsRequest
   const w = chat.state.keyword.trim()
   if (!w) { gsResults.value = []; return }
   try {
     const d = await ctx.api.homeSearch(w)
+    if (request !== gsRequest) return
     // 返回结构按类别分组，摊平成一列（带 type）
     const out: any[] = []
     for (const key of ['users', 'groups', 'bots']) {
       for (const it of d[key] || []) out.push({ ...it, type: key === 'users' ? 1 : key === 'groups' ? 2 : 3 })
     }
-    gsResults.value = out.slice(0, 8)
-  } catch (e: any) { ctx.ui?.toast?.('搜索失败：' + e.message, 'error') }
+    gsResults.value = rankSearchResults(out, w).slice(0, 8)
+  } catch (e: any) {
+    if (request === gsRequest) ctx.ui?.toast?.('搜索失败：' + e.message, 'error')
+  }
 }
 function gsPick(r: any) {
+  gsRequest++
   gsResults.value = []
   if (r.type === 2) chat.open({ id: r.id, type: 2, name: r.name, avatar: r.avatar })
   else if (r.type === 3) chat.open({ id: r.id, type: 3, name: r.name, avatar: r.avatar })
@@ -46,7 +57,12 @@ function gsPick(r: any) {
 
 /* ---------------- 会话分组（本地，存 localStorage） ---------------- */
 // 注意：filtered 是函数，必须调用 —— 之前少个括号导致侧栏一条会话都不显示
-const sections = computed(() => chat.sections(chat.filtered()))
+const pinTab = ref<'unpinned' | 'pinned'>('unpinned')
+const searching = computed(() => !!chat.state.keyword.trim())
+const sections = computed(() => chat.sections(list.value, pinTab.value))
+const visibleCount = computed(() => sections.value.pinned.length + sections.value.active.length + sections.value.ungrouped.length +
+  sections.value.groups.reduce((sum: number, g: any) => sum + g.items.length, 0))
+const pinnedCount = computed(() => list.value.filter((c: any) => chat.isPinned(c.id)).length)
 
 /* ---- 右键会话 → 分组菜单（夹回视口，避免菜单出屏） ---- */
 const menu = reactive({ open: false, x: 0, y: 0, conv: null as any })
@@ -126,23 +142,17 @@ watch(() => plusOpen.value, (v) => {
   else document.removeEventListener('click', offPlus)
 })
 onUnmounted(() => document.removeEventListener('click', offPlus))
-const dlg = reactive({ kind: '' as '' | 'group' | 'friend', name: '', intro: '', fid: '', msg: '', busy: false })
+const dlg = reactive({ kind: '' as '' | 'group' | 'friend', fid: '', msg: '', busy: false })
 function plusPick(k: 'group' | 'friend') {
   plusOpen.value = false
   dlg.kind = k
 }
-function closeDlg() { dlg.kind = ''; dlg.name = ''; dlg.intro = ''; dlg.fid = ''; dlg.msg = '' }
+function closeDlg() { dlg.kind = ''; dlg.fid = ''; dlg.msg = '' }
 async function dlgOk() {
   if (dlg.busy) return
   dlg.busy = true
   try {
-    if (dlg.kind === 'group') {
-      const n = dlg.name.trim()
-      if (!n) { ctx.ui?.toast?.('群名称不能为空', 'warn'); return }
-      const ok = await ctx.social?.createGroup?.(n, dlg.intro.trim())
-      if (!ok) return                       // 失败提示已由 social 给出，不再误报成功
-      ctx.chat?.loadConversations?.(true)
-    } else {
+    if (dlg.kind === 'friend') {
       const id = dlg.fid.trim()
       if (!id) { ctx.ui?.toast?.('请填写对方 ID', 'warn'); return }
       await ctx.social?.apply?.(id, 1, dlg.msg.trim())
@@ -178,21 +188,18 @@ async function dlgOk() {
     </div>
 
     <!-- 创建群聊 / 加好友 对话框 -->
-    <div v-if="dlg.kind" class="dlg-mask" @click.self="closeDlg">
-      <div class="dlg-box">
+    <div v-if="dlg.kind" class="dlg-mask" @click.self="closeDlg" @keydown.esc="closeDlg">
+      <div class="dlg-box" role="dialog" aria-modal="true" :aria-label="dlg.kind === 'group' ? '创建群聊' : '加好友'">
         <div class="dlg-title">{{ dlg.kind === 'group' ? '创建群聊' : '加好友' }}</div>
-        <template v-if="dlg.kind === 'group'">
-          <input v-model="dlg.name" class="dlg-input" placeholder="群名称" maxlength="30" autofocus />
-          <textarea v-model="dlg.intro" class="dlg-input" placeholder="群简介（可选）" rows="3"></textarea>
-        </template>
+        <CreateGroupForm v-if="dlg.kind === 'group'" @created="closeDlg" @cancel="closeDlg" />
         <template v-else>
           <input v-model="dlg.fid" class="dlg-input" placeholder="对方 ID" autofocus />
           <textarea v-model="dlg.msg" class="dlg-input" placeholder="验证消息（可选）" rows="2"></textarea>
-        </template>
-        <div class="dlg-foot">
+          <div class="dlg-foot">
           <button class="ghost tiny" @click="closeDlg">取消</button>
           <button class="primary tiny" :disabled="dlg.busy" @click="dlgOk">{{ dlg.busy ? '提交中…' : '确定' }}</button>
-        </div>
+          </div>
+        </template>
       </div>
     </div>
 
@@ -212,6 +219,13 @@ async function dlgOk() {
       </div>
     </div>
 
+    <div v-if="chat.groups.pinMode === 'tabs' && !searching" class="pin-tabs" role="tablist" aria-label="置顶会话">
+      <button id="pin-tab-unpinned" role="tab" :aria-selected="pinTab === 'unpinned'" aria-controls="conversation-list"
+              :class="{ on: pinTab === 'unpinned' }" @click="pinTab = 'unpinned'">未置顶对话 <em>{{ list.length - pinnedCount }}</em></button>
+      <button id="pin-tab-pinned" role="tab" :aria-selected="pinTab === 'pinned'" aria-controls="conversation-list"
+              :class="{ on: pinTab === 'pinned' }" @click="pinTab = 'pinned'">置顶对话 <em>{{ pinnedCount }}</em></button>
+    </div>
+
     <!-- 会话分组（本地）：有分组时按分组渲染，可折叠 -->
     <div v-if="sections.groups.length" class="grp-bar">
       <button v-for="g in sections.groups" :key="g.id" class="grp-chip"
@@ -220,7 +234,11 @@ async function dlgOk() {
       </button>
     </div>
 
-    <ul class="convs">
+    <ul id="conversation-list" class="convs">
+      <ConversationItem v-for="c in sections.pinned" :key="'pin:' + c.type + ':' + c.id" :c="c"
+                        @open="open" @menu="openMenu" />
+      <ConversationItem v-for="c in sections.active" :key="'active:' + c.type + ':' + c.id" :c="c"
+                        @open="open" @menu="openMenu" />
       <template v-for="g in sections.groups" :key="g.id">
         <li class="grp-head" @click="chat.toggleCollapse(g.id)">
           <span class="tri">{{ chat.isCollapsed(g.id) ? '▸' : '▾' }}</span>{{ g.name }}
@@ -229,37 +247,13 @@ async function dlgOk() {
           <button class="ghost tiny" title="删除分组" @click.stop="chat.removeGroup(g.id)">×</button>
         </li>
         <template v-if="!chat.isCollapsed(g.id)">
-          <li v-for="c in g.items" :key="c.id" :class="{ active: chat.state.current?.id === c.id, 'has-unread': !!c.unread && !chat.isMuted(c.id) }"
-              @click="open(c)" @contextmenu.prevent="openMenu(c, $event)">
-            <img :src="c.avatar ? resUrl(c.avatar) : fallbackAvatar(c.name)" alt=""
-                 @error="(e: any) => (e.target.src = fallbackAvatar(c.name))" />
-            <div class="mid">
-              <div class="top"><span class="cname">{{ c.at ? '[有人@我] ' : '' }}{{ c.name }}</span>
-                <Icon v-if="chat.isMuted(c.id)" name="bellOff" :size="12" class="mute-ico" title="免打扰" />
-                <span class="time">{{ fmtTime(c.ts) }}</span></div>
-              <div class="prev">{{ c.preview }}</div>
-            </div>
-            <span v-if="c.unread && !chat.isMuted(c.id)" class="badge">{{ c.unread > 99 ? '99+' : c.unread }}</span>
-          </li>
+          <ConversationItem v-for="c in g.items" :key="c.type + ':' + c.id" :c="c" @open="open" @menu="openMenu" />
         </template>
       </template>
 
-      <li v-for="c in sections.ungrouped" :key="c.id" :class="{ active: chat.state.current?.id === c.id, 'has-unread': !!c.unread && !chat.isMuted(c.id) }"
-          @click="open(c)" @contextmenu.prevent="openMenu(c, $event)">
-        <img :src="c.avatar ? resUrl(c.avatar) : fallbackAvatar(c.name)" alt=""
-             @error="(e: any) => (e.target.src = fallbackAvatar(c.name))" />
-        <div class="mid">
-          <div class="top">
-            <span class="cname">{{ c.at ? '[有人@我] ' : '' }}{{ c.name }}</span>
-            <Icon v-if="chat.isMuted(c.id)" name="bellOff" :size="12" class="mute-ico" title="免打扰" />
-            <span class="time">{{ fmtTime(c.ts) }}</span>
-          </div>
-          <div class="prev">{{ c.preview }}</div>
-        </div>
-        <span v-if="c.unread && !chat.isMuted(c.id)" class="badge">{{ c.unread > 99 ? '99+' : c.unread }}</span>
-      </li>
-      <li v-if="!list.length" class="hint">
-        {{ chat.state.loadingConvs ? '加载中…' : '暂无会话' }}
+      <ConversationItem v-for="c in sections.ungrouped" :key="c.type + ':' + c.id" :c="c" @open="open" @menu="openMenu" />
+      <li v-if="!visibleCount" class="hint">
+        {{ chat.state.loadingConvs ? '加载中…' : searching ? '没有匹配的会话' : chat.groups.pinMode === 'tabs' && pinTab === 'pinned' ? '暂无置顶对话' : '暂无会话' }}
       </li>
     </ul>
 
@@ -285,3 +279,11 @@ async function dlgOk() {
     </Teleport>
   </div>
 </template>
+
+<style scoped>
+.pin-tabs { display: flex; gap: 4px; padding: 4px 10px 8px; }
+.pin-tabs button { flex: 1; padding: 6px 4px; font-size: 12px; color: var(--fg2); background: transparent; border-bottom: 2px solid transparent; border-radius: 6px 6px 0 0; }
+.pin-tabs button:hover { color: var(--fg); background: var(--card2); }
+.pin-tabs button.on { color: var(--fg); border-bottom-color: var(--acc); }
+.pin-tabs em { font-style: normal; font-size: 11px; margin-left: 3px; }
+</style>

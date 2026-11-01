@@ -3,7 +3,7 @@
  * ------------------------------------------------------------------
  * 依赖 api、chat、ui
  */
-import { reactive } from 'vue'
+import { reactive, watch } from 'vue'
 import type { Context } from '../core/context'
 import GroupPanel from '../components/GroupPanel.vue'
 import ProfilePanel from '../components/ProfilePanel.vue'
@@ -85,6 +85,7 @@ export const groupAdminPlugin = {
       tagMemberFor: null as any,       // 正在给谁打标签
       tagMap: {} as Record<string, any[]>,  // userId -> [{id,tag,color}]，用于消息头顶显示标签
       tagMapLoading: false,
+      tagMapGroup: '',
       memberTagIds: [] as number[],
       /* 搜索 */
       searchWord: '',
@@ -277,15 +278,22 @@ export const groupAdminPlugin = {
     /* ---------------- 通讯录（好友判断） ---------------- */
 
     /** 拉通讯录，拿到好友 id 列表（只对“用户”这一类） */
+    let friendVersion = 0
     async function loadFriends() {
       if (state.friendsLoaded) return
+      const version = friendVersion
       try {
         const book = await api.addressBook()
-        state.friendIds = (book.users || []).map((u: any) => u.id)
+        if (version === friendVersion) { state.friendIds = (book.users || []).map((u: any) => String(u.id)); state.friendsLoaded = true }
       } catch { /* 忽略 */ }
-      finally { state.friendsLoaded = true }
     }
-    function isFriend(userId: string) { return state.friendIds.includes(userId) }
+    function isFriend(userId: string) {
+      const social = ctx.get('social')
+      if (social?.state.loaded) return social.state.book.users.some((u: any) => String(u.id) === String(userId))
+      return state.friendIds.includes(String(userId))
+    }
+    ctx.on('auth/login', () => { friendVersion++; state.friendIds = []; state.friendsLoaded = false; void loadFriends() })
+    ctx.on('auth/logout', () => { friendVersion++; state.friendIds = []; state.friendsLoaded = false; state.profileUser = null })
 
     /* ---------------- 群文件（群网盘） ---------------- */
 
@@ -337,10 +345,11 @@ export const groupAdminPlugin = {
         state.tagPage = 1
         state.tagsEnd = false
         const list = await api.listTags(gid, { size: 100, page: 1, tag: state.tagSearch.trim() })
+        if (chat.state.current?.id !== gid || !isGroup()) return
         state.tags = list
         state.tagsEnd = list.length < 100
       } catch (e: any) { ui.toast('标签加载失败：' + e.message, 'error') }
-      finally { state.tagsLoading = false }
+      finally { if (chat.state.current?.id === gid) state.tagsLoading = false }
     }
 
     /** 加载更多标签（云湖群标签可能上百个，必须分页） */
@@ -350,6 +359,7 @@ export const groupAdminPlugin = {
       try {
         state.tagPage += 1
         const list = await api.listTags(gid, { size: 100, page: state.tagPage, tag: state.tagSearch.trim() })
+        if (chat.state.current?.id !== gid || !isGroup()) return
         const seen = new Set(state.tags.map((t: any) => t.id))
         for (const t of list) if (!seen.has(t.id)) state.tags.push(t)
         state.tagsEnd = list.length < 100
@@ -391,40 +401,47 @@ export const groupAdminPlugin = {
      */
     const tagMapCache: Record<string, { at: number; map: Record<string, any[]> }> = {}
     const TAGMAP_TTL = 5 * 60 * 1000
+    const tagMapFlights = new Map<string, Promise<void>>()
     async function loadTagMap(force = false) {
       const gid = requireGroup(); if (!gid) return
       const cached = tagMapCache[gid]
       if (!force && cached && Date.now() - cached.at < TAGMAP_TTL) {
-        state.tagMap = cached.map
+        state.tagMap = cached.map; state.tagMapGroup = gid
         return
       }
-      if (state.tagMapLoading) return
+      if (tagMapFlights.has(gid)) return tagMapFlights.get(gid)
       state.tagMapLoading = true
-      try {
-        if (!state.tags.length) await loadTags()
-        const map: Record<string, any[]> = {}
-        const list = state.tags
-        const CONC = 12
-        for (let i = 0; i < list.length; i += CONC) {
-          const batch = list.slice(i, i + CONC)
-          const res = await Promise.all(batch.map(t =>
-            api.tagMembers(gid, t.id).then(users => ({ t, users })).catch(() => null)))
-          for (const r of res) {
-            if (!r) continue
-            for (const u of r.users) {
-              ;(map[u.id] = map[u.id] || []).push({ id: r.t.id, tag: r.t.tag, color: r.t.color })
+      const flight = (async () => {
+        try {
+          // This query is scoped to gid and independent of panel search/pagination state.
+          const tags: any[] = []
+          for (let page = 1; page <= 50; page++) {
+            const list = await api.listTags(gid, { size: 100, page, tag: '' })
+            tags.push(...list)
+            if (list.length < 100) break
+          }
+          const map: Record<string, any[]> = {}
+          for (let i = 0; i < tags.length; i += 6) {
+            const rows = await Promise.all(tags.slice(i, i + 6).map(t =>
+              api.tagMembers(gid, t.id).then(users => ({ t, users })).catch(() => null)))
+            for (const row of rows) if (row) for (const user of row.users) {
+              ;(map[user.id] = map[user.id] || []).push({ id: row.t.id, groupId: gid, tag: row.t.tag, color: row.t.color })
             }
           }
+          tagMapCache[gid] = { at: Date.now(), map }
+          if (isGroup() && chat.state.current?.id === gid) { state.tagMap = map; state.tagMapGroup = gid }
+        } catch { /* A failed request never substitutes another group's tags. */ }
+        finally {
+          tagMapFlights.delete(gid)
+          if (chat.state.current?.id === gid) state.tagMapLoading = false
         }
-        state.tagMap = map
-        tagMapCache[gid] = { at: Date.now(), map }
-      } catch { /* 忽略 */ }
-      finally { state.tagMapLoading = false }
+      })()
+      tagMapFlights.set(gid, flight)
+      return flight
     }
 
-    /** 取某个用户在本群的标签 */
     function tagsOf(userId: string) {
-      return state.tagMap[userId] || []
+      return isGroup() && state.tagMapGroup === chat.state.current?.id ? state.tagMap[userId] || [] : []
     }
 
     /** 打开「给成员打标签」 */
@@ -486,7 +503,7 @@ export const groupAdminPlugin = {
     }
 
     /* 切换会话时重置 */
-    ctx.on('chat/open', () => {
+    const stopGroupWatch = watch(() => `${chat.state.current?.type}:${chat.state.current?.id}`, () => {
       state.members = []
       state.membersTotal = 0
       state.info = null
@@ -495,10 +512,12 @@ export const groupAdminPlugin = {
       state.searchWord = ''
       state.searched = false
       if (state.panelOpen) open()
-      state.tagMap = {}
+      state.tags = []; state.tagsLoading = false; state.tagsEnd = false; state.tagPage = 1; state.tagSearch = ''
+      state.tagMap = {}; state.tagMapGroup = ''; state.tagMapLoading = false
       if (chat.state.current?.type === 2) loadTagMap()
       loadFriends()
-    })
+    }, { flush: 'sync', immediate: true })
+    ctx.effect(() => stopGroupWatch)
 
     const group = {
       state, GAG_OPTIONS, isGroup, locateHighlight,
@@ -508,7 +527,7 @@ export const groupAdminPlugin = {
       loadFriends, isFriend, loadDisk, openFolder, backFolder, createFolder, locateFile,
       openMount, closeMount, mountEnter, mountUp, reloadMount, loadMount,
       /** 打开用户主页 */
-      openProfile(user: any) { state.profileUser = user },
+      openProfile(user: any) { state.profileUser = { ...user, id: String(user.id) }; void loadFriends() },
       closeProfile() { state.profileUser = null },
       /** 底部看板栏开关 */
       /** 退出全屏群界面（最右边那个按钮） */

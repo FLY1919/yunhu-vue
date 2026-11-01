@@ -30,7 +30,7 @@ export function decodePush(bytes) {
     type: pb.num(d, 7),
     ts: pb.num(d, 8),
     recallTs: pb.num(d, 10),
-    quoteId: pb.str(d, 9),   // 官方引用 id 字段=9（dump 实锤）；曾读 11 → WS 推送的引用全丢
+    quoteId: pb.str(d, 11) || (/^[a-zA-Z0-9_-]{8,64}$/.test(pb.str(d, 9)) ? pb.str(d, 9) : ''),   // 当前协议为字段 11；兼容旧推送的字段 9，但不把 Cmd 子消息误当引用 ID
     seq: pb.num(d, 12),
     editTs: pb.num(d, 14),
   }

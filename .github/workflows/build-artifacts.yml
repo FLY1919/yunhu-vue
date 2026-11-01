@@ -23,7 +23,7 @@ jobs:
       - name: 安装 Node
         uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 22.23.4
           cache: npm
 
       - name: 安装 Rust
@@ -43,6 +43,11 @@ jobs:
       - name: 聊天与通知回归测试
         run: npm run test:chat
 
+      - name: 账号、媒体与自动锁定回归测试
+        run: |
+          npm run test:settings
+          npm run test:features
+
       - name: 构建前端 + server bundle
         run: |
           npm run build
@@ -58,6 +63,8 @@ jobs:
           # node.exe 从 runner 自带 node 复制（版本与 setup-node 一致）
           NODE_EXE=$(which node.exe || where node | head -1)
           cp "$NODE_EXE" src-tauri/resources/node.exe
+          node scripts/verify-windows-assets.mjs --runtime-only src-tauri/resources
+          npm run test:windows-assets
           ls -la src-tauri/resources/
 
       - name: 构建 Tauri（NSIS）

@@ -5,6 +5,7 @@ import { readFile, writeFile, unlink } from 'node:fs/promises'
 import { existsSync, mkdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { homedir } from 'node:os'
+import { stickerDirectory } from './sticker-directory'
 
 const RES_HOST_RE = /^chat-(img|img2|img3|audio1|file|file-oss|storage1|video1)\.jwznb\.com$/i
 const REFERER = 'http://myapp.jwznb.com'
@@ -83,7 +84,7 @@ function configPlugin() {
 /** 开发时支持 /data/<name> 与 /update-check（与 server.ts 同一数据目录，行为一致） */
 function dataPlugin() {
   const DIR = process.env.YH_DATA_DIR || join(homedir(), 'Documents', 'yhchat')
-  const ALLOW = new Set(['session', 'cache', 'pin', 'lock', 'relay'])
+  const ALLOW = new Set(['session', 'accounts', 'cache', 'pin', 'lock', 'relay', 'recall'])
   const HDR = { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' }
   try { mkdirSync(DIR, { recursive: true }) } catch { /* 忽略 */ }
   return {
@@ -123,7 +124,11 @@ const pkg = JSON.parse(readFileSync(join(process.cwd(), 'package.json'), 'utf8')
 
 export default defineConfig({
   define: { __APP_VERSION__: JSON.stringify(pkg.version) },
-  plugins: [vue(), resProxyPlugin(), upProxyPlugin(), configPlugin(), dataPlugin()],
+  plugins: [vue(), resProxyPlugin(), upProxyPlugin(), configPlugin(), dataPlugin(), {
+    name: 'sticker-directory', configureServer(server) {
+      server.middlewares.use('/sticker-directory', (req, res) => { void stickerDirectory(req, res, (req.url || '').split('?')[1] || '') })
+    },
+  }],
   base: './',
   // 构建目标 es2020：安卓 WebView（部分设备 Chrome < 90）不支持 es2022 新语法，
   // JS 一抛异常整页黑屏（WebView 里看不到 console）——es2020 是 Capacitor 官方推荐档

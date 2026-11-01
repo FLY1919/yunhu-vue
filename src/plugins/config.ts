@@ -9,7 +9,7 @@
 import { reactive } from 'vue'
 import { load as yamlLoad, dump as yamlDump } from 'js-yaml'
 import type { Context } from '../core/context'
-import ConfigPage from '../console/pages/ConfigPage.vue'
+import AccountConfigPage from '../console/pages/AccountConfigPage.vue'
 
 export interface AppConfig {
   app?: { theme?: string; title?: string; pollMs?: number }
@@ -142,7 +142,7 @@ export const configPlugin = {
         action: async () => { await config.save(); ctx.ui?.toast('配置已保存', 'success') },
       })
       ctx.console.addEntry((cc: any) => {
-        cc.page({ name: '配置', path: '/config', icon: 'fileSettings', order: 880, component: ConfigPage })
+        cc.page({ name: '账号与配置', path: '/config', icon: 'settings', order: 880, component: AccountConfigPage })
       })
     })
   },

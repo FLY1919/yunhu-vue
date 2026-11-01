@@ -128,7 +128,7 @@ async function resetDir() {
         </a>
       </div>
       <p class="ab-star">
-        觉得好用的话，去本仓库点个 <b>Star</b> 吧 ⭐ ——
+        觉得好用的话，去本仓库点个 <b>Star</b> 吧 <Icon name="star" :size="14" class="inline-icon" aria-hidden="true" /> ——
         也欢迎给原仓库一颗星，感谢上游作者的开源。
       </p>
     </div>

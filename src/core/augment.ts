@@ -11,6 +11,7 @@ declare module 'cordis' {
   interface Context {
     /* ---- 本项目注册的服务 ---- */
     app: any
+    storage: any
     /** 本项目自己的配置服务（cordis 内置的 config 已被占用，故用 cfg） */
     cfg: any
     /** 日志列表（包装 cordis 的 logger 得到） */
@@ -36,6 +37,8 @@ declare module 'cordis' {
     stickers: any
     social: any
     botconsole: any
+    userbot: any
+    aiPanel: any
     community: any
     session: any
     /** 统一事件层：ctx.event.on/emit/history */

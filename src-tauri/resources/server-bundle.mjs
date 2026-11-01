@@ -1,8 +1,144 @@
+// ai-bridge.ts
+import { createHash, timingSafeEqual } from "node:crypto";
+var MAX_INPUT = 1024 * 1024;
+var MAX_OUTPUT = 4 * 1024 * 1024;
+var jsonHeaders = { "content-type": "application/json; charset=utf-8", "cache-control": "no-store", "x-content-type-options": "nosniff" };
+var loopback = (s) => s === "127.0.0.1" || s === "::1" || s === "::ffff:127.0.0.1";
+function authorized(req, secret) {
+  if (!secret || !loopback(req.socket.remoteAddress || "")) return false;
+  const received = String(req.headers["x-yh-bot-capability"] || "");
+  const a = Buffer.from(secret), b = Buffer.from(received);
+  return a.length === b.length && timingSafeEqual(a, b);
+}
+function handleAiProof(req, res, secret, nonce) {
+  if (req.method !== "GET" || !secret || !loopback(req.socket.remoteAddress || "") || !/^[0-9a-f]{64}$/.test(nonce)) {
+    res.writeHead(403).end();
+    return;
+  }
+  const proof = createHash("sha256").update(nonce + secret).digest("hex");
+  res.writeHead(200, { "content-type": "text/plain", "cache-control": "no-store", "content-length": Buffer.byteLength(proof) }).end(proof);
+}
+async function input(req) {
+  const chunks = [];
+  let size = 0;
+  for await (const chunk of req) {
+    size += chunk.length;
+    if (size > MAX_INPUT) throw new Error("\u8BF7\u6C42\u5185\u5BB9\u8FC7\u5927");
+    chunks.push(chunk);
+  }
+  return JSON.parse(Buffer.concat(chunks).toString("utf8"));
+}
+async function handleAiBridge(req, res, secret) {
+  const finish = (status, body) => {
+    if (!res.headersSent) res.writeHead(status, jsonHeaders);
+    if (!res.writableEnded) res.end(JSON.stringify(body));
+  };
+  if (req.method !== "POST" || !authorized(req, secret)) {
+    finish(403, { error: "\u5B89\u5168\u8FDE\u63A5\u4E0D\u53EF\u7528\uFF0C\u8BF7\u91CD\u542F\u684C\u9762\u5BA2\u6237\u7AEF" });
+    return;
+  }
+  let key = "";
+  const controller = new AbortController();
+  let timer;
+  try {
+    const body = await input(req);
+    const url = new URL(String(body.url || ""));
+    if (!["https:", "http:"].includes(url.protocol) || url.username || url.password || url.hash) throw new Error("\u670D\u52A1\u5730\u5740\u65E0\u6548");
+    if (!["openai", "anthropic"].includes(body.format)) throw new Error("\u63A5\u53E3\u683C\u5F0F\u65E0\u6548");
+    if (!["GET", "POST"].includes(body.method)) throw new Error("\u8BF7\u6C42\u65B9\u6CD5\u65E0\u6548");
+    key = String(body.key || "");
+    if (key.length > 8192 || /[\r\n]/.test(key)) throw new Error("API Key \u683C\u5F0F\u65E0\u6548");
+    const headers = { "accept": "application/json", "content-type": "application/json" };
+    let authMode = body.authMode || "default";
+    if (!["default", "bearer", "x-api-key", "api-key", "none"].includes(authMode)) throw new Error("\u8BA4\u8BC1\u65B9\u5F0F\u65E0\u6548");
+    if (authMode === "default") authMode = body.format === "anthropic" ? "x-api-key" : "bearer";
+    if (key && authMode !== "none") {
+      if (authMode === "bearer") headers.authorization = `Bearer ${key}`;
+      else headers[authMode] = key;
+    }
+    if (body.format === "anthropic") headers["anthropic-version"] = String(body.anthropicVersion || "2023-06-01").replace(/[^\d-]/g, "").slice(0, 10);
+    const timeout = Math.max(1e3, Math.min(Number(body.timeoutMs) || 6e4, 3e5));
+    timer = setTimeout(() => controller.abort(), timeout);
+    res.on("close", () => {
+      if (!res.writableEnded) controller.abort();
+    });
+    const upstream = await fetch(url, {
+      method: body.method,
+      headers,
+      body: body.method === "POST" ? JSON.stringify(body.payload || {}) : void 0,
+      redirect: "error",
+      signal: controller.signal
+    });
+    const reader = upstream.body?.getReader();
+    const chunks = [];
+    let length = 0;
+    if (reader) for (; ; ) {
+      const next = await reader.read();
+      if (next.done) break;
+      length += next.value.length;
+      if (length > MAX_OUTPUT) {
+        await reader.cancel();
+        throw new Error("\u670D\u52A1\u8FD4\u56DE\u5185\u5BB9\u8FC7\u5927");
+      }
+      chunks.push(next.value);
+    }
+    const text = Buffer.concat(chunks).toString("utf8");
+    let data;
+    try {
+      data = JSON.parse(text);
+    } catch {
+      data = { error: { message: "\u670D\u52A1\u672A\u8FD4\u56DE\u6709\u6548 JSON" } };
+    }
+    if (!upstream.ok) {
+      const detail = String(data?.error?.message || data?.message || `HTTP ${upstream.status}`).slice(0, 1200);
+      finish(200, { status: upstream.status, data: { error: { message: key ? detail.split(key).join("[\u5DF2\u9690\u85CF]") : detail } } });
+    } else {
+      const redact = (value) => {
+        if (typeof value === "string") return key ? value.split(key).join("[\u5DF2\u9690\u85CF]") : value;
+        if (Array.isArray(value)) return value.map(redact);
+        if (value && typeof value === "object") return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, redact(v)]));
+        return value;
+      };
+      finish(200, { status: upstream.status, data: redact(data) });
+    }
+  } catch (e) {
+    const message = e?.name === "AbortError" ? "\u8BF7\u6C42\u8D85\u65F6\u6216\u5DF2\u53D6\u6D88" : String(e?.message || "\u7F51\u7EDC\u8BF7\u6C42\u5931\u8D25");
+    finish(502, { error: key ? message.split(key).join("[\u5DF2\u9690\u85CF]") : message });
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 // server.ts
 import http from "node:http";
+
+// sticker-directory.ts
+async function stickerDirectory(req, res, search) {
+  const headers = { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" };
+  if (req.method !== "GET") {
+    res.writeHead(405, headers).end('{"error":{"message":"\u9700\u8981 GET \u8BF7\u6C42"}}');
+    return;
+  }
+  const id = new URLSearchParams(search).get("author_id") || "";
+  if (!/^\d{1,32}$/.test(id)) {
+    res.writeHead(400, headers).end('{"error":{"message":"\u7528\u6237 ID \u4E0D\u6B63\u786E"}}');
+    return;
+  }
+  try {
+    const upstream = await fetch("https://yhsticker.us.ci/api/v1/packs?" + new URLSearchParams({ author_id: id, all: "true" }), { signal: AbortSignal.timeout(15e3) });
+    const body = await upstream.json();
+    if (!upstream.ok) throw new Error(body?.error?.message || "\u76EE\u5F55\u670D\u52A1\u6682\u65F6\u4E0D\u53EF\u7528");
+    if (!Array.isArray(body.data)) throw new Error("\u76EE\u5F55\u8FD4\u56DE\u683C\u5F0F\u4E0D\u6B63\u786E");
+    res.writeHead(200, headers).end(JSON.stringify(body));
+  } catch (error) {
+    res.writeHead(502, headers).end(JSON.stringify({ error: { message: error.name === "TimeoutError" ? "\u8868\u60C5\u5305\u76EE\u5F55\u8BF7\u6C42\u8D85\u65F6\uFF0C\u8BF7\u91CD\u8BD5" : error.message } }));
+  }
+}
+
+// server.ts
 import https4 from "node:https";
 import { readFile, writeFile, unlink } from "node:fs/promises";
-import { execFileSync, execFile } from "node:child_process";
+import { execFileSync, execFile, spawn } from "node:child_process";
 import { mkdirSync, readFileSync as readFileSync2 } from "node:fs";
 import { existsSync as existsSync2 } from "node:fs";
 import { extname, join as join2, normalize } from "node:path";
@@ -1132,7 +1268,7 @@ var UPSTREAM = process.env.UPSTREAM || "https://chat-go.jwzhd.com";
 var ROOT = join2(BASE, "dist");
 var CONFIG_FILE = join2(BASE, "yunhu.config.yml");
 var DATA_DIR_FILE = join2(homedir(), ".yhchat-dir");
-var DATA_ALLOW = /* @__PURE__ */ new Set(["session", "cache", "pin", "lock", "relay"]);
+var DATA_ALLOW = /* @__PURE__ */ new Set(["session", "accounts", "cache", "pin", "lock", "relay", "recall"]);
 var DATA_MAX_BYTES = 2 * 1024 * 1024;
 var JSON_HDR = { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" };
 function defaultDataDir() {
@@ -1255,7 +1391,8 @@ function follow(target, req, res, referer, depth = 0, cacheControl = "no-store")
     }
     const h = {
       "content-type": safeHeader(up.headers["content-type"]) || "application/octet-stream",
-      "cache-control": cacheControl,
+      // Newly uploaded objects can briefly return 403/404. Never cache that failure for a day.
+      "cache-control": (up.statusCode || 502) >= 200 && (up.statusCode || 502) < 300 ? cacheControl : "no-store",
       "access-control-allow-origin": "*",
       "access-control-expose-headers": "content-range, content-length, accept-ranges"
     };
@@ -1509,6 +1646,53 @@ async function handleFileDir(req, res) {
   }
   res.writeHead(405).end("method not allowed");
 }
+async function handleSaveImage(req, res, search) {
+  if (req.method !== "POST") {
+    res.writeHead(405, JSON_HDR).end(JSON.stringify({ ok: false, msg: "\u9700\u8981 POST \u8BF7\u6C42" }));
+    return;
+  }
+  const origin = req.headers.origin;
+  if (!req.headers.token || origin && new URL(origin).host !== req.headers.host) {
+    res.writeHead(403, JSON_HDR).end(JSON.stringify({ ok: false, msg: "\u4EC5\u5141\u8BB8\u5BA2\u6237\u7AEF\u4FDD\u5B58\u56FE\u7247" }));
+    return;
+  }
+  const type = String(req.headers["content-type"] || "").split(";")[0];
+  if (!["image/png", "image/jpeg", "image/gif"].includes(type)) {
+    res.writeHead(415, JSON_HDR).end(JSON.stringify({ ok: false, msg: "\u4EC5\u652F\u6301 PNG\u3001JPG \u6216 GIF \u56FE\u7247" }));
+    return;
+  }
+  const chunks = [];
+  let length = 0;
+  for await (const chunk of req) {
+    length += chunk.length;
+    if (length > 40 * 1024 * 1024) {
+      res.writeHead(413, JSON_HDR).end(JSON.stringify({ ok: false, msg: "\u56FE\u7247\u8D85\u8FC7 40 MB" }));
+      return;
+    }
+    chunks.push(chunk);
+  }
+  const data = Buffer.concat(chunks);
+  const valid = type === "image/png" ? data.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10])) : type === "image/gif" ? /^GIF8[79]a$/.test(data.subarray(0, 6).toString("ascii")) : data.length >= 3 && data[0] === 255 && data[1] === 216 && data[2] === 255;
+  if (!valid) {
+    res.writeHead(415, JSON_HDR).end(JSON.stringify({ ok: false, msg: "\u56FE\u7247\u5185\u5BB9\u683C\u5F0F\u4E0D\u6B63\u786E" }));
+    return;
+  }
+  const requested = new URLSearchParams(search).get("name") || "image_edited";
+  const base = requested.split(/[\\/]/).pop().replace(/[<>:"|?*\x00-\x1f]/g, "_").replace(/\.[^.]*$/, "").slice(0, 120) || "image_edited";
+  const extension = type === "image/png" ? ".png" : type === "image/gif" ? ".gif" : ".jpg";
+  mkdirSync(FILE_DIR, { recursive: true });
+  let dest = "";
+  for (let attempt = 0; attempt < 20; attempt++) {
+    dest = join2(FILE_DIR, base + (attempt ? "-" + Date.now() + "-" + attempt : "") + extension);
+    try {
+      await writeFile(dest, data, { flag: "wx" });
+      break;
+    } catch (error) {
+      if (error.code !== "EEXIST" || attempt === 19) throw error;
+    }
+  }
+  res.writeHead(200, JSON_HDR).end(JSON.stringify({ ok: true, path: dest }));
+}
 async function handlePickDir(_req, res) {
   const run = (cmd, args) => new Promise((resolve) => {
     execFile(
@@ -1540,6 +1724,7 @@ async function handlePickDir(_req, res) {
     res.writeHead(200, JSON_HDR).end(JSON.stringify({ ok: true, dir: "", note: e?.message || "" }));
   }
 }
+var localDownloads = /* @__PURE__ */ new Map();
 async function handleLocalOpen(req, res, search) {
   if (req.method !== "GET") {
     res.writeHead(405, JSON_HDR).end(JSON.stringify({ ok: false, msg: "use GET with ?url=&name=" }));
@@ -1555,28 +1740,50 @@ async function handleLocalOpen(req, res, search) {
       res.writeHead(403, JSON_HDR).end(JSON.stringify({ ok: false, msg: "url not allowed" }));
       return;
     }
-    mkdirSync(FILE_DIR, { recursive: true });
-    const dest = join2(FILE_DIR, name);
-    const target = u.hostname === "localhost" || u.hostname === "127.0.0.1" ? `http://127.0.0.1:${PORT}${u.pathname}${u.search}` : url;
-    const data = await new Promise((resolve, reject) => {
-      const mod = target.startsWith("https") ? https4 : http;
-      mod.get(target, { headers: u.pathname.startsWith("/res/") ? { referer: RES_REFERER } : {} }, (up) => {
-        if ((up.statusCode || 0) >= 400) {
-          up.resume();
-          reject(new Error("HTTP " + up.statusCode));
-          return;
+    const directory = FILE_DIR, cacheKey = directory + "\n" + url;
+    mkdirSync(directory, { recursive: true });
+    let dest = localDownloads.get(cacheKey) || "";
+    if (!dest || !existsSync2(dest)) {
+      const target = u.hostname === "localhost" || u.hostname === "127.0.0.1" ? `http://127.0.0.1:${PORT}${u.pathname}${u.search}` : url;
+      const data = await new Promise((resolve, reject) => {
+        const mod = target.startsWith("https") ? https4 : http;
+        const download = mod.get(target, { headers: { referer: RES_REFERER } }, (up) => {
+          if ((up.statusCode || 0) < 200 || (up.statusCode || 0) >= 300) {
+            up.resume();
+            reject(new Error("\u4E0B\u8F7D\u5931\u8D25 HTTP " + up.statusCode));
+            return;
+          }
+          const chunks = [];
+          up.on("data", (c) => chunks.push(c));
+          up.on("end", () => resolve(Buffer.concat(chunks)));
+          up.on("error", reject);
+        }).on("error", reject);
+        download.setTimeout(3e4, () => download.destroy(new Error("\u6587\u4EF6\u4E0B\u8F7D\u8D85\u65F6")));
+      });
+      const extension = extname(name), base = name.slice(0, name.length - extension.length);
+      for (let attempt = 0; attempt < 20; attempt++) {
+        dest = join2(directory, attempt ? `${base}-${Date.now()}-${attempt}${extension}` : name);
+        try {
+          await writeFile(dest, data, { flag: "wx" });
+          break;
+        } catch (error) {
+          if (error.code !== "EEXIST" || attempt === 19) throw error;
         }
-        const chunks = [];
-        up.on("data", (c) => chunks.push(c));
-        up.on("end", () => resolve(Buffer.concat(chunks)));
-        up.on("error", reject);
-      }).on("error", reject);
-    });
-    await writeFile(dest, data);
+      }
+      localDownloads.set(cacheKey, dest);
+      if (localDownloads.size > 200) localDownloads.delete(localDownloads.keys().next().value);
+    }
     if (process.platform === "win32") {
-      execFileSync("explorer.exe", ["/select," + dest], { stdio: "ignore" });
+      await new Promise((resolve, reject) => {
+        const explorer = spawn("explorer.exe", ["/select," + dest], { detached: true, stdio: "ignore" });
+        explorer.once("error", reject);
+        explorer.once("spawn", () => {
+          explorer.unref();
+          resolve();
+        });
+      });
     } else {
-      execFileSync(process.platform === "darwin" ? "open" : "xdg-open", [FILE_DIR], { stdio: "ignore" });
+      await new Promise((resolve, reject) => execFile(process.platform === "darwin" ? "open" : "xdg-open", [directory], { timeout: 1e4 }, (error) => error ? reject(error) : resolve()));
     }
     res.writeHead(200, JSON_HDR).end(JSON.stringify({ ok: true, path: dest }));
   } catch (e) {
@@ -1631,6 +1838,14 @@ function serverApp(req, res) {
     }).end();
     return;
   }
+  if (pathname === "/bot-ai/request") {
+    void handleAiBridge(req, res, process.env.YH_BOT_BRIDGE_SECRET || "");
+    return;
+  }
+  if (pathname === "/bot-ai/proof") {
+    handleAiProof(req, res, process.env.YH_BOT_BRIDGE_SECRET || "", new URLSearchParams(search).get("nonce") || "");
+    return;
+  }
   if (pathname === "/config") {
     handleConfig(req, res);
     return;
@@ -1654,6 +1869,16 @@ function serverApp(req, res) {
   }
   if (pathname === "/local-open" && req.method === "GET") {
     handleLocalOpen(req, res, search).catch((e) => {
+      res.writeHead(500, JSON_HDR).end(JSON.stringify({ ok: false, msg: e.message }));
+    });
+    return;
+  }
+  if (pathname === "/sticker-directory") {
+    void stickerDirectory(req, res, search);
+    return;
+  }
+  if (pathname === "/local-save-image") {
+    handleSaveImage(req, res, search).catch((e) => {
       res.writeHead(500, JSON_HDR).end(JSON.stringify({ ok: false, msg: e.message }));
     });
     return;
