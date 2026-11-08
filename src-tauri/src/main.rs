@@ -30,6 +30,12 @@ use std::os::windows::process::CommandExt as _;
 /// 隐藏它（日志已落盘 %TEMP%/yunhulaoda-sidecar.log，不靠控制台看输出）
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
+
+// sidecar 运行时可执行文件名：Windows 为 node.exe，mac/Linux 为 node
+#[cfg(windows)]
+const NODE_BIN: &str = "node.exe";
+#[cfg(not(windows))]
+const NODE_BIN: &str = "node";
 use tauri::{
     image::Image,
     menu::{Menu, MenuItem},
@@ -184,7 +190,7 @@ fn spawn_sidecar(res: &std::path::Path) -> bool {
         if matches!(child.try_wait(), Ok(None)) { return true; }
     }
     *slot = None;
-    let node = res.join("node.exe");
+    let node = res.join(NODE_BIN);
     let bundle = res.join("server-bundle.mjs");
     if !node.exists() || !bundle.exists() {
         return false;
@@ -396,13 +402,13 @@ fn main() {
             let res: PathBuf = std::env::current_exe()
                 .ok()
                 .and_then(|p| p.parent().map(|d| d.to_path_buf()))
-                .filter(|d| d.join("node.exe").exists() && d.join("server-bundle.mjs").exists())
+                .filter(|d| d.join(NODE_BIN).exists() && d.join("server-bundle.mjs").exists())
                 .or_else(|| {
                     handle
                         .path()
                         .resource_dir()
                         .ok()
-                        .filter(|d| d.join("node.exe").exists() && d.join("server-bundle.mjs").exists())
+                        .filter(|d| d.join(NODE_BIN).exists() && d.join("server-bundle.mjs").exists())
                 })
                 .unwrap_or_else(|| {
                     handle
@@ -412,7 +418,7 @@ fn main() {
                 });
             let _ = RES_DIR.set(res.clone());
             if let Ok(downloads) = handle.path().download_dir() { let _ = DOWNLOADS_DIR.set(downloads); }
-            let node = res.join("node.exe");
+            let node = res.join(NODE_BIN);
             let bundle = res.join("server-bundle.mjs");
             let resources_ok = node.exists() && bundle.exists();
 
@@ -509,9 +515,9 @@ fn main() {
                                     )
                                 } else {
                                     format!(
-                                        "缺少运行所需文件（node.exe 或 server-bundle.mjs），\
+                                        "缺少运行所需文件（{} 或 server-bundle.mjs），\
                                          安装可能不完整。资源目录：{}。请重新安装应用。",
-                                        res.display()
+                                        NODE_BIN, res.display()
                                     )
                                 };
                                 show_error_page(&inner, &msg);
