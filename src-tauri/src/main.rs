@@ -40,15 +40,15 @@ const NODE_BIN: &str = "node";
 // 隐藏 sidecar 控制台窗口：CREATE_NO_WINDOW 是 Windows 专属 API，
 // mac/Linux 上无控制台窗口概念，直接原样返回
 trait SidecarCmdExt {
-    fn hide_console(self) -> Self;
+    fn hide_console(&mut self) -> &mut Self;
 }
 impl SidecarCmdExt for Command {
     #[cfg(windows)]
-    fn hide_console(self) -> Self {
+    fn hide_console(&mut self) -> &mut Self {
         self.creation_flags(CREATE_NO_WINDOW)
     }
     #[cfg(not(windows))]
-    fn hide_console(self) -> Self {
+    fn hide_console(&mut self) -> &mut Self {
         self
     }
 }
