@@ -21,6 +21,14 @@ v1.0.23 ~ v1.0.42 由 **@Sh** 与 **@TunRat**（[@DontFPCKMe](https://github.com
 
 - **优化**：群通话共享以摄像头来源兼容云湖端，同时使用独立的屏幕编码参数，优先保留文字和细节
 
+### 安装说明
+
+1. Windows 安装版：下载 `yunhulaoda-1.0.42-windows-x64-setup.exe`，先彻底退出旧程序再双击覆盖安装（Windows 10/11 x64，需系统 WebView2 运行时，Win11 自带）
+2. Windows 便携版：下载 `yunhulaoda-1.0.42-windows-x64-portable.zip` 解压即用，免安装；首次运行会在解压目录自动生成 `yunhu.config.yml` 与 `certs/` 自签证书，删除目录即彻底清理
+3. macOS 版：下载 `yunhulaoda-1.0.42-macos-<架构>.dmg`（arm64 或 x64，按你的芯片选），挂载后拖入应用程序；未签名，首次打开需在「系统设置 → 隐私与安全性」允许
+4. Linux 版：下载 `yunhulaoda-1.0.42-linux-x64.AppImage`，`chmod +x` 后直接运行；需系统已装 WebKit2GTK 4.1 与 GTK3 运行时库
+5. 覆盖安装不会丢失本地数据：登录信息与会话缓存保存在文档目录（默认 `文档/yhchat`，关于页可自定义）
+
 ### 已知限制
 
 - 高帧率屏幕共享、跨窗口悬浮、群聊语音房及部分通话能力，仍需以实际 API、系统权限和运行环境的支持情况为准
