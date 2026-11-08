@@ -36,6 +36,22 @@ const CREATE_NO_WINDOW: u32 = 0x08000000;
 const NODE_BIN: &str = "node.exe";
 #[cfg(not(windows))]
 const NODE_BIN: &str = "node";
+
+// 隐藏 sidecar 控制台窗口：CREATE_NO_WINDOW 是 Windows 专属 API，
+// mac/Linux 上无控制台窗口概念，直接原样返回
+trait SidecarCmdExt {
+    fn hide_console(self) -> Self;
+}
+impl SidecarCmdExt for Command {
+    #[cfg(windows)]
+    fn hide_console(self) -> Self {
+        self.creation_flags(CREATE_NO_WINDOW)
+    }
+    #[cfg(not(windows))]
+    fn hide_console(self) -> Self {
+        self
+    }
+}
 use tauri::{
     image::Image,
     menu::{Menu, MenuItem},
@@ -130,7 +146,7 @@ fn open_external_url(url: String) -> Result<(), String> {
     let mut command = {
         let mut cmd = Command::new("rundll32.exe");
         cmd.arg("url.dll,FileProtocolHandler").arg(parsed.as_str());
-        cmd.creation_flags(CREATE_NO_WINDOW);
+        cmd.hide_console();
         cmd
     };
     #[cfg(target_os = "macos")]
@@ -222,7 +238,7 @@ fn spawn_sidecar(res: &std::path::Path) -> bool {
             .env("YH_BOT_BRIDGE_SECRET", userbot_security::bridge_secret())
             .stdout(f)
             .stderr(f2)
-            .creation_flags(CREATE_NO_WINDOW)
+            .hide_console()
             .spawn()
         {
             Ok(child) => {
@@ -245,7 +261,7 @@ fn spawn_sidecar(res: &std::path::Path) -> bool {
             .env("YH_BOT_BRIDGE_SECRET", userbot_security::bridge_secret())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
-            .creation_flags(CREATE_NO_WINDOW)
+            .hide_console()
             .spawn()
         {
             Ok(child) => {
