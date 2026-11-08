@@ -1,5 +1,20 @@
 /** 通用小工具 */
 
+const fileSizeUnits = ['B', 'KB', 'MB', 'GB', 'TB']
+
+export function formatFileSize(bytes: number | string) {
+  if (typeof bytes !== 'number' && (typeof bytes !== 'string' || !bytes.trim())) return ''
+  let size = Number(bytes)
+  if (!Number.isFinite(size) || size < 0) return ''
+  let unit = 0
+  while (size >= 1024 && unit < fileSizeUnits.length - 1) {
+    size /= 1024
+    unit++
+  }
+  const display = unit ? Math.floor(size * 100) / 100 : Math.floor(size)
+  return `${display} ${fileSizeUnits[unit]}`
+}
+
 export function fmtTime(ts) {
   if (!ts) return ''
   const d = new Date(ts > 1e12 ? ts : ts * 1000)

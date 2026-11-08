@@ -27,6 +27,8 @@ declare module 'cordis' {
     satori: any
     adapter: any
     chat: any
+    calls: any
+    lock?: { isLocked: boolean }
     ws: any
     messageActions: any
     group: any
@@ -59,7 +61,11 @@ declare module 'cordis' {
     'ui/toast': (...args: any[]) => void
     'ws/raw': (...args: any[]) => void
     'ws/message': (...args: any[]) => void
+    'ws/call-candidate': (signal: import('./yunhu-calls').CallCandidate) => void
+    'ws/call': (signal: import('./yunhu-calls').LiveCallSignal) => void
+    'ws/group-call': (invite: import('./yunhu-calls').GroupCallInvite) => void
     'ws/draft': (...args: any[]) => void
+    'ws/draft-ready': () => void
     'ws/stream': (...args: any[]) => void
     'message-created': (...args: any[]) => void
     'message-updated': (...args: any[]) => void

@@ -24,6 +24,7 @@ import { authPlugin } from './plugins/auth'
 import { adapterPlugin } from './plugins/adapter'
 import { chatPlugin } from './plugins/chat'
 import { wsPlugin } from './plugins/ws'
+import { callsPlugin } from './plugins/calls'
 import { messageActionsPlugin } from './plugins/message-actions'
 import { groupAdminPlugin } from './plugins/group-admin'
 import { quickReplyPlugin } from './plugins/quickreply'
@@ -44,6 +45,7 @@ import { botConsolePlugin } from './plugins/botconsole'
 import { communityPlugin } from './plugins/community'
 import { stickersPlugin } from './plugins/stickers'
 import { commandsPlugin } from './plugins/commands'
+import type { DetachedConversation } from './core/chat-window'
 import { lockPlugin } from './plugins/lock'
 import { userBotPlugin } from './plugins/userbot'
 
@@ -78,6 +80,7 @@ export const registry: RegistryItem[] = [
   { key: 'adapter', plugin: adapterPlugin, desc: '云湖适配器 · Satori 统一消息与事件', provide: ['bots', 'satori'], deps: ['api', 'auth'] },
   { key: 'chat', plugin: chatPlugin, desc: '会话/消息 · 注册「聊天」页面', provide: ['chat'], deps: ['api', 'auth'], core: true },
   { key: 'ws', plugin: wsPlugin, desc: 'WebSocket 实时收发', provide: ['ws'], deps: ['api', 'auth'], core: true },
+  { key: 'calls', plugin: callsPlugin, desc: '私聊通话预览', provide: ['calls'], deps: ['api', 'auth', 'ws', 'ui'], core: true },
   { key: 'message-actions', plugin: messageActionsPlugin, desc: '消息操作 · 撤回/多选/转发/引用/全选', provide: ['messageActions'], deps: ['chat', 'ui'] },
   { key: 'group-admin', plugin: groupAdminPlugin, desc: '群管理 · 成员/踢出/禁言/看板/记录搜索', provide: ['group'], deps: ['api', 'chat', 'ui'] },
   { key: 'quickreply', plugin: quickReplyPlugin, desc: '快捷回复 · 注册独立页面', provide: ['quickreply'], deps: ['ui', 'chat'] },
@@ -231,16 +234,18 @@ function waitService(name: string, ms = 3000): Promise<void> {
 }
 
 /** 启动：先读配置，再按配置装载其余插件（顺序 = registry 顺序） */
-export async function bootstrap(): Promise<Context> {
+export async function bootstrap(detachedConversation?: DetachedConversation): Promise<Context> {
+  const detachedServices = new Set(['storage', 'ui', 'theme', 'console', 'api', 'auth', 'adapter', 'chat',
+    'message-actions', 'group-admin', 'quickreply', 'commands', 'stickers', 'charbg'])
   appService.mount(itemOf('config'))
   await waitService('cfg')
   await (ctx as any).cfg.load()
 
   const appCfg = (ctx as any).cfg.all().app || {}
   for (const item of registry) {
-    if (item.key === 'config') continue
+    if (item.key === 'config' || (detachedConversation && !detachedServices.has(item.key))) continue
     const own = (ctx as any).cfg.plug?.(item.key) || {}
-    item.config = { ...appCfg, ...own }
+    item.config = { ...appCfg, ...own, detachedConversation }
     appService.mount(item)
     // 等这个插件把它提供的服务注册好，再进行下一个（cordis 的调度是异步的）
     const first = item.provide?.[0]

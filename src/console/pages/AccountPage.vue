@@ -4,6 +4,7 @@ import { inject, computed, ref, onMounted } from 'vue'
 import KLayout from '../components/KLayout.vue'
 import KCard from '../components/KCard.vue'
 import SettingsFrag from './SettingsPage.vue'
+import DownloadSettings from '../../components/DownloadSettings.vue'
 import NotificationSettings from '../../components/NotificationSettings.vue'
 import Icon from '../components/Icon.vue'
 import SavedAccounts from '../../components/SavedAccounts.vue'
@@ -109,6 +110,10 @@ onMounted(() => {
           {{ (c.num ?? c.amount ?? 0) >= 0 ? '+' : '' }}{{ c.num ?? c.amount ?? 0 }}
         </span>
       </div>
+    </KCard>
+
+    <KCard v-if="section === 'general'" title="下载目录" data-setting-id="downloads">
+      <DownloadSettings />
     </KCard>
 
     <KCard v-if="section === 'notifications'" title="消息通知" data-setting-id="notifications">

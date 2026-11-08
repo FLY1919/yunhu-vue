@@ -5,6 +5,7 @@ fn main() {
             "restart_sidecar",
             "set_privacy",
             "open_external_url",
+            "reset_media_permission",
             "native_notifications_supported",
             "show_message_notification",
             "dismiss_message_notification",
@@ -16,6 +17,11 @@ fn main() {
             "open_ai_panel",
             "close_ai_panel",
             "ai_panel_action",
+            "open_community_editor",
+            "close_community_editor",
+            "open_chat_window",
+            "close_chat_windows",
+            "close_current_chat_window",
         ])),
     )
     .expect("failed to build Tauri application permissions");

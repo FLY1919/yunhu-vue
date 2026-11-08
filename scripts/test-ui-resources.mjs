@@ -26,27 +26,30 @@ try{
   resource.setResourceMode(false)
   await ctx.chat.open(ctx.chat.state.conversations.find(c=>c.id==='normal'))
   ctx.chat.state.hasMore=false
-  ctx.chat.state.messages=Array.from({length:120},(_,i)=>({id:'pressure-'+i,type:7,ts:Date.now()+i,senderId:'other',sender:'测试',content:{},elements:[{type:'sticker',attrs:{src:'/qa-gif/'+i+'.gif',packId:5,itemId:i}}]}))
+  ctx.chat.state.messages=Array.from({length:48},(_,i)=>({id:'pressure-'+i,type:7,ts:Date.now()+i,senderId:'other',sender:'测试',content:{},elements:[{type:'sticker',attrs:{src:'/qa-gif/'+i+'.gif',packId:5,itemId:i}}]}))
  })
- await page.waitForFunction(()=>document.querySelectorAll('img.sticker[data-media-state=source]').length===120)
+ await page.waitForFunction(()=>document.querySelectorAll('img.sticker[data-media-state=source]').length===48)
  const before=await counts()
  await page.evaluate(()=>window.__resources.setResourceMode(true))
- await page.waitForFunction(()=>document.querySelectorAll('img.sticker[data-media-state=released]').length>90)
+ await page.waitForFunction(()=>document.querySelectorAll('img.sticker[data-media-state=released]').length>35)
  await page.waitForFunction(()=>document.querySelectorAll('img.sticker[data-media-state=preview]').length>0)
- const after=await counts();assert.ok(after.source<5);assert.ok(after.released>90)
+ const after=await counts();assert.ok(after.source<5);assert.ok(after.released>35)
+ // This fixture stays under the long-history threshold to measure media release separately.
  // No independent observers per image: the registry shares a root observer and no animation timer.
  const near=page.locator('img.sticker[data-media-state=preview]').last();await near.scrollIntoViewIfNeeded();await near.hover()
  await page.waitForFunction(()=>document.querySelectorAll('img.sticker[data-media-state=source]').length===1)
  await page.mouse.move(1,1);await page.waitForFunction(()=>document.querySelectorAll('img.sticker[data-media-state=source]').length===0)
  await page.evaluate(()=>window.dispatchEvent(new CustomEvent('yh-window-minimized',{detail:true})))
- await page.waitForFunction(()=>document.querySelectorAll('img.sticker[data-media-state=released]').length===120)
+ await page.waitForFunction(()=>document.querySelectorAll('img.sticker[data-media-state=released]').length===48)
  await page.evaluate(()=>window.dispatchEvent(new CustomEvent('yh-window-minimized',{detail:false})))
  await page.waitForFunction(()=>document.querySelectorAll('img.sticker[data-media-state=preview]').length>0)
  const area=page.locator('.messages');await area.evaluate(el=>el.scrollTop=0)
  await page.locator('[data-mid=pressure-0] img.sticker').waitFor()
  await page.waitForFunction(()=>document.querySelector('[data-mid=pressure-0] img.sticker')?.dataset.mediaState==='preview')
  await page.evaluate(()=>{const ctx=window.__qa.ctx;ctx.chat.state.messages.push({id:'video-resource',type:10,ts:Date.now()+999,senderId:'other',sender:'测试',content:{},elements:[{type:'video',attrs:{src:'/qa-video/test.mp4'}}]})})
- assert.equal(await page.locator('.video-wrap video').getAttribute('preload'),'none')
+ const video = page.locator('[data-mid=video-resource]')
+ await video.getByRole('button',{name:'播放视频'}).waitFor()
+ assert.equal(await video.locator('video').count(),0)
  // Real message rendering must fit original pixels, including stale metadata and released stills.
  await page.evaluate(()=>{
    window.__resources.setResourceMode(false)
@@ -76,5 +79,5 @@ try{
  const cdp=await page.context().newCDPSession(page);const heap=await cdp.send('Runtime.getHeapUsage')
  console.log(JSON.stringify({before,after,jsHeapMiB:Number((heap.usedSize/1048576).toFixed(2)),note:'JS heap only; excludes WebView/Node/GPU/native memory'},null,2))
  assert.deepEqual(errors,[])
- console.log('PASS: 120 animated stickers become bounded viewport stills, hover resumes one, minimize releases all, scrolling restores images and video does not preload')
+ console.log('PASS: 48 animated stickers become bounded viewport stills, hover resumes one, minimize releases all, scrolling restores images and video does not preload')
 }finally{await browser.close();await server.close()}

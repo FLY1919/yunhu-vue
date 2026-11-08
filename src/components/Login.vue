@@ -12,7 +12,6 @@ const emit = defineEmits<{ (e: 'done'): void; (e: 'cancel'): void }>()
 
 const ctx = inject<any>('ctx')
 const auth = ctx.auth
-const api = ctx.api
 
 const tab = ref('pwd')
 const email = ref(props.initialEmail || '')
@@ -58,7 +57,7 @@ const doToken = () => withBusy(() => auth.loginWithToken(token.value))
       <button class="main" :disabled="busy" @click="doToken">{{ busy ? '验证中…' : '进入' }}</button>
     </template>
 
-    <div class="err">{{ err || auth.state.error }}</div>
+    <div v-if="err || auth.state.error" class="err" role="alert">{{ err || auth.state.error }}</div>
     <button v-if="embedded" class="ghost" :disabled="busy" @click="emit('cancel')">取消添加</button>
     <div class="tip">登录凭据仅用于此设备恢复登录。</div>
   </div>

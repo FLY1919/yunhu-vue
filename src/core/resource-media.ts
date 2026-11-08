@@ -31,8 +31,8 @@ function update(entry: Entry) {
   const audioPlaying = el instanceof HTMLAudioElement && !el.paused && !el.ended && !locked
   const active = !economy || audioPlaying || (entry.near && !document.hidden && !minimized && !locked)
   if (el instanceof HTMLImageElement) {
-    if (economy && options.animated && (!entry.hover || !focused)) snapshot(entry)
-    const source = !active ? blank(el.width || options.width || 160, el.height || options.height || 120)
+    if (active && economy && options.animated && (!entry.hover || !focused)) snapshot(entry)
+    const source = !active ? blank(Number(el.getAttribute('width')) || options.width || 160, Number(el.getAttribute('height')) || options.height || 120)
       : economy && options.animated && (!entry.hover || !focused) && entry.preview ? entry.preview : options.src
     if (el.getAttribute('src') !== source) el.setAttribute('src', source)
     el.dataset.mediaState = !active ? 'released' : source === options.src ? 'source' : 'preview'

@@ -8,12 +8,18 @@
  * 卸载本插件，所有菜单条目与动作会一起消失（副作用绑定在调用方上下文）。
  */
 import { downloadMedia, revealMedia } from '../core/media'
+import { copyImage } from '../core/image-clipboard'
+import { resUrl } from '../core/res'
 import { reactive } from 'vue'
 import type { Context } from '../core/context'
 import ForwardDialog from '../components/ForwardDialog.vue'
 import EditHistoryDialog from '../components/EditHistoryDialog.vue'
 import EditDialog from '../components/EditDialog.vue'
 import SelectAllButton from '../components/SelectAllButton.vue'
+
+const messageImage = ({ msg, image }: any) => image || resUrl(
+  msg?.elements?.find((el: any) => ['img', 'sticker'].includes(el.type) && el.attrs?.src)?.attrs.src
+)
 
 export const messageActionsPlugin = {
   name: 'message-actions',
@@ -68,6 +74,7 @@ export const messageActionsPlugin = {
       { id: 'msg.reply', label: '引用', icon: 'quote', order: 10 },
       { id: 'msg.forward', label: '转发', icon: 'forward', order: 20 },
       { id: 'msg.copy', label: '复制文本', icon: 'copy', order: 30 },
+      { id: 'msg.copy-image', label: '复制图片', icon: 'image', order: 31, when: p => !!messageImage(p) },
       {
         // 图片/表情消息右键收藏：表情直接收藏，图片转成表情收藏（云湖 /v1/expression/create）
         id: 'msg.fav', label: '添加到收藏', icon: 'star', order: 35,
@@ -115,12 +122,12 @@ export const messageActionsPlugin = {
       action: ({ msg }: any) => { state.editingId = msg.id },
     }, ctx)
 
-    /** Save-as and reveal are distinct operations. */
+    /** Download and reveal are distinct operations. */
     chat.menu('message', [{ id: 'msg.save', label: '下载文件 / 视频', icon: 'download', order: 65,
       when: (p: any) => !!p?.msg?.elements?.some((e: any) => ['file', 'video', 'audio'].includes(e.type)) }], ctx)
     chat.action('msg.save', { action: async ({ msg }: any) => {
       const media = msg.elements.find((e: any) => ['file', 'video', 'audio'].includes(e.type))
-      try { await downloadMedia(media); ui.toast('已保存', 'success') }
+      try { if (await downloadMedia(media, ctx.api?.token)) ui.toast('下载完成', 'success') }
       catch (e: any) { if (e?.name !== 'AbortError') ui.toast('保存失败：' + e.message, 'error') }
     } }, ctx)
 
@@ -147,6 +154,13 @@ export const messageActionsPlugin = {
         }
       },
     }, ctx)
+
+    chat.action('msg.copy-image', { action: async (payload: any) => {
+      const image = messageImage(payload)
+      if (!image) return
+      try { await copyImage(image); ui.toast('图片已复制到剪贴板', 'success') }
+      catch (error: any) { ui.toast('复制图片失败：' + (error?.message || '请检查剪贴板权限'), 'error') }
+    } }, ctx)
 
     /** 收藏表情：取消息里第一张图/表情，直接进表情收藏（图片转表情） */
     chat.action('msg.fav', {

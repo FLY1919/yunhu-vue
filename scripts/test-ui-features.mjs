@@ -11,7 +11,7 @@ const browser = await chromium.launch({ headless: true, executablePath: process.
 const page = await browser.newPage({ viewport: { width: 1280, height: 820 } }), errors = []
 page.on('pageerror', e => errors.push(e.message))
 const base = 'http://127.0.0.1:' + server.httpServer.address().port
-const shot = async name => { if (process.env.UI_QA_SCREENSHOTS) { await mkdir(process.env.UI_QA_SCREENSHOTS,{recursive:true});await page.screenshot({path:resolve(process.env.UI_QA_SCREENSHOTS,name+'.png')}) } }
+const shot = async name => { if (process.env.UI_QA_SCREENSHOTS) { await mkdir(process.env.UI_QA_SCREENSHOTS,{recursive:true});await page.screenshot({animations:'disabled',path:resolve(process.env.UI_QA_SCREENSHOTS,name+'.png')}) } }
 try {
   await page.route('**/sticker-directory?*', route => {
     const author = new URL(route.request().url()).searchParams.get('author_id')
@@ -131,21 +131,40 @@ try {
   const initial=await page.locator('.viewer-img').getAttribute('style');await page.mouse.wheel(55,35)
   await page.waitForFunction(style=>document.querySelector('.viewer-img').getAttribute('style')!==style,initial)
   await page.locator('.viewer-bar button[title="关闭"]').click()
-  await page.evaluate(() => {
-    HTMLVideoElement.prototype.requestFullscreen = () => Promise.reject(new Error('test CSS fullscreen fallback'))
-    window.__qa.ctx.chat.state.messages.push({ id:'video-gestures',ts:Date.now(),type:10,sender:'虚拟用户',senderId:'peer',elements:[{type:'video',attrs:{src:'data:video/mp4;base64,',time:6}}] })
-  })
+  await page.evaluate(video => {
+    window.__nativeFullscreen = 0
+    HTMLVideoElement.prototype.requestFullscreen = () => { window.__nativeFullscreen++; return Promise.resolve() }
+    window.__qa.ctx.chat.state.messages.push({ id:'video-gestures',ts:Date.now(),type:10,sender:'虚拟用户',senderId:'peer',elements:[{type:'video',attrs:{src:video,time:1}}] })
+  }, 'data:video/webm;base64,GkXfo59ChoEBQveBAULygQRC84EIQoKEd2VibUKHgQJChYECGFOAZwEAAAAAAAIZEU2bdLpNu4tTq4QVSalmU6yBoU27i1OrhBZUrmtTrIHYTbuMU6uEElTDZ1OsggEeTbuMU6uEHFO7a1OsggID7AEAAAAAAABZAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAVSalmsirXsYMPQkBNgI1MYXZmNjAuMTYuMTAwV0GNTGF2ZjYwLjE2LjEwMESJiEB/QAAAAAAAFlSua8GuAQAAAAAAADjXgQFzxYhzk8KQ/QsX8ZyBACK1nIN1bmSIgQCGhVZfVlA4g4EBI+ODhA7msoDgibCBQLqBJJqBAhJUw2f8c3OgY8CAZ8iaRaOHRU5DT0RFUkSHjUxhdmY2MC4xNi4xMDBzc9ZjwItjxYhzk8KQ/QsX8WfIoUWjh0VOQ09ERVJEh5RMYXZjNjAuMzEuMTAyIGxpYnZweGfIoUWjiERVUkFUSU9ORIeTMDA6MDA6MDAuNTAwMDAwMDAwAB9DtnXf54EAo8KBAACAkAMAnQEqQAAkAABHCIWFiIWEiAICAnWqA/gD+gIHO3nizzMeXgD+/W7z/+OZNzDE/45t//FhPA4oyP/xUQCjloEA+gDRAQAFEKwAGAAYWC/0AAiMAAAcU7trkbuPs4EAt4r3gQHxggGf8IED')
   const videoRow = page.locator('[data-mid="video-gestures"]'); await videoRow.scrollIntoViewIfNeeded()
-  await videoRow.locator('.vfull').click()
-  await page.locator('.viewer-mask video').waitFor()
+  await videoRow.locator('.video-preview img[src^="data:image/"]').waitFor()
+  assert.equal(await videoRow.locator('video').count(),0)
+  await videoRow.getByRole('button',{name:'在软件内全屏'}).click()
+  assert.equal(await page.evaluate(() => window.__nativeFullscreen),0)
+  await page.locator('.viewer-mask.video-full video').waitFor()
+  assert.equal(await page.locator('.viewer-mask video').getAttribute('controlslist'),'nofullscreen')
+  await page.keyboard.press('Escape')
+  assert.equal(await page.locator('.viewer-mask.video-full').count(),0)
   await page.locator('.viewer-mask video').hover();await page.keyboard.down('Control');await page.mouse.wheel(0,-40);await page.keyboard.up('Control')
   await page.waitForFunction(()=>parseInt(document.querySelector('.viewer-zoom').textContent)>100)
   const videoStyle=await page.locator('.viewer-mask video').getAttribute('style');await page.mouse.wheel(40,30)
   await page.waitForFunction(style=>document.querySelector('.viewer-mask video').getAttribute('style')!==style,videoStyle)
   await page.locator('.viewer-bar button[title="还原"]').click()
-  await page.locator('.viewer-mask video').click({position:{x:100,y:100}})
+  await page.locator('.viewer-mask video').click()
   assert.equal(await page.locator('.viewer-mask').count(),1)
   await page.locator('.viewer-bar button[title="关闭"]').click()
+  await page.evaluate(() => {
+    const ctx = window.__qa.ctx
+    ctx.community = { openSharedPost: article => { window.__articleTarget = article.id } }
+    ctx.chat.state.messages.push({ id:'article-preview', ts:Date.now()+10, type:6, sender:'虚拟用户',
+      elements:[{type:'post',attrs:{id:'7331',title:'预览标题',content:'#### 主题标题\n\n---\n\n1. [条目](https://example.invalid)'}}] })
+  })
+  const article = page.locator('[data-mid="article-preview"]')
+  await article.getByRole('heading',{name:'主题标题'}).waitFor()
+  assert.equal(await article.locator('hr').count(),1)
+  assert.equal(await article.locator('li').textContent(),'条目')
+  await article.getByRole('button',{name:'查看详情：预览标题'}).click()
+  assert.equal(await page.evaluate(() => window.__articleTarget),7331)
   assert.deepEqual(errors,[])
   if(process.env.UI_QA_SCREENSHOTS) { await mkdir(process.env.UI_QA_SCREENSHOTS,{recursive:true});await page.screenshot({path:resolve(process.env.UI_QA_SCREENSHOTS,'features-complete.png')}) }
   console.log('PASS: viewer toolbar is icon-only, image/video plain-wheel and Ctrl-wheel zoom work, video clicks preserve playback; no browser exceptions')

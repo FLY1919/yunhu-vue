@@ -4,6 +4,7 @@
  * 项目介绍（同 README 摘要）+ 原仓库/本仓库超链接 + 求 star + 数据目录自定义。
  */
 import { inject, ref, onMounted } from 'vue'
+import DownloadSettings from '../../components/DownloadSettings.vue'
 import Icon from '../components/Icon.vue'
 
 const ctx = inject<any>('ctx')
@@ -17,52 +18,20 @@ const dirState = ref({ dir: '', custom: false, def: '' })
 const newDir = ref('')
 const dirBusy = ref(false)
 
-/* ---- 文件保存目录（默认 数据目录/file，可自定义） ---- */
-const fileDirState = ref({ dir: '', custom: false, def: '' })
-const newFileDir = ref('')
-const fileDirBusy = ref(false)
-async function loadFileDir() {
-  try {
-    const r = await fetch('/file-dir')
-    if (r.ok) fileDirState.value = await r.json()
-  } catch { /* server 未就绪 */ }
-}
-async function saveFileDir() {
-  fileDirBusy.value = true
-  try {
-    const r = await fetch('/file-dir', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ dir: newFileDir.value.trim() }) })
-    const j = await r.json().catch(() => null)
-    if (j?.ok) { fileDirState.value.dir = j.dir; fileDirState.value.custom = true; ctx.ui?.toast?.('文件保存目录已更新', 'success') }
-    else ctx.ui?.toast?.('保存失败：' + (j?.msg || r.status), 'error')
-  } finally { fileDirBusy.value = false; newFileDir.value = '' }
-}
-async function resetFileDir() {
-  fileDirBusy.value = true
-  try {
-    await fetch('/file-dir', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ dir: fileDirState.value.def }) })
-    await loadFileDir()
-    ctx.ui?.toast?.('已恢复默认目录', 'success')
-  } finally { fileDirBusy.value = false }
-}
-
 onMounted(async () => {
   try {
     const r = await fetch('/data-dir')
     if (r.ok) dirState.value = await r.json()
   } catch { /* 端点不可用（纯静态部署）时不显示该区块 */ }
-  loadFileDir()
 })
 
 /** 弹系统原生「选择文件夹」对话框，把选中路径回填到对应输入框（也可直接粘贴路径）。
  *  取消/不支持时 dir 为空，静默返回不打扰。 */
-async function pickDir(target: 'data' | 'file') {
+async function pickDir() {
   try {
     const r = await fetch('/pick-dir')
     const j = await r.json().catch(() => null)
-    if (j?.ok && j.dir) {
-      if (target === 'data') newDir.value = j.dir
-      else newFileDir.value = j.dir
-    }
+    if (j?.ok && j.dir) newDir.value = j.dir
   } catch { ctx.ui?.toast?.('无法打开目录选择框，请手动粘贴路径', 'warn') }
 }
 
@@ -141,24 +110,14 @@ async function resetDir() {
       </p>
       <div class="ab-dir-row">
         <input v-model="newDir" class="ab-input" placeholder="自定义目录，如 D:\文档\yhchat" />
-        <button class="ab-btn ghost" :disabled="dirBusy" @click="pickDir('data')">浏览…</button>
+        <button class="ab-btn ghost" :disabled="dirBusy" @click="pickDir()">浏览…</button>
         <button class="ab-btn" :disabled="dirBusy || !newDir.trim()" @click="saveDir">保存</button>
         <button v-if="dirState.custom" class="ab-btn ghost" :disabled="dirBusy" @click="resetDir">恢复默认</button>
       </div>
       <p class="ab-hint">可点「浏览…」选文件夹，也可直接粘贴路径。建议文件夹名用 yhchat；修改后旧目录里的数据会自动搬过去。</p>
 
-      <div class="ab-sec" style="margin-top:14px">文件保存目录</div>
-      <p class="ab-desc small">
-        消息文件/群盘下载保存到：<b>{{ fileDirState.dir || '—' }}</b>
-        <em v-if="fileDirState.custom">（自定义）</em><em v-else>（默认：数据目录/file）</em>
-      </p>
-      <div class="ab-dir-row">
-        <input v-model="newFileDir" class="ab-input" placeholder="如 D:\文档\yhchat\file" />
-        <button class="ab-btn ghost" :disabled="fileDirBusy" @click="pickDir('file')">浏览…</button>
-        <button class="ab-btn" :disabled="fileDirBusy || !newFileDir.trim()" @click="saveFileDir">保存</button>
-        <button v-if="fileDirState.custom" class="ab-btn ghost" :disabled="fileDirBusy" @click="resetFileDir">恢复默认</button>
-      </div>
-      <p class="ab-hint">「保存文件」与「在文件夹中打开」都会下载到这里并弹出资源管理器定位。</p>
+      <div class="ab-sec" style="margin-top:14px">下载目录</div>
+      <DownloadSettings />
     </div>
   </div>
 </template>

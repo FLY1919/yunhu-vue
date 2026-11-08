@@ -94,8 +94,8 @@ export function createRecallCache(storage: any, accountId: () => string, enabled
     ready, merge,
     recalled(channel: any, since: number) {
       if (!enabled() || !accountId()) return []
-      prune()
-      return Object.entries(data).filter(([k, m]) => k.startsWith(prefix(channel)) && m.recalled && m.ts >= since)
+      const channelPrefix = prefix(channel)
+      return Object.entries(data).filter(([k, m]) => k.startsWith(channelPrefix) && m.recalled && m.ts >= since && valid(m))
         .map(([, m]) => ({ ...m, retainedRecall: true }))
     },
     async clear() {

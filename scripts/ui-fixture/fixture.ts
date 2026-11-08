@@ -1,5 +1,5 @@
 // 只使用虚拟账号和本地数据，挂载真实组件及聊天服务。
-import { createApp, reactive, markRaw } from 'vue'
+import { createApp, reactive, markRaw, h, Fragment } from 'vue'
 import Console from '../../src/console/Console.vue'
 import ChatPage from '../../src/console/pages/ChatPage.vue'
 import AccountConfigPage from '../../src/console/pages/AccountConfigPage.vue'
@@ -54,7 +54,7 @@ const ctx: any = {
       { path: '/account', name: '账号与配置', icon: 'settings', component: markRaw(AccountConfigPage) },
       { path: '/config', name: '账号与配置', icon: 'settings', component: markRaw(AccountConfigPage) },
       { path: '/contacts', name: '通讯录', icon: 'contacts', component: markRaw(ContactsPage) },
-    ], goto(path: string) { this.state.currentPage = path } },
+    ], goto(path: string, settingsCategory = '') { this.state.settingsCategory = settingsCategory; this.state.currentPage = path } },
   logger: { error: console.error, info() {} },
   on(name: string, fn: any) { if (!listeners.has(name)) listeners.set(name, new Set()); listeners.get(name)!.add(fn); return () => listeners.get(name)?.delete(fn) },
   emit(name: string, ...args: any[]) { for (const fn of listeners.get(name) || []) fn(...args) },
@@ -78,6 +78,12 @@ if (new URLSearchParams(location.search).has('groupcreate')) {
   ctx.console.addEntry = () => {}
   socialPlugin.apply(ctx)
 }
+if (new URLSearchParams(location.search).has('group-message-labels')) {
+  const { groupAdminPlugin } = await import('../../src/plugins/group-admin')
+  ctx.api.addressBook = async () => ({ users: [] })
+  ctx.api.listTags = async () => []
+  groupAdminPlugin.apply(ctx)
+}
 if (new URLSearchParams(location.search).has('userbot') && !new URLSearchParams(location.search).has('ai-panel')) {
   ctx.console.pages = reactive(ctx.console.pages)
   ctx.console.addEntry = (register: any) => register({ page: (page: any) => ctx.console.pages.push(markRaw(page)), slot: (slot: any) => ctx.console.state.slots.push(markRaw(slot)) })
@@ -85,8 +91,63 @@ if (new URLSearchParams(location.search).has('userbot') && !new URLSearchParams(
   userBotPlugin.apply(ctx)
   installAiPanelHost(ctx)
 }
+const callAccount = new URLSearchParams(location.search).get('call-account')
+let root = Console as any
+if (callAccount) {
+  const { callsPlugin } = await import('../../src/plugins/calls')
+  const { default: PrivateCallPanel } = await import('../../src/components/PrivateCallPanel.vue')
+  const { decodeCallCandidate, decodeLiveCall, decodeGroupCallInvite } = await import('../../src/core/yunhu-calls')
+  const pb = await import('../../src/core/pb')
+  const wire: any = { set(k: string, value: any) { this[k] = value } }
+  apiPlugin.apply(wire, { base: '/call-wire' })
+  for (const key of ['startPrivateCall', 'answerPrivateCall', 'sendCallCandidate', 'currentPrivateCall', 'finishPrivateCall', 'startGroupCall', 'joinGroupCall', 'groupVoiceRooms', 'enterGroupVoiceRoom']) ctx.api[key] = wire.api[key]
+  ctx.api.listMembers = async () => ({ total: 2, list: [{ id: 'alpha', name: 'Alpha 群成员' }, { id: 'bravo', name: 'Bravo 群成员' }] })
+  ctx.auth.state.user = { id: callAccount, name: callAccount, avatar: '/scripts/ui-fixture/animated.gif' }
+  ctx.auth.state.status = 'ready'
+  ctx.auth.deviceId = 'test-' + callAccount
+  ctx.api.token = 'offline-' + callAccount
+  wire.api.setToken(ctx.api.token)
+  ctx.ws.online = true
+  ctx.ws.state.status = 'online'
+  ctx.callFixture = {
+    push(room: string, senderId: string, type: number) {
+      ctx.emit('ws/message', { cmd: 'push_message', msg: { chatType: 1, id: room, senderId, recvId: callAccount, type } })
+    },
+    groupPush(room: string, senderId: string, groupId: string, type: number, invitees: string[]) {
+      ctx.emit('ws/message', { cmd: 'push_message', msg: { chatType: 2, id: room, senderId, chatId: groupId, type, content: { call_invitees: invitees } } })
+    },
+    groupInvite(room: string, senderId: string, groupId: string) {
+      const payload = pb.build(pb.fStr(1, room), pb.fStr(2, senderId), pb.fStr(3, groupId), pb.fNum(4, 2),
+        pb.fStr(5, 'group_live_invite_add'), pb.fStr(6, 'offline-direct-join'), pb.fStr(8, senderId))
+      const decoded = decodeGroupCallInvite(payload)
+      if (decoded) ctx.emit('ws/group-call', decoded)
+    },
+    groupResponse() {
+      return [...pb.build(pb.fBytes(1, pb.fNum(2, 1)), pb.fStr(3, 'offline-group-host'))]
+    },
+    signal(cmd: string, room: string, sender: string, data?: unknown) {
+      const payload = pb.build(pb.fStr(1, room), pb.fStr(2, sender), pb.fNum(4, 1), pb.fStr(5, cmd), pb.fStr(6, JSON.stringify(data ?? '')))
+      const decoded = decodeLiveCall(cmd, payload)
+      if (decoded) ctx.emit('ws/call', decoded)
+    },
+    candidate(cmd: string, sender: string, data: string) {
+      const payload = pb.build(pb.fStr(1, sender), pb.fStr(4, 'candidate'), pb.fStr(5, data))
+      const decoded = decodeCallCandidate(cmd, payload)
+      if (decoded) ctx.emit('ws/call-candidate', decoded)
+    },
+    decodeOffer(bytes: number[]) {
+      const request = pb.decode(new Uint8Array(bytes))
+      const content = pb.msg(request, 5)
+      return { room: pb.str(request, 2), chatId: pb.str(request, 3), chatType: pb.num(request, 4), type: pb.num(request, 6),
+        form: JSON.parse(pb.str(content, 7) || 'null'), peer: pb.str(content, 28), title: pb.str(content, 29),
+        invitees: pb.list(content, 28).map(bytes => new TextDecoder().decode(bytes)) }
+    },
+  }
+  callsPlugin.apply(ctx)
+  root = { render: () => h(Fragment, [h(Console), h(PrivateCallPanel)]) }
+}
 document.documentElement.dataset.platform = 'web'
 const panelSession = new URLSearchParams(location.search).get('ai-panel')
-const app = panelSession ? createApp(FloatingAiPanel, { sessionId: panelSession }) : createApp(Console); app.provide('ctx', ctx); app.mount('#app')
+const app = panelSession ? createApp(FloatingAiPanel, { sessionId: panelSession }) : createApp(root); app.provide('ctx', ctx); app.mount('#app')
 ;(window as any).__qa = { ctx, sanitizeHtml, messages }
 window.addEventListener('beforeunload', () => { app.unmount(); for (const cleanup of cleanups.reverse()) cleanup() })

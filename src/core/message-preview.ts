@@ -21,5 +21,5 @@ export function messagePreview(message: any): string {
 export function messageQuote(message: any) {
   const elements = message.elements?.length ? message.elements : parse(message.content || {}, message.type)
   const image = !message.recalled && elements.find((el: any) => el.type === 'img' || el.type === 'sticker')
-  return { id: message.id, sender: message.sender || '', preview: messagePreview(message), image: image?.attrs.src || '' }
+  return { kind: elements.find((el:any)=>['video','audio','file'].includes(el.type))?.type || 'text', id: message.id, sender: message.sender || '', preview: messagePreview(message), image: image?.attrs.src || '' }
 }

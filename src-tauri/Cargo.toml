@@ -1,6 +1,6 @@
 [package]
 name = "yunhulaoda-desktop"
-version = "1.0.22"
+version = "1.0.42"
 description = "云湖牢大版桌面客户端（Tauri 壳 + Node sidecar 服务）"
 authors = ["yibanm"]
 edition = "2021"

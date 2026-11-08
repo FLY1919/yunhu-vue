@@ -54,7 +54,7 @@ export const configPlugin = {
       /** 从 server 拉取 yunhu.config.yml */
       async load() {
         try {
-          const res = await fetch('/config', { cache: 'no-store' })
+          const res = await fetch('/config', { cache: 'no-store', signal: AbortSignal.timeout(5000) })
           if (!res.ok) throw new Error('HTTP ' + res.status)
           const text = await res.text()
           state.text = text

@@ -21,7 +21,7 @@ mod platform {
                 StructuredStorage::{PropVariantChangeType, PVCHF_DEFAULT}},
                 Variant::VT_LPWSTR, WinRT::{RoInitialize, RoUninitialize, RO_INIT_SINGLETHREADED}},
             UI::Shell::{IShellLinkW, ShellLink, SetCurrentProcessExplicitAppUserModelID,
-                SHChangeNotify, SHCNE_CREATE, SHCNE_UPDATEITEM, SHCNF_PATHW, SHCNF_FLUSH,
+                SHChangeNotify, SHCNE_CREATE, SHCNE_UPDATEITEM, SHCNF_PATHW, SHCNF_FLUSHNOWAIT,
                 PropertiesSystem::IPropertyStore},
         },
     };
@@ -73,7 +73,6 @@ mod platform {
         let shortcut_existed = shortcut.exists();
         if let Some(parent) = shortcut.parent() { std::fs::create_dir_all(parent).map_err(|e| e.to_string())?; }
         unsafe {
-            SetCurrentProcessExplicitAppUserModelID(&HSTRING::from(APP_ID)).map_err(|e| format!("设置进程通知身份失败：{e}"))?;
             let link: IShellLinkW = CoCreateInstance(&ShellLink, None, CLSCTX_INPROC_SERVER).map_err(|e| format!("创建通知快捷方式失败：{e}"))?;
             link.SetPath(&HSTRING::from(exe.as_path())).map_err(|e| format!("设置通知快捷方式路径失败：{e}"))?;
             link.SetDescription(&HSTRING::from("云湖牢大版")).map_err(|e| e.to_string())?;
@@ -96,7 +95,7 @@ mod platform {
             // Save 写入磁盘后通知 Shell；不依赖 Explorer 恰好已扫描到新 AUMID。
             let shortcut_path = HSTRING::from(shortcut.as_path());
             SHChangeNotify(if shortcut_existed { SHCNE_UPDATEITEM } else { SHCNE_CREATE },
-                SHCNF_PATHW | SHCNF_FLUSH, Some(shortcut_path.as_ptr().cast()), None);
+                SHCNF_PATHW | SHCNF_FLUSHNOWAIT, Some(shortcut_path.as_ptr().cast()), None);
         }
         // 上次进程退出后已无法点击定位的旧通知不继续留在通知中心。
         if first_registration {
@@ -106,6 +105,11 @@ mod platform {
         }
         *registered = true;
         Ok(())
+    }
+
+    pub fn set_process_identity() -> Result<(), String> {
+        unsafe { SetCurrentProcessExplicitAppUserModelID(&HSTRING::from(APP_ID)) }
+            .map_err(|e| format!("设置进程通知身份失败：{e}"))
     }
 
     pub fn initialize() -> Result<(), String> {
@@ -243,18 +247,30 @@ mod platform {
 }
 
 #[tauri::command]
-pub fn native_notifications_supported() -> Result<bool, String> {
+pub async fn native_notifications_supported() -> Result<bool, String> {
     #[cfg(windows)]
-    { platform::initialize().map(|()| true) }
+    {
+        tauri::async_runtime::spawn_blocking(|| platform::initialize().map(|()| true))
+            .await
+            .map_err(|e| e.to_string())?
+    }
     #[cfg(not(windows))]
     { Ok(false) }
 }
 
-// 在创建首个窗口前建立进程身份；失败仍可在测试通知时重试。
+// Assign the process identity before creating windows. Shell and WinRT work can wait on
+// Explorer, so perform registration off the window thread.
 pub fn initialize() {
     #[cfg(windows)]
-    if let Err(error) = platform::initialize() {
-        eprintln!("[notifications] {error}");
+    {
+        if let Err(error) = platform::set_process_identity() {
+            eprintln!("[notifications] {error}");
+        }
+        tauri::async_runtime::spawn_blocking(|| {
+            if let Err(error) = platform::initialize() {
+                eprintln!("[notifications] {error}");
+            }
+        });
     }
 }
 

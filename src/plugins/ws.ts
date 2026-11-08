@@ -10,6 +10,7 @@
 import { reactive, watch } from 'vue'
 import type { Context } from '../core/context'
 import * as pb from '../core/pb'
+import { decodeCallCandidate, decodeGroupCallInvite, decodeLiveCall } from '../core/yunhu-calls'
 import { decodeContent, decodeSenderTags } from './api'
 
 /** PushMessage / 编辑消息 */
@@ -74,7 +75,7 @@ export const wsPlugin = {
     function log(...a) { ctx.logger?.info('[ws]', ...a) }
 
     function sendJson(obj) {
-      if (socket && socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify(obj))
+      if (socket && socket.readyState === WebSocket.OPEN) {socket.send(JSON.stringify(obj));return true}return false
     }
 
     async function url() {
@@ -106,6 +107,7 @@ export const wsPlugin = {
           data: { userId: auth.state.user?.id, token: api.token, platform: 'Web', deviceId: auth.deviceId || deviceId() },
         })
         clearInterval(hbTimer)
+        ctx.emit('ws/draft-ready')
         hbTimer = setInterval(() => sendJson({ seq: seq(), cmd: 'heartbeat', data: {} }), hbMs)
         // 稳定计时：存活够久才认为「真的连上了」，把重连计数归零；
         // 若在此期间被秒断，onclose 会清掉这个计时器，retry 得以继续累加
@@ -187,7 +189,31 @@ export const wsPlugin = {
       const any = anyBytes ? pb.decode(anyBytes) : {}
       const value = pb.raw(any, 2) // Any.value
 
+      if (value && cmd.startsWith('live_video_user_')) {
+        try {
+          const signal = decodeLiveCall(cmd, value)
+          if (signal) ctx.emit('ws/call', signal)
+        } catch { /* Ignore malformed call frames. */ }
+        return
+      }
       switch (cmd) {
+        case 'file_send_message':
+        case 'candidate':
+          if (value) {
+            try {
+              const candidate = decodeCallCandidate(cmd, value)
+              if (candidate) ctx.emit('ws/call-candidate', candidate)
+            } catch { /* Ignore malformed candidate frames. */ }
+          }
+          break
+        case 'group_live_invite_add':
+          if (value) {
+            try {
+              const invite = decodeGroupCallInvite(value)
+              if (invite) ctx.emit('ws/group-call', invite)
+            } catch { /* Ignore malformed group call frames. */ }
+          }
+          break
         case 'push_message':
         case 'edit_message':
           if (value) ctx.emit('ws/message', { cmd, msg: decodePush(value) })
@@ -224,6 +250,7 @@ export const wsPlugin = {
       connect,
       close,
       reconnect: () => { close(); retry = 0; connect() },   // 手动重连：重置计数，重新快速重连
+      sendDraft(chatId:string,input:string){if(!chatId||typeof input!=='string'||input.length>200000)return false;return sendJson({seq:seq(),cmd:'inputInfo',data:{chatId,input,deviceId:auth.deviceId||deviceId()}})},
       get online() { return state.status === 'online' },
       send: sendJson,
     }

@@ -6,6 +6,7 @@ import { createNativeNotifications } from '../core/notifications'
 
 export interface ToastOptions {
   title?: string
+  notificationTest?: boolean
   avatar?: string
   key?: string
   onClick?: () => void | Promise<void>
@@ -24,13 +25,15 @@ export const uiPlugin = {
     const effective = (t: string) => (t === 'auto' ? (state.systemDark ? 'dark' : 'light') : t)
     const preferredMode = localStorage.getItem('yh.notification.mode')
     const state = reactive({ theme: saved, systemDark: sysDark(), toasts: [] as any[], panel: 'chat', confirmReq: null as any,
-      notificationMode: preferredMode === 'in-app' ? 'in-app' : preferredMode === 'windows' ? 'windows' :
+      notificationMode: config.detachedConversation ? 'in-app' : preferredMode === 'in-app' ? 'in-app' : preferredMode === 'windows' ? 'windows' :
         ((window as any).__TAURI__ ? 'windows' : 'in-app'),
+      systemToastInFocus: localStorage.getItem('yh.notification.systemInFocus') !== 'false',
       nativeNotificationsAvailable: false, nativeNotificationsSupported: false, notificationError: '',
     })
     let seq = 0
     let disposed = false
     let windowMinimized = false
+    let nativeFocused = true
     const instance = Math.random().toString(36).slice(2, 10)
     const nativeTimeoutMs = Math.max(10, Number(config.nativeTimeoutMs) || 8000)
     const nativeToasts = new Map<number, NativeToast>()
@@ -40,7 +43,7 @@ export const uiPlugin = {
     }, (id, error) => {
       const toast = [...nativeToasts.values()].find(t => t.nativeId === id)
       if (toast) fallback(toast, error)
-    })
+    }, !config.detachedConversation)
     state.nativeNotificationsSupported = native.available
     void native.ready.then(available => {
       if (!disposed) {
@@ -75,6 +78,8 @@ export const uiPlugin = {
       toast(text: string, type = 'info', ms = 3200, options: ToastOptions = {}) {
         if (disposed || (type === 'message' && (ctx as any).lock?.isLocked)) return 0
         if (type === 'message' && state.notificationMode === 'windows') {
+          if (!options.notificationTest && !state.systemToastInFocus && nativeFocused
+            && !windowMinimized && !document.hidden && document.hasFocus?.() !== false) return 0
           if (options.key) ui.dismissMessages(key => key === options.key)
           const id = ++seq
           const toast = { ...options, id, nativeId: instance + id.toString(36), text, ms }
@@ -105,9 +110,13 @@ export const uiPlugin = {
         state.notificationError = ''
         localStorage.setItem('yh.notification.mode', mode)
       },
+      setSystemToastInFocus(enabled: boolean) {
+        state.systemToastInFocus = enabled
+        localStorage.setItem('yh.notification.systemInFocus', String(enabled))
+      },
       testNotification() {
         ui.toast('这是一条测试通知。新消息通知仅接收未开启免打扰的会话。', 'message', 6500, {
-          title: '云湖牢大版 · 通知测试', key: 'test:notification',
+          title: '云湖牢大版 · 通知测试', key: 'test:notification', notificationTest: true,
           onClick: () => { ui.toast('通知点击成功', 'success') },
         })
       },
@@ -192,6 +201,8 @@ export const uiPlugin = {
       }
       document.addEventListener('click', onExternalClick)
       const onMinimized = (event: Event) => { windowMinimized = (event as CustomEvent).detail === true; resumeHiddenMessages() }
+      const onNativeFocus = (event: Event) => { nativeFocused = (event as CustomEvent).detail === true }
+      window.addEventListener('yh-window-focused', onNativeFocus)
       window.addEventListener('yh-window-minimized', onMinimized)
       document.addEventListener('visibilitychange', resumeHiddenMessages)
       return () => {
@@ -200,6 +211,7 @@ export const uiPlugin = {
         native.dispose()
         mq?.removeEventListener?.('change', onSys)
         document.removeEventListener('click', onExternalClick)
+        window.removeEventListener('yh-window-focused', onNativeFocus)
         window.removeEventListener('yh-window-minimized', onMinimized)
         document.removeEventListener('visibilitychange', resumeHiddenMessages)
         for (const timer of timers.values()) clearTimeout(timer)

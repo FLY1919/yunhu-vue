@@ -1,0 +1,48 @@
+/* Motion and surfaces shared only by the group panels introduced after 1.0.32. */
+.group-ui { color: var(--fg); min-width: 0; }
+.group-ui h2, .group-ui h3, .group-ui p { margin: 0; }
+.group-ui h2 { font-size: 21px; line-height: 1.4; letter-spacing: -.3px; }
+.group-ui h3 { font-size: 14px; font-weight: 600; }
+.group-ui .group-caption { color: var(--fg2); font-size: 12px; line-height: 1.65; }
+.group-ui .group-card { padding: 18px; border: 1px solid var(--line); border-radius: 14px; background: var(--card); }
+.group-ui .group-card + .group-card { margin-top: 14px; }
+.group-ui .group-section-head { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin-bottom: 16px; }
+.group-ui .group-field { display: grid; gap: 7px; font-size: 13px; margin-bottom: 15px; }
+.group-ui .group-field input, .group-ui .group-field select, .group-ui .group-field textarea { width: 100%; min-width: 0; background: var(--card2); }
+.group-ui .group-field textarea { resize: vertical; line-height: 1.7; min-height: 108px; }
+.group-ui .group-actions { display: flex; justify-content: flex-end; align-items: center; gap: 8px; flex-wrap: wrap; }
+.group-ui .group-primary { color: var(--on-acc); background: var(--acc); font-size: 12px; padding: 8px 14px; }
+.group-ui .group-setting-row { display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 14px 0; border-top: 1px solid var(--line); }
+.group-ui .group-setting-row:first-of-type { border-top: 0; }
+.group-ui .group-setting-row > div { min-width: 0; }
+.group-ui .group-setting-row b { display: block; font-size: 13px; font-weight: 500; }
+.group-ui .group-switch { flex: 0 0 36px; width: 36px; height: 22px; padding: 3px; border-radius: 99px; background: var(--line); color: var(--fg); border: 0; }
+.group-ui .group-switch i { display: block; width: 16px; height: 16px; background: var(--fg); border-radius: 50%; transition: transform 160ms cubic-bezier(.23,1,.32,1); }
+.group-ui .group-switch[aria-checked='true'] { background: var(--acc); }
+.group-ui .group-switch[aria-checked='true'] i { transform: translateX(14px); background: var(--on-acc); }
+.group-ui .group-error { padding: 12px 14px; color: var(--fg); background: var(--card2); border: 1px solid var(--err); border-radius: 10px; font-size: 12px; }
+.group-dialog-enter-active, .group-dialog-leave-active { transition: opacity 180ms cubic-bezier(.23,1,.32,1); }
+.group-dialog-enter-active > .dock, .group-dialog-leave-active > .dock,
+.group-dialog-enter-active > .mgmt-box, .group-dialog-leave-active > .mgmt-box { transition: transform 220ms cubic-bezier(.23,1,.32,1); }
+.group-dialog-enter-from, .group-dialog-leave-to { opacity: 0; }
+.group-dialog-enter-from > .dock, .group-dialog-leave-to > .dock { transform: translate(-50%,calc(-50% + 8px)) scale(.98); }
+.group-dialog-enter-from > .mgmt-box, .group-dialog-leave-to > .mgmt-box { transform: translateY(8px) scale(.98); }
+.group-dialog-leave-active, .group-content-leave-active { pointer-events: none; interactivity: inert; }
+.group-content-enter-active, .group-content-leave-active { transition: opacity 120ms ease-out, transform 120ms cubic-bezier(.23,1,.32,1); }
+.group-content-enter-from, .group-content-leave-to { opacity: 0; transform: translateY(4px); }
+@media (hover:hover) and (pointer:fine) {
+  .group-ui button:not(:disabled):active { scale: .98; }
+}
+@media (max-width:600px) {
+  .group-ui .group-card { padding: 14px; border-radius: 12px; }
+  .group-ui h2 { font-size: 18px; }
+}
+@media (prefers-reduced-motion:reduce) {
+  .group-dialog-enter-active, .group-dialog-leave-active, .group-content-enter-active, .group-content-leave-active { transition: opacity 80ms linear; }
+  .group-dialog-enter-active > .dock, .group-dialog-leave-active > .dock,
+  .group-dialog-enter-active > .mgmt-box, .group-dialog-leave-active > .mgmt-box,
+  .group-ui .group-switch i { transition: none; }
+  .group-dialog-enter-from > .dock, .group-dialog-leave-to > .dock { transform: translate(-50%,-50%); }
+  .group-dialog-enter-from > .mgmt-box, .group-dialog-leave-to > .mgmt-box,
+  .group-content-enter-from, .group-content-leave-to { transform: none; }
+}

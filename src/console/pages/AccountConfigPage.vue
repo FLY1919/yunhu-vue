@@ -2,6 +2,7 @@
 import { computed, inject, nextTick, onUnmounted, ref, watch } from 'vue'
 import AccountPage from './AccountPage.vue'
 import ConfigPage from './ConfigPage.vue'
+import MediaDevicesPage from './MediaDevicesPage.vue'
 import Icon from '../components/Icon.vue'
 import { searchSettings, settingsCategories, settingsFeatures, pluginSettingFeatures } from '../../core/settings-catalog'
 
@@ -32,6 +33,12 @@ async function choose(category: string, anchor = '') {
   if (!anchor) content.value?.querySelector('.k-body')?.scrollTo({ top: 0 })
 }
 watch(() => ctx.console.state.currentPage, p => { if (p === '/config') choose('advanced') })
+watch(() => ctx.console.state.settingsCategory, category => {
+  if (category === 'media') {
+    ctx.console.state.settingsCategory = ''
+    void choose(category)
+  }
+}, { immediate: true })
 onUnmounted(() => clearTimeout(timer))
 </script>
 
@@ -64,6 +71,7 @@ onUnmounted(() => clearTimeout(timer))
       <div v-show="!query.trim()" class="settings-page">
       <Transition name="settings-fade" mode="out-in" @after-enter="positionSetting">
         <ConfigPage v-if="selected === 'advanced'" key="advanced" />
+        <MediaDevicesPage v-else-if="selected === 'media'" key="media" :active="selected === 'media' && !query.trim()" />
         <component v-else-if="external" :is="external" :key="selected" />
         <AccountPage v-else :key="selected" :section="selected" />
       </Transition>

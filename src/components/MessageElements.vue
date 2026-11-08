@@ -1,6 +1,9 @@
 <script setup lang="ts">
+import { routeChatMedia } from '../core/media-devices'
+import { toggleVideoPip } from '../core/video-pip'
+import { wheelZoomFactor } from '../core/wheel-zoom'
 import { vResourceMedia } from '../core/resource-media'
-import { decodedImageUrl, downloadMedia } from '../core/media'
+import { decodedImageUrl, downloadLabel, downloadMedia, mediaDownloadProgress } from '../core/media'
 /**
  * Satori 元素树渲染器（消息正文的统一出口）。
  *
@@ -14,14 +17,19 @@ import { decodedImageUrl, downloadMedia } from '../core/media'
  */
 import { ref, computed, watch, onMounted, onUnmounted, nextTick, inject, defineAsyncComponent } from 'vue'
 import { resUrl, mediaUrl } from '../core/res'
-import { renderMarkdown, sanitizeHtml, postProcess, linkify, renderRich } from '../core/render'
+import { renderMarkdown, sanitizeHtml, postProcess, linkify } from '../core/render'
 import { analyzeA2ui } from '../satori/a2ui'
 import type { Element } from '../satori/element'
 import A2uiNode from './A2uiNode.vue'
+import ChatVideo from './ChatVideo.vue'
+import DOMPurify from 'dompurify'
 import Icon from '../console/components/Icon.vue'
 import { saveImageCopy } from '../core/save-image'
 import { openExternalUrl } from '../core/links'
+import { formatFileSize } from '../core/util'
+import { extractShareCard, parseShareTarget, shareTargetOf, type ShareCard, type ShareTarget } from '../core/share-cards'
 const ImageEditor = defineAsyncComponent(() => import('./ImageEditor.vue'))
+const ImageProperties = defineAsyncComponent(() => import('./ImageProperties.vue'))
 
 const props = defineProps<{
   elements: Element[]
@@ -30,7 +38,7 @@ const props = defineProps<{
   /** 原始消息（自定义渲染器要用到） */
   msg?: any
 }>()
-const emit = defineEmits<{ (e: 'a2ui-action', a: any): void; (e: 'quote-jump', id: string): void }>()
+const emit = defineEmits<{ (e: 'a2ui-action', a: any): void; (e: 'quote-jump', id: string): void; (e: 'keep-mounted', active: boolean): void }>()
 
 const ctx = inject<any>('ctx')
 const body = ref<HTMLElement | null>(null)
@@ -65,7 +73,10 @@ const custom = computed(() => {
 const list = computed<Element[]>(() => {
   const result: Element[] = []
   for (const el of props.elements || []) {
-    if (el.type === 'button' && Number.isInteger(el.attrs.rowIndex)) {
+    if ((el.type === 'html' || el.type === 'markdown') && /yunhu:|data-yh-id/i.test(String(el.attrs.content))) {
+      const card = extractShareCard(el.type === 'html' ? htmlHtml(el) : mdHtml(el))
+      result.push(card ? { type: 'share-card', attrs: card, children: [] } : el)
+    } else if (el.type === 'button' && Number.isInteger(el.attrs.rowIndex)) {
       let row = result[result.length - 1]
       if (!row || row.type !== 'button-row' || row.attrs.rowIndex !== el.attrs.rowIndex) {
         row = { type: 'button-row', attrs: { rowIndex: el.attrs.rowIndex }, children: [] }
@@ -83,13 +94,14 @@ const list = computed<Element[]>(() => {
  */
 function onHtmlClick(e: MouseEvent) {
   const t = e.target as HTMLElement | null
-  // 群卡片深链：yunhu://chat-add?id=<群号>&type=group → 弹确认框（加入群聊/发消息/关闭）。
-  // 双保险：href 万一被渲染管线剥掉，凭 data-yh-id 兜底识别
-  const link = t?.closest?.('a[href^="yunhu://"], a[data-yh-id]') as HTMLAnchorElement | null
+  const link = t?.closest?.('a[href^="yunhu:" i], a[data-yh-id]:not([href])') as HTMLAnchorElement | null
   if (link) {
     e.preventDefault()
+    if (ctx.chat?.state?.selecting) return
     e.stopPropagation()
-    openYunhuLink(link.getAttribute('href') || '', link.getAttribute('data-yh-id') || '', link.getAttribute('data-yh-type') || '')
+    const target = shareTargetOf(link)
+    if (target) void openShareTarget(target, link.textContent?.trim())
+    else ctx.ui?.toast?.('此分享链接不受支持', 'warn')
     return
   }
   const btn = t?.closest?.('[data-a2ui-action]') as HTMLElement | null
@@ -103,29 +115,35 @@ function onHtmlClick(e: MouseEvent) {
   })
 }
 
-/** 解析 yunhu:// 深链：chat-add（群卡片）→ 弹确认框（加入群聊 / 发消息 / 关闭）。
- *  已加入 → 按钮「发消息」直接进会话；未加入 → 「加入群聊」走官方
- *  /v1/friend/apply（chatType=2，官方注释「添加好友/加入群聊/机器人」同端点）。 */
-const cardAsk = ref<{ id: string; type: number; name: string; joined: boolean } | null>(null)
-async function openYunhuLink(href: string, dataId = '', dataType = '') {
+const cardAsk = ref<{ id: string; name: string; joined: boolean } | null>(null)
+const openDetachedBoard = inject<((id: number, title?: string) => void) | null>('openDetachedBoard', null)
+let groupCardRequest = 0
+onUnmounted(() => { ++groupCardRequest })
+async function openShareTarget(target: ShareTarget, title?: string) {
+  const request = ++groupCardRequest
+  if (target.kind === 'community') {
+    if (openDetachedBoard) openDetachedBoard(target.id, title)
+    else if (ctx.community?.openSharedBoard) await ctx.community.openSharedBoard(target.id, title)
+    else ctx.ui?.toast?.('当前无法打开板块', 'warn')
+    return
+  }
+  const id = target.id
+  const current = ctx.chat?.state?.current
+  if (current?.type === 2 && String(current.id) === id) return
+  const account = ctx.auth?.state?.user?.id
   try {
-    let id = dataId
-    let type = Number(dataType) || 2
-    if (href) {
-      const u = new URL(href)
-      if (u.protocol === 'yunhu:') {
-        id = u.searchParams.get('id') || id
-        type = Number(u.searchParams.get('type')) || type
-      }
-    }
-    if (!id) return
-    if (ctx.chat?.state?.current?.id === id) return   // 已在该群：无需弹窗
     await ctx.social?.loadBook?.()
+    if (request !== groupCardRequest || account !== ctx.auth?.state?.user?.id) return
     const hit = (ctx.social?.state?.book?.groups || []).find((g: any) => String(g.id) === id)
-    cardAsk.value = { id, type, name: hit?.name || `群 ${id}`, joined: !!hit }
+    cardAsk.value = { id, name: hit?.name || title || `群聊 ${id}`, joined: !!hit }
   } catch (e: any) {
     ctx.ui?.toast?.('打开群卡片失败：' + (e?.message || '链接无效'), 'error')
   }
+}
+function onShareCardClick(e: MouseEvent, card: ShareCard) {
+  if (ctx.chat?.state?.selecting) return
+  e.stopPropagation()
+  void openShareTarget(card, card.title)
 }
 /** 弹窗动作：发消息=进会话；加入群聊=发申请 */
 function cardGo() {
@@ -133,7 +151,7 @@ function cardGo() {
   cardAsk.value = null
   if (!c) return
   const hit = (ctx.social?.state?.book?.groups || []).find((g: any) => String(g.id) === c.id)
-  ctx.chat?.open?.({ id: c.id, type: c.type, name: hit?.name || c.name, avatar: hit?.avatar })
+  ctx.chat?.open?.({ id: c.id, type: 2, name: hit?.name || c.name, avatar: hit?.avatar })
 }
 async function cardJoin() {
   const c = cardAsk.value
@@ -141,13 +159,12 @@ async function cardJoin() {
   if (!c) return
   try {
     await ctx.social?.apply?.(c.id, 2, '通过群聊卡片申请加入')
-    ctx.ui?.toast?.('加群申请已发送（开放群会直接加入）', 'success')
-  } catch (e: any) { ctx.ui?.toast?.('加群失败：' + e.message, 'error') }
+  } catch { /* social.apply already displays the error. */ }
 }
 const renderedBodies = new WeakMap<Element, { source: any; html: string }>()
 function cachedBody(el: Element, render: (source: any) => string) {
   const source = el.attrs.content, cached = renderedBodies.get(el)
-  if (cached?.source === source) return cached.html
+  if (cached && cached.source === source) return cached.html
   const html = render(source); renderedBodies.set(el, { source, html }); return html
 }
 const mdHtml = (el: Element) => cachedBody(el, renderMarkdown)
@@ -178,7 +195,29 @@ function ratioOf(el: Element) {
 
 /** 点击图片/视频 → 页内灯箱查看（QQ 式），点空白处收起 */
 const viewer = ref<{ kind: 'image' | 'video'; url: string } | null>(null)
-const viewerVideo = ref<HTMLVideoElement | null>(null)
+let viewerStartTime = 0
+const viewerFile = ref<File | null>(null)
+const propertiesOpen = ref(false)
+let propertiesTarget: any
+let propertiesAccount: any
+function openProperties() {
+  const current = ctx.chat?.state.current
+  propertiesTarget = current ? { ...current } : null
+  propertiesAccount = ctx.auth?.state.user?.id
+  propertiesOpen.value = true
+}
+function stageCleanedImage(file: File) {
+  const current = ctx.chat?.state.current
+  if (!current || !propertiesTarget || current.id !== propertiesTarget.id || current.type !== propertiesTarget.type || ctx.auth?.state.user?.id !== propertiesAccount) {
+    ctx.ui?.toast?.('会话已切换，请重新打开图片编辑器后添加附件', 'warn'); return
+  }
+  const draft = ctx.chat.drafts.get(propertiesTarget)
+  if (draft.uploading) { ctx.ui?.toast?.('正在发送附件，请稍后再试', 'warn'); return }
+  const id = Math.max(Date.now(), ...draft.pending.map((p: any) => p.id)) + 1
+  draft.pending.push({ id, file, url: URL.createObjectURL(file), kind: 'image', error: '', progress: 0, speed: 0 })
+  propertiesOpen.value = false; editingImage.value = null
+  ctx.ui?.toast?.('已加入当前会话的待发送附件，点击发送即可', 'success')
+}
 const editingImage = ref<File | null>(null)
 const editLoading = ref(false)
 const savingEdited = ref(false)
@@ -189,37 +228,44 @@ const zoom = ref(1)
 const pan = ref({ x: 0, y: 0 })
 function openRaw(src: string) {
   const u = resUrl(src)
-  if (u) { viewer.value = { kind: 'image', url: u }; zoom.value = 1; pan.value = { x: 0, y: 0 } }
+  if (u) { viewerFile.value = null; viewer.value = { kind: 'image', url: u }; zoom.value = 1; pan.value = { x: 0, y: 0 } }
 }
-function openVideo(src: string) {
-  const u = mediaUrl(src, 'video')
-  if (u) { viewer.value = { kind: 'video', url: u }; zoom.value = 1; pan.value = { x: 0, y: 0 } }
-}
-/** 放大播放：开灯箱并直接进伪全屏（视频原生全屏键在 WebView2 常被拒） */
-function openVideoFull(src: string) {
-  openVideo(src)
-  videoFull.value = true
-  nextTick(() => {
-    const v = viewerVideo.value
-    if (v?.requestFullscreen) v.requestFullscreen().catch(() => {})
-  })
-}
-/** 视频全屏：CSS 伪全屏铺满灯箱（WebView2 里 Fullscreen API 常被拒），原生全屏作增强 */
 const videoFull = ref(false)
+const fullPlayer = ref<HTMLVideoElement>()
+async function smallVideoWindow() {
+  if (!fullPlayer.value) return
+  try { if (await toggleVideoPip(fullPlayer.value) === 'floating') closeViewer() }
+  catch { ctx.ui?.toast('视频小窗暂不可用，请稍后重试', 'warn') }
+}
+function openVideoFull(src: string, time = 0) {
+  const url = mediaUrl(src, 'video')
+  if (!url) return
+  viewerStartTime = time
+  videoFull.value = true
+  viewer.value = { kind: 'video', url }
+  zoom.value = 1
+  pan.value = { x: 0, y: 0 }
+}
+function restoreVideoTime(event: Event) {
+  const video = event.target as HTMLVideoElement
+  if (viewerStartTime > 0) video.currentTime = Math.min(viewerStartTime, video.duration || viewerStartTime)
+}
 function toggleVideoFull() {
   videoFull.value = !videoFull.value
-  const v = viewerVideo.value
-  if (videoFull.value && v?.requestFullscreen) v.requestFullscreen().catch(() => {})
-  if (!videoFull.value && document.fullscreenElement) document.exitFullscreen().catch(() => {})
+  zoom.value = 1
+  pan.value = { x: 0, y: 0 }
 }
 function closeViewer() {
   editRequest?.abort(); editRequest = undefined; editLoading.value = false; editingImage.value = null
-  stopPan?.(); viewer.value = null; videoFull.value = false
+  stopPan?.(); viewer.value = null; viewerFile.value = null; propertiesOpen.value = false; videoFull.value = false
   if (editedPreview) { URL.revokeObjectURL(editedPreview); editedPreview = '' }
 }
 async function editImage() {
   if (editLoading.value || viewer.value?.kind !== 'image') return
   const target = viewer.value
+  const current = ctx.chat?.state.current
+  propertiesTarget = current ? { ...current } : null
+  propertiesAccount = ctx.auth?.state.user?.id
   const request = new AbortController(); editRequest = request; editLoading.value = true
   try {
     const response = await fetch(target.url, { signal: request.signal })
@@ -239,10 +285,10 @@ async function saveEdited(file: File) {
   try {
     nextPreview = await decodedImageUrl(file)
     const path = await saveImageCopy(file, ctx.api?.token || '')
-    if (viewer.value !== target) return
+    if (path === null || viewer.value !== target) return
     const previousPreview = editedPreview
     editedPreview = nextPreview; nextPreview = ''
-    viewer.value = { kind: 'image', url: editedPreview }; zoom.value = 1; pan.value = { x: 0, y: 0 }
+    viewerFile.value = file; viewer.value = { kind: 'image', url: editedPreview }; zoom.value = 1; pan.value = { x: 0, y: 0 }
     await nextTick()
     editingImage.value = null
     if (previousPreview) URL.revokeObjectURL(previousPreview)
@@ -250,7 +296,11 @@ async function saveEdited(file: File) {
   } catch (e: any) { if (e.name !== 'AbortError') ctx.ui?.toast?.('图片保存失败：' + e.message, 'error') }
   finally { if (nextPreview) URL.revokeObjectURL(nextPreview); savingEdited.value = false }
 }
-function viewerKey(e: KeyboardEvent) { if (e.key === 'Escape' && !editingImage.value && !ctx.lock?.isLocked) closeViewer() }
+function viewerKey(e: KeyboardEvent) {
+  if (e.key !== 'Escape' || editingImage.value || propertiesOpen.value || ctx.lock?.isLocked) return
+  if (videoFull.value) toggleVideoFull()
+  else closeViewer()
+}
 watch(viewer, value => { window.removeEventListener('keydown', viewerKey); if (value) window.addEventListener('keydown', viewerKey) })
 onUnmounted(() => { closeViewer(); window.removeEventListener('keydown', viewerKey) })
 
@@ -274,17 +324,18 @@ function setMediaZoom(next: number, x = innerWidth / 2, y = innerHeight / 2) {
     y: (pan.value.y - y + innerHeight / 2) * factor + y - innerHeight / 2 }
 }
 function onWheel(e: WheelEvent) {
-  if (!viewer.value || (e.target as HTMLElement)?.closest('.viewer-bar')) return
+  if (propertiesOpen.value || !viewer.value || (e.target as HTMLElement)?.closest('.viewer-bar')) return
   e.preventDefault()
   // Mouse wheels commonly report pixel deltas too; plain wheel must zoom as requested.
-  setMediaZoom(zoom.value * Math.exp(-e.deltaY * (e.deltaMode === 1 ? .08 : e.deltaMode === 2 ? .8 : .01)), e.clientX, e.clientY)
+  setMediaZoom(zoom.value * wheelZoomFactor(e), e.clientX, e.clientY)
 }
 /** 拖拽平移（放大后看局部）。
  *  ⚠️ 拖完松手的 click 会命中 mask/img 的关闭逻辑——用户报「按住图片滑动松鼠标把灯箱关了」。
  *    记录本次是否真拖过（位移>3px），拖过则吞掉紧随的那一次 click。 */
 let justDragged = false
 function startPan(e: MouseEvent) {
-  if (e.button !== 0 || zoom.value <= 1) return
+  if (e.button !== 0 || propertiesOpen.value) return
+  e.preventDefault()
   if (viewer.value?.kind === 'video' && e.offsetY >= (e.currentTarget as HTMLElement).clientHeight - 48) return
   stopPan?.()
   const sx = e.clientX, sy = e.clientY
@@ -298,12 +349,14 @@ function startPan(e: MouseEvent) {
   const up = () => {
     window.removeEventListener('mousemove', move)
     window.removeEventListener('mouseup', up)
+    window.removeEventListener('blur', up)
     stopPan = undefined
     // 稍后清标记：click 在 mouseup 之后同步派发，下一个宏任务再复位才吞得到
     setTimeout(() => { justDragged = false }, 0)
   }
   window.addEventListener('mousemove', move)
   window.addEventListener('mouseup', up)
+  window.addEventListener('blur', up)
   stopPan = up
 }
 /** 灯箱关闭点击的统一守卫：刚拖过图则吞掉这次 click */
@@ -311,44 +364,29 @@ function closeViewerGuarded() {
   if (justDragged) return
   closeViewer()
 }
-/** 视频应用内全屏（requestFullscreen，不跳外部播放器） */
-function fullVideo() {
-  viewerVideo.value?.requestFullscreen?.().catch(() => {})
-}
-
-/** 文章卡片：页内弹窗看正文（markdown/HTML 净化渲染） */
-const postView = ref<any>(null)
-const postLoading = ref(false)
-const postBody = ref<HTMLElement | null>(null)
-// 弹窗正文渲染后把图片/资源链接改写到 /res 代理（防盗链 Referer，否则带图文章图全裂）
-watch(postView, async (v) => {
-  if (!v) return
-  await nextTick()
-  if (postBody.value) postProcess(postBody.value)
+const articlePreviews = computed(() => {
+  const previews = new Map<Element, string>()
+  for (const el of list.value) {
+    if (el.type !== 'post' || !el.attrs.content || Number(el.attrs.contentType) === 1) continue
+    previews.set(el, DOMPurify.sanitize(renderMarkdown(String(el.attrs.content).slice(0, 6000)), {
+      ALLOWED_TAGS: ['p', 'br', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'strong', 'em', 's', 'hr', 'ul', 'ol', 'li', 'blockquote', 'pre', 'code', 'a'],
+      ALLOWED_ATTR: [],
+    }))
+  }
+  return previews
 })
-async function openPost(el: any) {
-  const a = el.attrs || {}
-  // 消息里可能只带 post_id 不带正文 → 拉详情补全（之前空弹窗的根因）
-  if (!a.content && a.id) {
-    postLoading.value = true
-    postView.value = { ...a, content: '', loading: true }
-    try {
-      const d = await ctx.api?.baPostDetail?.(Number(a.id))
-      // ⚠️ 详情响应正文常嵌套在 d.post 里（community.openPost 已验证）：
-      //    只查 d.content 会拿到空正文 → 聊天里文章「打不开」。逐层兼容取值。
-      const p = d?.post || d
-      const body = p?.content ?? p?.body ?? p?.text ?? d?.content ?? d?.postContent ?? ''
-      const title = p?.title ?? d?.title ?? a.title ?? '文章'
-      postView.value = { title, content: body, id: a.id }
-      if (!body) ctx.ui?.toast?.('这篇正文为空或已删除', 'warn')
-    } catch (e: any) {
-      postView.value = { title: a.title || '文章', content: `正文加载失败：${e.message}`, id: a.id }
-    } finally { postLoading.value = false }
+const openDetachedArticle = inject<((post: any) => void) | null>('openDetachedArticle', null)
+function openPost(el: Element) {
+  const id = Number(el.attrs.id)
+  if (!Number.isSafeInteger(id) || id <= 0 || (!ctx.community?.openSharedPost && !openDetachedArticle)) {
+    ctx.ui?.toast('这条文章消息缺少可用的文章地址', 'warn')
     return
   }
-  postView.value = a
+  if (openDetachedArticle) openDetachedArticle({ ...el.attrs, id })
+  else void ctx.community.openSharedPost({ ...el.attrs, id })
 }
-function closePost() { postView.value = null }
+watch(() => !!(viewer.value || editingImage.value || cardAsk.value),
+  active => emit('keep-mounted', active))
 
 /** 消息按钮：1=链接，2=复制，3=回调；旧插件生成的无类型按钮仍按回调处理。 */
 async function onMsgButton(el: any) {
@@ -359,7 +397,8 @@ async function onMsgButton(el: any) {
     if (type === 1) {
       if (!el.attrs.url) throw new Error('按钮没有可打开的链接')
       const link = new URL(el.attrs.url)
-      if (link.protocol === 'yunhu:' && link.hostname === 'chat-add') await openYunhuLink(link.href)
+      const target = parseShareTarget(link.href)
+      if (target) await openShareTarget(target)
       else await openExternalUrl(link.href)
       return
     }
@@ -382,19 +421,15 @@ async function onMsgButton(el: any) {
   } catch (e: any) { ctx.ui?.toast?.('按钮操作失败：' + (e?.message || '未知错误'), 'error') }
 }
 
-/**
- * 保存文件：优先系统「另存为」对话框（showSaveFilePicker，用户自己选目录、保留原文件名）；
- * 不支持时回退 server /local-open（GET，下载到文件保存目录并弹资源管理器）。
- * ⚠️ /local-open 只注册了 GET：POST 会落 SPA fallback 回 index.html（200 非 JSON）→ 旧版报「HTTP 200」失败。
- */
-async function saveFile(el: any) {
-  try { await downloadMedia(el); ctx.ui?.toast('已保存', 'success') }
-  catch (e: any) { if (e?.name !== 'AbortError') ctx.ui?.toast('保存失败：' + e.message, 'error') }
+async function saveFile(el: Element) {
+  try { if (await downloadMedia(el, ctx.api?.token)) ctx.ui?.toast('下载完成', 'success') }
+  catch (error: any) { ctx.ui?.toast('下载失败：' + error.message, 'error') }
 }
 
-async function fix() { await nextTick(); postProcess(body.value) }
+const richElements = computed(() => list.value.filter(el => ['markdown', 'html', 'a2ui'].includes(el.type)))
+function fix() { if (richElements.value.length) postProcess(body.value) }
 onMounted(fix)
-watch(() => props.elements, fix, { deep: true })
+watch(richElements, fix, { flush: 'post' })
 </script>
 
 <template>
@@ -429,44 +464,55 @@ watch(() => props.elements, fix, { deep: true })
       </a>
 
       <!-- 富文本 -->
+      <button v-else-if="el.type === 'share-card'" type="button" class="message-share-card" @click="onShareCardClick($event, el.attrs as ShareCard)">
+        <span class="share-card-avatar" aria-hidden="true">
+          <Icon :name="el.attrs.kind === 'community' ? 'layers' : 'chat'" :size="20" />
+          <img v-if="el.attrs.avatar && !failedImages.has(el.attrs.avatar)" v-resource-media="{ src: resUrl(el.attrs.avatar), width: 36, height: 36 }" alt="" @error="imageFailed(el.attrs.avatar, $event)" />
+        </span>
+        <span class="share-card-copy">
+          <strong>{{ el.attrs.title }}</strong>
+          <span>{{ el.attrs.kind === 'community' ? '邀请加入该板块' : '邀请加入该群聊' }}</span>
+        </span>
+      </button>
       <div v-else-if="el.type === 'markdown'" class="rich" v-html="mdHtml(el)"></div>
       <div v-else-if="el.type === 'html'" class="rich" v-html="htmlHtml(el)"></div>
 
       <!-- 媒体 -->
       <!-- Shared viewport observation loads nearby media explicitly and releases offscreen decoders. -->
       <template v-else-if="el.type === 'img'">
-        <img v-if="!failedImages.has(el.attrs.src)" class="media" v-resource-media="{ src: resUrl(el.attrs.src), animated: /(?:\.gif|\.webp)(?:[?#]|$)|^data:image\/(?:gif|webp)/i.test(el.attrs.src || ''), width: Number(el.attrs.width), height: Number(el.attrs.height) }" decoding="async"
+        <img v-if="!failedImages.has(el.attrs.src)" class="media" :data-copy-image="resUrl(el.attrs.src)" v-resource-media="{ src: resUrl(el.attrs.src), animated: /(?:\.gif|\.webp)(?:[?#]|$)|^data:image\/(?:gif|webp)/i.test(el.attrs.src || ''), width: Number(el.attrs.width), height: Number(el.attrs.height) }" decoding="async"
              :style="ratioOf(el)" alt="[图片]" @click="openRaw(el.attrs.src)" @error="imageFailed(el.attrs.src, $event)" />
         <button v-else class="media-retry ghost" :disabled="retryingImages.has(el.attrs.src)" @click.stop="retryImage(el.attrs.src)"><Icon name="image" :size="22" /><span>{{ retryingImages.has(el.attrs.src) ? '正在重试…' : '图片加载失败 · 点击重试' }}</span></button>
       </template>
-      <img v-else-if="el.type === 'sticker'" class="sticker" v-resource-media="{ src: resUrl(el.attrs.src), animated: true, width: 96, height: 96 }" decoding="async" alt="[表情]"
+      <img v-else-if="el.type === 'sticker'" class="sticker" :data-copy-image="resUrl(el.attrs.src)" v-resource-media="{ src: resUrl(el.attrs.src), animated: true, width: 96, height: 96 }" decoding="async" alt="[表情]"
            title="点击查看所属合集 · Ctrl + 左键查看图片" style="cursor:pointer" @click.stop="openStickerPack(el, $event)" />
       <div v-else-if="el.type === 'video'" class="video-wrap">
-        <video class="media" v-resource-media="{ src: mediaUrl(el.attrs.src, 'video') }" controls preload="none"></video>
-        <!-- 放大按钮：WebView2 里视频原生控件的全屏键常被拒，给显式入口
-             （开灯箱并直接进伪全屏），不再依赖原生 controls -->
-        <button class="vfull" title="放大播放" @click.stop="openVideoFull(el.attrs.src)">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M8 3H5a2 2 0 0 0-2 2v3M16 3h3a2 2 0 0 1 2 2v3M8 21H5a2 2 0 0 1-2-2v-3M16 21h3a2 2 0 0 0 2-2v-3"/></svg>
-        </button>
-        <div class="video-actions"><span v-if="el.attrs.time" class="vtime">{{ el.attrs.time }}s</span><button class="ghost tiny" @click.stop="saveFile(el)"><Icon name="download" :size="14" /> 下载视频</button></div>
+        <ChatVideo :src="mediaUrl(el.attrs.src, 'video')" :poster="el.attrs.poster ? resUrl(el.attrs.poster) : undefined"
+          :width="Number(el.attrs.width)" :height="Number(el.attrs.height)"
+          @expand="time => openVideoFull(el.attrs.src, time)" />
+        <div class="video-actions">
+          <span v-if="el.attrs.time" class="vtime">{{ el.attrs.time }}s</span>
+          <button type="button" class="ghost tiny" :disabled="!!mediaDownloadProgress(el)" @click.stop="saveFile(el)">
+            <Icon name="download" :size="14" /> {{ downloadLabel(mediaDownloadProgress(el), '下载视频') }}
+          </button>
+        </div>
       </div>
-      <audio v-else-if="el.type === 'audio'" v-resource-media="{ src: mediaUrl(el.attrs.src, 'audio') }" controls preload="none" />
+      <audio v-else-if="el.type === 'audio'" v-resource-media="{ src: mediaUrl(el.attrs.src, 'audio') }" controls preload="none" @play="routeChatMedia" />
 
       <!-- 文件（链接 + 保存按钮同属一个条件分支：⚠️ 必须用 template 包裹，
            中间插 v-if 会截断 v-else-if 链，导致每条消息多渲染一个兜底 pre） -->
-      <template v-else-if="el.type === 'file'">
-        <a class="file" :href="mediaUrl(el.attrs.src, 'file')" target="_blank" rel="noreferrer"
-           :download="el.attrs.name || undefined">
+      <div v-else-if="el.type === 'file'" class="file-attachment" :aria-busy="!!mediaDownloadProgress(el)">
+        <button type="button" class="file" :disabled="!!mediaDownloadProgress(el)" @click.stop="saveFile(el)">
           <span class="fico"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3v5h5M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/></svg></span>
           <span class="fmeta">
             <b>{{ el.attrs.name || '文件' }}</b>
-            <small v-if="el.attrs.size">{{ (el.attrs.size / 1024).toFixed(1) }} KB</small>
+            <small v-if="Number(el.attrs.size) > 0">{{ formatFileSize(el.attrs.size) }}</small>
           </span>
-        </a>
-        <button class="file-save" title="保存到本地文件目录" @click.stop="saveFile(el)">
-          <Icon name="download" :size="14" /> 保存
         </button>
-      </template>
+        <button type="button" class="file-save" title="下载文件" :disabled="!!mediaDownloadProgress(el)" @click.stop="saveFile(el)">
+          <Icon name="download" :size="14" /> {{ downloadLabel(mediaDownloadProgress(el), '下载') }}
+        </button>
+      </div>
 
       <!-- 云湖扩展 -->
       <div v-else-if="el.type === 'button-row'" class="msg-btn-row">
@@ -476,11 +522,14 @@ watch(() => props.elements, fix, { deep: true })
               @click="onMsgButton(el)">{{ el.attrs.text || el.attrs.content || '按钮' }}</button>
       <span v-else-if="el.type === 'tip'" class="tip">{{ el.attrs.content }}</span>
       <span v-else-if="el.type === 'call'" class="tip"><Icon name="phone" :size="14" class="inline-icon" aria-hidden="true" /> {{ el.attrs.content || '语音通话' }}</span>
-      <!-- 文章卡片：点击在页内打开正文（之前是死链接 @click.prevent 无处理 → 「点不开」） -->
-      <button v-else-if="el.type === 'post'" class="post" @click.stop="openPost(el)">
-        <b>{{ el.attrs.title || '文章' }}</b>
-        <small v-if="el.attrs.content">{{ String(el.attrs.content).slice(0, 80) }}</small>
-      </button>
+      <article v-else-if="el.type === 'post'" class="post-message">
+        <strong class="post-message-title">{{ el.attrs.title || '文章' }}</strong>
+        <div v-if="articlePreviews.get(el)" class="post-message-preview" v-html="articlePreviews.get(el)"></div>
+        <div v-else class="post-message-preview post-message-plain">{{ el.attrs.content || '打开文章查看正文' }}</div>
+        <button type="button" class="post-message-open" :aria-label="'查看详情：' + (el.attrs.title || '文章')" @click.stop="openPost(el)">
+          查看详情 <Icon name="chevronRight" :size="16" />
+        </button>
+      </article>
 
       <!-- A2UI：组件流 / HTML / markdown 文本 -->
       <template v-else-if="el.type === 'a2ui'">
@@ -520,20 +569,21 @@ watch(() => props.elements, fix, { deep: true })
     <div v-if="viewer" class="viewer-mask" :class="{ 'video-full': videoFull }" @click.self="closeViewerGuarded" @wheel="onWheel">
       <img v-if="viewer.kind === 'image'" :src="viewer.url" alt=""
            :style="{ transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})` }"
-           class="viewer-img" @click.self="closeViewerGuarded"
+           class="viewer-img" draggable="false" @dragstart.prevent
            @mousedown.prevent="startPan" @dblclick="zoom = zoom > 1 ? 1 : 2" />
-      <video v-else ref="viewerVideo" :src="viewer.url" controls autoplay :style="{ transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})` }" @mousedown="startPan"></video>
+      <video v-else ref="fullPlayer" :src="viewer.url" controls controlslist="nofullscreen" playsinline autoplay @play="routeChatMedia" @loadedmetadata="restoreVideoTime" :style="{ transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})` }" @mousedown="startPan"></video>
       <div class="viewer-bar">
         <template v-if="viewer">
           <button class="viewer-ctl" title="缩小" @click="setMediaZoom(zoom / 1.25)">−</button>
           <span class="viewer-zoom">{{ Math.round(zoom * 100) }}%</span>
           <button class="viewer-ctl" title="放大" @click="setMediaZoom(zoom * 1.25)">＋</button>
           <button class="viewer-ctl" title="还原" @click="zoom = 1; pan = { x: 0, y: 0 }">1:1</button>
+          <button v-if="viewer.kind === 'image'" class="viewer-ctl" title="图片属性（EXIF）" aria-label="图片属性" @click="openProperties"><Icon name="info" :size="17" /></button>
           <button v-if="viewer.kind === 'image'" class="viewer-ctl" :disabled="editLoading" aria-label="编辑图片" :title="editLoading ? '加载中…' : '编辑图片'" @click="editImage"><Icon name="pencil" :size="15" /></button>
         </template>
         <template v-if="viewer.kind === 'video'">
-          <!-- 全屏：CSS 伪全屏铺满灯箱（WebView2 里 Fullscreen API 常被拒），再试原生全屏作增强 -->
-          <button class="viewer-ctl" :title="videoFull ? '退出全屏' : '全屏播放'" @click="toggleVideoFull">
+          <button class="viewer-ctl" title="小窗播放" @click="smallVideoWindow">小窗播放</button>
+          <button class="viewer-ctl" :title="videoFull ? '退出软件内全屏' : '在软件内全屏'" @click="toggleVideoFull">
             {{ videoFull ? '退出' : '全屏' }}
           </button>
         </template>
@@ -541,17 +591,8 @@ watch(() => props.elements, fix, { deep: true })
         <button class="viewer-ctl" title="关闭" @click="closeViewer">×</button>
       </div>
     </div>
-    <ImageEditor v-if="editingImage" :file="editingImage" :saving="savingEdited" confirm-label="保存副本" @done="saveEdited" @close="editingImage = null" />
-    <!-- 文章弹窗：标题 + 净化渲染正文，右上 × 关闭 -->
-    <div v-if="postView" class="post-mask" @click.self="closePost">
-      <div class="post-box">
-        <div class="post-head">
-          <b>{{ postView.title || '文章' }}</b>
-          <button class="post-x" title="关闭" @click="closePost">×</button>
-        </div>
-        <div ref="postBody" class="post-body rich" v-html="renderRich(postView.content || '')"></div>
-      </div>
-    </div>
+    <ImageProperties v-if="propertiesOpen && viewer?.kind === 'image'" :file="viewerFile || undefined" :url="viewer.url" @close="propertiesOpen = false" />
+    <ImageEditor v-if="editingImage" :file="editingImage" :saving="savingEdited" confirm-label="保存副本" allow-send @use="stageCleanedImage" @done="saveEdited" @close="editingImage = null" />
     <!-- 群卡片确认弹窗：加入群聊 / 发消息（已加入）/ 关闭 -->
     <div v-if="cardAsk" class="post-mask" @click.self="cardAsk = null">
       <div class="card-ask">
@@ -568,8 +609,28 @@ watch(() => props.elements, fix, { deep: true })
 </template>
 
 <style scoped>
+/* Inline HTML stays within its message even when it uses fixed positioning. */
+.els > .rich { contain: paint; }
 .els { display: block; }
 .els > * { vertical-align: bottom; }
+.message-share-card {
+  display: flex; align-items: center; gap: 10px; width: 100%; min-height: 72px;
+  padding: 12px 16px; border: 1px solid var(--line); border-radius: 8px;
+  background: var(--card); color: var(--fg); text-align: left; cursor: pointer;
+  transition: border-color .16s ease;
+}
+.message-share-card:hover { border-color: var(--acc); }
+.message-share-card:focus-visible { outline: 2px solid var(--acc); outline-offset: 2px; }
+.share-card-avatar {
+  position: relative; display: grid; place-items: center; flex: 0 0 36px; height: 36px;
+  overflow: hidden; border-radius: 5px; background: var(--bg); color: var(--acc);
+}
+.share-card-avatar img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.share-card-copy { display: grid; gap: 3px; min-width: 0; }
+.share-card-copy > * { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.share-card-copy strong { font-size: 15px; font-weight: 600; }
+.share-card-copy span { color: var(--fg2); font-size: 12px; }
+@media (prefers-reduced-motion: reduce) { .message-share-card { transition: none; } }
 .msg-btn-row { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
 .msg-btn { flex: 1 1 auto; min-width: 0; max-width: 100%; padding: 6px 12px; border: 1px solid var(--line2); border-radius: 8px; background: var(--acc-soft); color: var(--acc); font-size: 12px; white-space: normal; overflow-wrap: anywhere; }
 .msg-btn:hover { background: var(--acc); color: var(--on-acc); }
@@ -577,14 +638,15 @@ watch(() => props.elements, fix, { deep: true })
 .quote {
   display: flex; align-items: baseline; gap: 6px; margin-bottom: 5px;
   padding: 4px 8px; border-radius: 6px; font-size: 12px;
-  background: rgba(127, 127, 127, .16); max-width: 100%;
+  background: var(--card); color: var(--fg); border: 1px solid var(--line);
+  max-width: 100%; box-sizing: border-box;
 }
 .q-bar { width: 3px; align-self: stretch; border-radius: 2px; background: var(--acc); flex: 0 0 3px; }
-.q-name { color: var(--acc); flex: 0 0 auto; }
-.q-text { color: var(--fg2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.q-name { color: var(--link, var(--fg)); font-weight: 600; flex: 0 1 auto; min-width: 0; max-width: 45%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.q-text { color: var(--fg); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .quote.clickable { cursor: pointer; }
 .q-thumb { width: 32px; height: 32px; object-fit: cover; border-radius: 4px; flex-shrink: 0; }
-.quote.clickable:hover { background: var(--acc-soft); }
+.quote.clickable:hover { background: var(--card2); border-color: var(--link, var(--fg)); }
 
 .at { color: var(--acc); background: var(--acc-soft); border-radius: 5px; padding: 0 4px; }
 .rich { color: var(--fg); }
@@ -599,11 +661,11 @@ watch(() => props.elements, fix, { deep: true })
 img.media { width: min(320px, 100%, var(--media-natural-width, 320px), var(--media-fit-width, 320px)); height: auto; max-height: none; }
 /* 文件气泡旁的保存按钮 */
 .file-save {
-  align-self: center; margin-left: 6px; padding: 4px 10px; border-radius: 8px;
-  border: 1px solid var(--line); background: var(--card2); color: var(--fg2);
+  align-self: flex-end; margin: 0 10px 9px; padding: 4px 10px; border-radius: 8px;
+  border: 1px solid var(--line); background: var(--card2); color: var(--fg);
   font-size: 12px; display: inline-flex; align-items: center; gap: 4px; cursor: pointer;
 }
-.file-save:hover { color: var(--acc); border-color: var(--acc); }
+.file-save:hover { color: var(--fg); background: var(--card2); border-color: var(--fg2); }
 /* markdown 消息行距收紧（用户反馈隔行空太大）：
    段落只留下边距、不留上边距，避免相邻段 margin 叠加成双倍空隙 */
 .rich { line-height: 1.5; }
@@ -620,7 +682,7 @@ img.media { width: min(320px, 100%, var(--media-natural-width, 320px), var(--med
   display: grid; place-items: center; cursor: zoom-out; backdrop-filter: blur(3px);
   overflow: hidden;
 }
-.viewer-img { transition: transform .08s linear; cursor: grab; }
+.viewer-img { cursor: grab; user-select:none; -webkit-user-drag:none; }.viewer-img:active { cursor:grabbing; }
 .viewer-mask img, .viewer-mask video {
   max-width: 92vw; max-height: 86vh; border-radius: 8px;
   box-shadow: 0 20px 60px rgba(0, 0, 0, .6);
@@ -639,24 +701,16 @@ img.media { width: min(320px, 100%, var(--media-natural-width, 320px), var(--med
 }
 .viewer-ctl:hover { background: rgba(255, 255, 255, .24); }
 .viewer-zoom { color: rgba(255, 255, 255, .8); font-size: 12px; min-width: 42px; text-align: center; }
-/* 视频伪全屏：铺满灯箱（不依赖 Fullscreen API） */
-.viewer-mask.video-full video {
-  position: fixed; inset: 0; width: 100vw; height: 100vh; max-width: none; max-height: none;
-  border-radius: 0; z-index: 93; background: #000; object-fit: contain;
-}
-.viewer-mask.video-full .viewer-bar { z-index: 94; }
+/* The controls occupy their own row so neither set covers the video timeline. */
+.viewer-mask video { width:min(760px, 92vw); object-fit:contain; background:#000; }
+.viewer-mask.video-full { display:flex; flex-direction:column; cursor:auto; background:#000; }
+.viewer-mask.video-full video { width:100%; flex:1 1 0; min-height:0; max-width:none; max-height:none; border-radius:0; object-fit:contain; }
+.viewer-mask.video-full .viewer-bar { position:static; transform:none; margin:6px auto; }
+.viewer-mask video::-webkit-media-controls-fullscreen-button { display:none; }
 .sticker { max-width: 96px; max-height: 96px; display: block; object-fit: contain; }
-.video-wrap { display: flex; flex-direction: column; gap: 3px; position: relative; width: 320px; max-width: 100%; min-width: 0; }
-.video-wrap video { width: 100%; height: auto; max-height: 360px; }
-.video-actions { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-/* 视频放大悬浮按钮：右上角小圆钮，hover 视频时显现 */
-.vfull {
-  position: absolute; top: 6px; right: 6px; width: 26px; height: 26px;
-  border-radius: 50%; border: none; background: rgba(0, 0, 0, .55); color: #fff;
-  display: grid; place-items: center; cursor: pointer; opacity: 0; transition: opacity .12s;
-}
-.video-wrap:hover .vfull { opacity: 1; }
-.vfull:hover { background: var(--acc); }
+.video-wrap { display:flex; flex-direction:column; gap:3px; width:320px; max-width:100%; min-width:0; }
+.video-actions { display:flex; align-items:center; gap:8px; }
+.video-actions button { margin-left:auto; }
 .vtime { font-size: 11px; color: var(--fg2); }
 /* 群卡片确认弹窗（居中紧凑） */
 .card-ask {
@@ -674,37 +728,39 @@ img.media { width: min(320px, 100%, var(--media-natural-width, 320px), var(--med
 .ca-btn.primary { background: var(--acc); border-color: transparent; color: #fff; }
 .ca-btn:hover { filter: brightness(1.1); }
 .pre { font-size: 12px; white-space: pre-wrap; margin: 0; }
-.file { display: flex; gap: 8px; align-items: center; text-decoration: none; color: inherit; }
-.fico { font-size: 22px; }
-.fmeta { display: flex; flex-direction: column; }
+.file-attachment { display: flex; flex-direction: column; width: min(328px, 100%); min-width: min(220px, 100%); border: 1px solid var(--line); border-radius: 12px; background: var(--card); color: var(--fg); overflow: hidden; }
+.file { display: flex; width: 100%; min-width: 0; gap: 11px; padding: 13px 12px 10px; align-items: center; text-decoration: none; text-align: left; background: transparent; color: var(--fg); border-radius: 0; }
+.file:hover { background: var(--card2); }
+.file:disabled, .file-save:disabled { opacity: 1; cursor: progress; }
+.fico { width: 36px; height: 40px; display: grid; place-items: center; border-radius: 8px; background: var(--card2); color: var(--fg); flex: 0 0 auto; }
+.fmeta { display: flex; flex-direction: column; min-width: 0; gap: 4px; }
+.fmeta b { font-size: 13px; font-weight: 600; line-height: 1.5; overflow-wrap: anywhere; }
 .fmeta small { color: var(--fg2); }
-.post { display: flex; flex-direction: column; text-decoration: none; color: inherit; }
-.post small { color: var(--fg2); }
+.post-message { position:relative; box-sizing:border-box; width:100%; padding:10px 12px 0;
+  border:1px solid var(--line); border-radius:10px; background:var(--card); color:var(--fg); text-align:left; overflow:hidden; }
+.post-message-title { display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:2; height:2.9em; overflow:hidden; font-size:15px; line-height:1.45; overflow-wrap:anywhere; }
+.post-message-preview { height:104px; overflow:hidden; overflow-wrap:anywhere; margin-top:4px; color:var(--fg); font-size:13px; line-height:1.6; mask-image:linear-gradient(#000 85%, transparent); }
+.post-message-preview :deep(p),.post-message-preview :deep(ul),.post-message-preview :deep(ol) { margin:0 0 7px; }
+.post-message-preview :deep(h1),.post-message-preview :deep(h2),.post-message-preview :deep(h3),.post-message-preview :deep(h4),
+.post-message-preview :deep(h5),.post-message-preview :deep(h6) { margin:0 0 9px; font-size:14px; color:var(--fg); }
+.post-message-preview :deep(a) { color:inherit; text-decoration:underline; }
+.post-message-preview :deep(pre) { margin:0; white-space:pre-wrap; overflow-wrap:anywhere; }
+.post-message-preview :deep(hr) { margin:10px 0; border:0; border-top:1px solid var(--line); }
+.post-message-plain { white-space:pre-wrap; }
+.post-message-open { display:flex; align-items:center; justify-content:space-between; width:100%; min-height:34px; text-align:left;
+  color:var(--link,var(--acc)); background:transparent; border:0; padding:0; font:inherit; font-size:12px; cursor:pointer; }
+.post-message-open::after { position:absolute; inset:0; content:''; }
+.post-message:has(.post-message-open:hover) { border-color:var(--link,var(--acc)); }
 .form { display: flex; flex-direction: column; gap: 8px; min-width: 200px; }
 .ffield { display: flex; flex-direction: column; gap: 3px; }
 .flabel { font-size: 12px; color: var(--fg2); }
 .a2ui { display: flex; flex-direction: column; gap: 8px; min-width: 200px; }
 .a2ui-surface { display: flex; flex-direction: column; gap: 6px; }
 .tip { opacity: .85; }
-</style>
 
-/* 文章弹窗 */
+/* 群卡片弹窗 */
 .post-mask {
   position: fixed; inset: 0; z-index: 93; background: rgba(0, 0, 0, .5);
   display: grid; place-items: center; backdrop-filter: blur(4px);
 }
-.post-box {
-  width: min(680px, 92vw); max-height: 84vh; display: flex; flex-direction: column;
-  background: var(--card); border: 1px solid var(--line); border-radius: 14px;
-  box-shadow: 0 18px 50px rgba(0, 0, 0, .45); overflow: hidden;
-}
-.post-head {
-  display: flex; align-items: center; justify-content: space-between; gap: 10px;
-  padding: 12px 16px; border-bottom: 1px solid var(--line); font-size: 15px;
-}
-.post-x {
-  width: 26px; height: 26px; border-radius: 7px; border: none; background: none;
-  color: var(--fg2); font-size: 17px; line-height: 1; cursor: pointer;
-}
-.post-x:hover { background: var(--card2); color: var(--fg); }
-.post-body { padding: 16px 18px; overflow: auto; font-size: 13.5px; line-height: 1.75; }
+</style>

@@ -10,6 +10,7 @@ certs/
 docs-site/.vitepress/dist
 docs-site/.vitepress/cache
 core.*
+!src/core/editor/core.ts
 .claude/
 
 # Local desktop build outputs

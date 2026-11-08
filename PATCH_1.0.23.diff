@@ -1,0 +1,928 @@
+diff --git a/RELEASE_NOTES_1.0.23.md b/RELEASE_NOTES_1.0.23.md
+new file mode 100644
+index 0000000..2affc83
+--- /dev/null
++++ b/RELEASE_NOTES_1.0.23.md
+@@ -0,0 +1,49 @@
++# YH LaoDa 1.0.23 — 图片属性与 EXIF 清除
++
++以最新 `yunhu-richkobe-1.0.22-complete-source.zip` 为基线增量修改。未重写查看器、上传协议或图片编辑器。
++
++## 使用
++
++- 图片消息查看器底部工具栏，在编辑按钮旁新增“图片属性”信息图标。点击查看文件名、格式、MIME、尺寸、大小，以及设备、拍摄时间、曝光、ISO、镜头、GPS 等文件实际存在的 EXIF 字段。字段支持搜索。
++- 待发送区的图片卡片增加“属性”按钮，选择、粘贴、拖入的图片均复用该入口。
++- 点击“清除 EXIF”后，重新读取副本进行校验，并提供“保存副本”和“用于发送（替换附件）”；查看器中则提供“加入待发送附件”。加入或替换附件后，仍由用户点击聊天框的“发送”。不自动发送消息，不覆盖磁盘原文件，不修改已发送的原消息。
++- 清除后刷新属性面板；失败显示具体原因。替换附件会清除旧上传元素缓存，避免重试时继续发送原图；预览先完成解码再替换，保留附件配文。正在上传、已经发送或会话已切换时不替换附件。
++- 属性面板适配全站深浅主题和窄屏，带过渡动画、键盘焦点约束及 Escape 关闭。EXIF 读取模块按需加载，不会为所有消息或附件自动扫描 EXIF。
++
++## 支持与边界
++
++- JPEG、PNG、WebP 可查看和清除标准 EXIF。支持从 WebP 的 EXIF 数据块读取 TIFF 字段。
++- 无需方向校正时，仅移除 EXIF 数据块；保留压缩图像、透明度、色彩配置和动画块。PNG/APNG 不改写保留块的 CRC；WebP 更新 RIFF 长度和 VP8X EXIF 标志。
++- 当 EXIF 方向不为 1 时，使用浏览器解码后的正确方向输出无损 PNG 副本。原 JPEG 等文件的大小与格式可能改变。超过 3200 万像素不执行该方向校正；包含方向信息的动图不静默转成静态图，而是明确提示不支持。
++- EXIF 内的设备、时间、GPS 和缩略图会一并移除。**XMP、IPTC、PNG 文字等其他元数据不属于本次清除范围**，界面也有说明；不能将本功能描述为删除一切隐私信息。
++- GIF 可查看基本属性，没有标准 EXIF 清除入口，不会因清除操作丢失动画。TIFF 可读取字段，暂不支持安全清除。其他未支持格式明确说明读取限制。
++- 损坏、空文件、读取失败或不能确认方向的 EXIF 不会被误报为“没有 EXIF”。不能完整解析方向时，提示先通过图片编辑器导出副本。
++- 已存在的大型二进制厂商字段显示长度摘要；常见数值、短数组和文本字段显示实际值。不存在的字段不凭空补齐，远程图片不把下载时间冒充原文件修改时间。
++
++## 验证
++
++使用虚拟账号、人工生成的 EXIF/GPS 图片和本机模拟接口；没有登录用户账号或发送真实消息。
++
++- 新增 8 项文件级回归：JPEG/PNG/WebP 字段与 GPS 读取、EXIF 清除及重复清除稳定性、JPEG 压缩扫描数据不变、WebP 长度/标志、APNG/WebP 动画数据保留、方向分支、GIF 边界、损坏容器和空文件。
++- 真实 Vue + Chromium 链路：属性、搜索、深浅色及 360px 窄屏；清除后保存的副本、替换后的附件和实际 multipart 上传字节一致，图片消息宽高正确；旋转 JPEG 清除后的 PNG 与原图浏览器显示逐像素一致；消息查看器入口加入待发送区但不自动上传；Escape 只关闭属性面板；GIF 的清除按钮禁用。
++- 现有聊天、账号设置、其他功能及用户 Bot 共 166 项回归通过。
++- 原有 PNG/JPEG/WebP/GIF 上传字节、无 MIME 识别、空文件拒绝、加载失败重试及普通/Ctrl 滚轮缩放回归通过。
++- Vue 类型检查、源码 preflight、生产前端构建、Node sidecar 构建通过。
++
++## 交付与复现
++
++本次交付完整源码 ZIP，包含更新后的生产 `dist` 和 sidecar；不包含 node_modules、测试截图、个人凭据或 Windows 安装器。本次未编译 Windows 原生壳，未做 Windows 实机安装验证。
++
++```bash
++npm ci
++npm run typecheck
++npm run test:image-properties
++node --test scripts/test-chat-regressions.mjs scripts/test-settings-regressions.mjs scripts/test-features-regressions.mjs scripts/test-userbot.mjs
++npm run build
++node scripts/build-server-bundle.mjs
++# 浏览器验证需要 Playwright + Chromium，可用 PLAYWRIGHT_MODULE、CHROMIUM_EXECUTABLE 指定。
++npm run test:ui-image-properties
++npm run test:ui-uploads
++```
++
++附 `PATCH_1.0.23.diff`，保留历史源码、配置、构建工作流和已有功能。EXIF 解析依赖 exifr 7.1.3（MIT），许可证已并入 THIRD_PARTY_NOTICES.md。
+diff --git a/THIRD_PARTY_NOTICES.md b/THIRD_PARTY_NOTICES.md
+index d116591..3a91555 100644
+--- a/THIRD_PARTY_NOTICES.md
++++ b/THIRD_PARTY_NOTICES.md
+@@ -108,3 +108,30 @@ IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
+ DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
+ OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE
+ OR OTHER DEALINGS IN THE SOFTWARE.
++
++
++## exifr 7.1.3
++
++Used to read EXIF/TIFF fields locally. Source: https://github.com/MikeKovarik/exifr
++
++MIT License
++
++Copyright (c) 2020 Mike Kovařík, Mutiny.cz
++
++Permission is hereby granted, free of charge, to any person obtaining a copy
++of this software and associated documentation files (the "Software"), to deal
++in the Software without restriction, including without limitation the rights
++to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
++copies of the Software, and to permit persons to whom the Software is
++furnished to do so, subject to the following conditions:
++
++The above copyright notice and this permission notice shall be included in all
++copies or substantial portions of the Software.
++
++THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
++IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
++FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
++AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
++LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
++OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
++SOFTWARE.
+\ No newline at end of file
+diff --git a/package-lock.json b/package-lock.json
+index 67dcb94..94b3e5b 100644
+--- a/package-lock.json
++++ b/package-lock.json
+@@ -1,12 +1,12 @@
+ {
+   "name": "yunhu-vue",
+-  "version": "1.0.22",
++  "version": "1.0.23",
+   "lockfileVersion": 3,
+   "requires": true,
+   "packages": {
+     "": {
+       "name": "yunhu-vue",
+-      "version": "1.0.22",
++      "version": "1.0.23",
+       "dependencies": {
+         "@capacitor/core": "^8.5.2",
+         "@jodit/image-editor": "0.2.5",
+@@ -15,6 +15,7 @@
+         "cordis": "^3.18.1",
+         "cropperjs": "^1.7.0",
+         "dompurify": "^3.4.16",
++        "exifr": "^7.1.3",
+         "gifenc": "1.0.3",
+         "gifuct-js": "2.1.2",
+         "marked": "^18.0.14",
+@@ -4630,6 +4631,12 @@
+         "node": ">=0.8.x"
+       }
+     },
++    "node_modules/exifr": {
++      "version": "7.1.3",
++      "resolved": "https://registry.npmjs.org/exifr/-/exifr-7.1.3.tgz",
++      "integrity": "sha512-g/aje2noHivrRSLbAUtBPWFbxKdKhgj/xr1vATDdUXPOFYJlQ62Ft0oy+72V6XLIpDJfHs6gXLbBLAolqOXYRw==",
++      "license": "MIT"
++    },
+     "node_modules/exponential-backoff": {
+       "version": "3.1.3",
+       "resolved": "https://registry.npmmirror.com/exponential-backoff/-/exponential-backoff-3.1.3.tgz",
+diff --git a/package.json b/package.json
+index b24674e..32dd9bd 100644
+--- a/package.json
++++ b/package.json
+@@ -1,7 +1,7 @@
+ {
+   "name": "yunhu-vue",
+   "private": true,
+-  "version": "1.0.22",
++  "version": "1.0.23",
+   "type": "module",
+   "description": "云湖牢大版 · Vue3 + 真 cordis 插件内核 + Satori 协议 + WebDAV 网关（仅供学习交流）",
+   "scripts": {
+@@ -44,7 +44,9 @@
+     "test:ui-startup": "node scripts/test-ui-startup.mjs",
+     "test:maintenance": "node --test scripts/test-maintenance-fixes.mjs",
+     "test:ui-uploads": "node scripts/test-ui-upload-fixes.mjs",
+-    "test:ui-accounts": "node scripts/test-ui-accounts.mjs"
++    "test:ui-accounts": "node scripts/test-ui-accounts.mjs",
++    "test:image-properties": "node scripts/test-image-properties.mjs",
++    "test:ui-image-properties": "node scripts/test-ui-image-properties.mjs"
+   },
+   "dependencies": {
+     "@capacitor/core": "^8.5.2",
+@@ -54,6 +56,7 @@
+     "cordis": "^3.18.1",
+     "cropperjs": "^1.7.0",
+     "dompurify": "^3.4.16",
++    "exifr": "^7.1.3",
+     "gifenc": "1.0.3",
+     "gifuct-js": "2.1.2",
+     "marked": "^18.0.14",
+diff --git a/scripts/generate-image-properties-fixtures.py b/scripts/generate-image-properties-fixtures.py
+new file mode 100644
+index 0000000..7fafcc9
+--- /dev/null
++++ b/scripts/generate-image-properties-fixtures.py
+@@ -0,0 +1,23 @@
++"""Optional fixture regeneration, needs Pillow; application has no Python dependency."""
++from pathlib import Path
++from PIL import Image
++from PIL.TiffImagePlugin import IFDRational
++root = Path(__file__).parent / 'image-properties-fixtures'
++root.mkdir(exist_ok=True)
++image = Image.new('RGB', (48, 32), 'red')
++for x in range(24, 48):
++    for y in range(32):
++        image.putpixel((x, y), (0, 0, 255))
++exif = Image.Exif()
++exif[271] = 'QA Camera'
++exif[272] = 'Test Device'
++exif[274] = 1
++exif[34665] = {36867: '2026:11:03 12:00:00', 33434: IFDRational(1, 125), 34855: 100}
++exif[34853] = {1: 'N', 2: tuple(IFDRational(n) for n in (31, 12, 0)), 3: 'E', 4: tuple(IFDRational(n) for n in (121, 30, 0))}
++for fmt, ext in [('JPEG', 'jpg'), ('PNG', 'png'), ('WEBP', 'webp')]:
++    image.save(root / f'photo.{ext}', format=fmt, exif=exif)
++exif[274] = 6
++image.save(root / 'oriented.jpg', exif=exif, quality=95)
++exif[274] = 1
++for fmt, ext in [('PNG', 'png'), ('WEBP', 'webp')]:
++    image.save(root / f'animated.{ext}', format=fmt, save_all=True, append_images=[Image.new('RGB', image.size, 'green')], duration=200, loop=0, exif=exif)
+diff --git a/scripts/image-properties-fixtures/animated.png b/scripts/image-properties-fixtures/animated.png
+new file mode 100644
+index 0000000000000000000000000000000000000000..89fc9ad277140640fb9d4f2c2e459583ec663dc8
+GIT binary patch
+literal 568
+zcmeAS@N?(olHy`uVBq!ia0vp^20*O9!2~34Z_Dv!U|{4)jqptK^<~fk3UM&7GV(Kk
+zBtcrd7zMy=9w0k}QHX&VNHYQ<LwhCz3z*HokkFwDXD<VaF$6j)I49<&79}!-q!yPb
+zxTKb4CZ{qmFgML&V1?@G>QIN8mBPR<ff;Ov2vBYkNIwt&ZD6Q1GB7f;GBmU@Fjg=$
+zvNA9LA_kyMj9}GFejs&BU=u;Ex&t&1<Z32YkT?rm{0oQ+1oA)(G8N<#5Dfw#x)Msu
+zL1`exz__FL#(f~ok(eCf1EfLbGJNixTmYn`(ja0WA#gx~7+}B%va`uD{w|Pb=jq}Y
+zQZeW4IY&VT1)c*2ZT06B7S6X7X54$u+WOg>Det^eCoW7{A)(dQg@uy0vSqSg`^v5g
+zXcEjmkXy0XC+W476DVVwmf{!!q?tf=Ze(N-U^rk9^R8s~Qf22N$7eSlYrigipcc~7
+n6(FeP<hp`GbfFT0GnF~@D8qraQ{N<k1~7QK`njxgN@xNA<dkRe
+
+literal 0
+HcmV?d00001
+
+diff --git a/scripts/image-properties-fixtures/animated.webp b/scripts/image-properties-fixtures/animated.webp
+new file mode 100644
+index 0000000000000000000000000000000000000000..e7de1c67409a349da7fba83d786bb99b3da17c35
+GIT binary patch
+literal 538
+zcmWIYbaNA8Vqge&bqWXzu!!JdU|;}YeFg@31_nnzPhU154+0$heBJV39H@#D3=B*_
+zeF|Yf@eeEva~ZV^7!(-na&;!TE>T)IgN4C??Z^V2^cnXb$TvtO*fZFNI@n8ZKeDaq
+z;}Zske;;OTKai&?{d3whue0-i{C@BAbXE2*Hl{Q4|Fg1uc6p}%!Yl>o246Rj=@0;M
+z7tmG)kgaw=+JqTltKLM9CZO6I(+b!V_zy7no?DnBsRXiTgZck|jzx!FPh9{1=LYRr
+z&tK;MmaF-9yn?|s!qZKNk%7UrA~TJF!Pl2T3uq(<11lpx129y;LE*(H0A}+5`5}x#
+z49q~95eOODGZ|RGYzBse4plgN8BmNN&{4rTF*mg+ks&0txJ1DvwJb9^m4Sh|X%+)3
+zR8LojI@GKb28IdDU^_&Ba+5&%fdFU&L#>g4k(rgDp_PHLf}xR>fdLRP0BvFft7h^8
+xsbd102y)dOpm`uyGr5AqS>WPdKwKaI#wgfSkWWCSg8+!Ggwk?Q8b~oP0s!yzXfyx-
+
+literal 0
+HcmV?d00001
+
+diff --git a/scripts/image-properties-fixtures/oriented.jpg b/scripts/image-properties-fixtures/oriented.jpg
+new file mode 100644
+index 0000000000000000000000000000000000000000..142b7d52bec917422e154075dd621cc3f9afea59
+GIT binary patch
+literal 1011
+zcmbV~Nla5w6o$`zV_O>GLBU}mvmk6bAZj-S3MeEPfg);LSfF4{Tu_j~gb;85yAg1t
+zi7}$$upuZY8iS%ZCM<9S#6*-qG#cj7^1Sy^G49m!-aY5sd(S=Z|8k$$C4K;p#Q21G
+zKnMWg2gE+4iYu~a10*Fu7y!tCMeac1Oo2xt@{n>R&P~V@XdDr602NkXq#R&(W$;p7
+zkJlhM+Rtd-XR(>VWXa3-i?tM3Gc5pgxdT|&8GB`jt5+646)k;3h4*U6d2Co2lxWr3
+zNWDg*SL^&VTD@A0U%+2NQZ==O)KOALqN*47BdV!5vd%26Pmn1#Upz=xLP8=j5{q4N
+zwJYKPNPGuIpb#<QDPjywJj*aN!?7GE4PGwecsb8;GB=rAK@4X~H-(Z+NR!2*6id^r
+zg6DXt<e!{)9|Rfrftp4EKnaKzkl0RO5G%?1g#w788J6R*3^!cRjIRyRG#1Tb#kjfz
+z?*k*Sp8lF>&MVo>2jr@>W!2|pfiaD3-YK0ULAnfExm@A1e8tLD!D~W7*M>!`i(J29
+zquv-B7r$w9LSm{ZZCm>G9Xm6#EZI4Gtb6nF_ZJiv6(2Zw=<tz>%A@w0<0np@I(??r
+zQFr0urTWWPu3o!-qpA7kt(Mz&9z1M+^!UlsXU|`}eD(Ux+pg}OzK@^!2L^{e4}TdQ
+z8=sh*nx2`RBU}jRMJ(*eO<?7JatWA=B6q+OE<_cQ0)b)uHJoR3GH=fH3ec9xR58`(
+z8{6c8x|9*`3|ptdCn%yXc$A<?WPb-%{$FHEV86L~KuP1DR-gqiz)Y(>v|&K!{Gpg#
+z)_S+0>Z{Y_tSuc+6QTFm!gt@nd*75IIC2(-N~gDm*4af!b06O|H--<*rW=N%!u$1e
+rW39%9$<!%}2p#Dn*bMV6r4A9AbPLvV^JhhPA5~`$cbW_xd1CiZ&Ak`1
+
+literal 0
+HcmV?d00001
+
+diff --git a/scripts/image-properties-fixtures/photo.jpg b/scripts/image-properties-fixtures/photo.jpg
+new file mode 100644
+index 0000000000000000000000000000000000000000..79fb3d5ecbedca42d1e373a58873d2c9418480fc
+GIT binary patch
+literal 996
+zcmex=<NpH&0WUXCHwH#V1_nkTWcdG(QN*<(GmU}4*Ox(yfq{X8ft8V;feFas0%9*l
+z0Wg~f$PQr?VqgZ+V14bG3@l(a14BZGDxAFxD8>-zsNkHKn_85}5RzJ4qTrHRmYJN&
+zz`)!zi-8rYr>jF9YE}vZ!vtoq9U?%vNg(||0CX8ct&xF|nU$fTm4UH>p^=q=0T3|&
+zZDItgX7U56V*;B9a@8H6c_3Faxq`%5;No9ETp*AKVvwmIpMYo(0MV6DS`JDBDF(*>
+zw;7xnIM~?O*;qN)+1WWcIk<R4czL+Fc_f8|`9)-<<mF_gWMmXn^wbrUbd+UeG|V-1
+z3=B<7Oyt!qZ7qy!^o&i6K!z}Ka&q!;^GNXWN*F21C>oIr{vTiv<X})>Fkog>Vqg+v
+zWEN!ne+1+iMpi~J0J#?g7@3$^SlQS)IJvli3bq2Hjggs|iG`V!l?514jI}^{1{Oh9
+zAw@$+HsQcTcBMiQqsEB~Ih36?9uy6__(8=usi=vQOH5osQc6`#T|-mL#MI2(!qUpw
+z#nsK-!_zA`Bs45MA~GsDB{eNQBQvYGq_nKOqOz*FrM0cSqqA$$<SA39O`kDy)}qBr
+zmM&YqV&$q$o40J;wtdIWU55@IIeP5)iIb-;UA}Vl+VvYZZ#{hU_{q~}&tJTJ_3_i^
+zFJHfX|MBw|$X|>M%n)w@Nv!@71p14Kg@u`g9po=YrgD(S1zA`X4cUYo1KAS`g_VpN
+zIYgW$F5GyKQ`tD^gJ@FGMJ_QFlZUDwL0$v<j5v=qk>xYE#}NLy#lXW1OtgZ`f(-Ty
+zk6tY5`Z@W#z&fX0zn*A++0XZ%;hFlsJO3GO_n)u${4eo8!`uH1f468X>iTQ&=gVuL
+z>VFyb3z>Fuy?#Am{iQ$F{~2b?|6Tl_A<y3S@%f+a{~5ObXZUtuQJ40Y!=EqzzX<@w
+Cc_9-3
+
+literal 0
+HcmV?d00001
+
+diff --git a/scripts/image-properties-fixtures/photo.png b/scripts/image-properties-fixtures/photo.png
+new file mode 100644
+index 0000000000000000000000000000000000000000..cd70dedb00eafd701e5ad11cb81ffa7a9a1732a5
+GIT binary patch
+literal 399
+zcmeAS@N?(olHy`uVBq!ia0vp^20*O9!2~34Z_Dv!U|{4)jqptK^<~fk3UM&7GV(Kk
+zBtcrd7zMy=9w0k}QHX&VNHYQ<LwhCz3z*HokkFwDXD<VaF$6j)I49<&79}!-q!yPb
+zxTKb4CZ{qmFgML&V1?@G>QIN8mBPR<ff;Ov2vBYkNIwt&ZD6Q1GB7f;GBmU@Fjg=$
+zvNA9LA_kyMj9}GFejs&BU=u;Ex&t&1<Z32YkT?rm{0oQ+1oA)(G8N<#5Dfw#x)Msu
+zL1`exz__FL#(f}d=jq}YQZeW4IY&VT1)c*2ZT06B7S6X7X54$u+WOg>Det^eCoW7{
+eA)(dQg@uy0vSqSg`^v5gWTdC7pUXO@geCwR0zs?*
+
+literal 0
+HcmV?d00001
+
+diff --git a/scripts/image-properties-fixtures/photo.webp b/scripts/image-properties-fixtures/photo.webp
+new file mode 100644
+index 0000000000000000000000000000000000000000..9e53378ae37ad0a2a3d7c843d9b8fcf0a1baf9c3
+GIT binary patch
+literal 398
+zcmWIYbaQKCWMBw)bqWXzu!!JdU|`??Vtob%c?Jfch(ZXESHQwBmr=`rL4m<8S7(yz
+z5~YPRSQs4Gjx6BOp2Pn@zCkL%p20q{!G6UnuLg#HA7<_7e3*ahp#ign)BjJ*|E2%`
+z+Yox`>;E{`A3DPR`|J&TZUD`6jqr5i0ov^A%b*3el$DX6feFY0Il+rj0L<nAvO^e!
+z7?^=HBM>sQXELyW*$fN`9jb8lGN2ekpre9wVs2_tB11@OafyOUYFTD-Dgy&^(<}y7
+zsGhD4b*Nb>3=9*P!FGrM<tBmj0|C$mhFT*7BQq;QLn{Mg1w$h%0|Ovp0NTU|R?XxG
+xQpW@~5#*{nK=VMZW^x6Iv%tl_fVe;a3`MZ1AfJFt2LTXW38m$rG>~Fo1ONjeKt})o
+
+literal 0
+HcmV?d00001
+
+diff --git a/scripts/test-image-properties.mjs b/scripts/test-image-properties.mjs
+new file mode 100644
+index 0000000..ddfb02d
+--- /dev/null
++++ b/scripts/test-image-properties.mjs
+@@ -0,0 +1,43 @@
++import assert from 'node:assert/strict'
++import { readFile } from 'node:fs/promises'
++import { test } from 'node:test'
++import { build } from 'esbuild'
++const result = await build({stdin:{contents:"export * from './src/core/image-properties'",resolveDir:process.cwd()},bundle:true,platform:'node',format:'esm',write:false})
++const core = await import('data:text/javascript;base64,'+Buffer.from(result.outputFiles[0].contents).toString('base64'))
++for (const ext of ['jpg','png','webp']) {
++  await test(`${ext}: EXIF devices, shooting time and GPS are read; clean removes EXIF and keeps unrelated bytes`,async()=>{
++    const bytes=await readFile(`scripts/image-properties-fixtures/photo.${ext}`)
++    const info=await core.readImageProperties(new File([bytes],`photo.${ext}`))
++    assert.equal(info.hasExif,true);assert.equal(info.orientation,1)
++    assert.equal(info.exif.ifd0.Make,'QA Camera');assert.equal(info.exif.exif.DateTimeOriginal.getDate(),3)
++    assert.ok(info.exif.gps.GPSLatitude);assert.ok(info.exif.gps.GPSLongitude)
++    const clean=core.stripExifBytes(bytes)
++    const after=await core.readImageProperties(new File([clean],`clean.${ext}`))
++    assert.equal(after.hasExif,false);assert.deepEqual(after.exif,{})
++    assert.ok(clean.length<bytes.length);assert.deepEqual(core.stripExifBytes(clean),clean)
++    if(ext==='jpg') { const pos=bytes.indexOf(Buffer.from([255,218]));assert.deepEqual(Buffer.from(clean).subarray(Buffer.from(clean).indexOf(Buffer.from([255,218]))),bytes.subarray(pos)) }
++    // Normalization of WEBP's RIFF size and EXIF flag is part of the rewrite.
++    if(ext==='webp') {assert.equal(new DataView(clean.buffer).getUint32(4,true),clean.length-8);assert.equal(clean[20]&8,0)}
++  })
++}
++for (const ext of ['png','webp']) {
++ await test(`${ext}: animated image frame chunks preserved`, async()=>{
++  const bytes=await readFile(`scripts/image-properties-fixtures/animated.${ext}`), clean=core.stripExifBytes(bytes)
++  const info=await core.readImageProperties(new File([clean],`animation.${ext}`));assert.equal(info.animated,true);assert.equal(info.hasExif,false)
++  const chunk=ext==='png'?'fdAT':'ANMF';assert.ok(Buffer.from(clean).includes(Buffer.from(chunk)))
++ })
++}
++await test('Orientation 6 is retained for the normalization branch',async()=>{
++ const bytes=await readFile('scripts/image-properties-fixtures/oriented.jpg')
++ assert.equal((await core.readImageProperties(new File([bytes],'oriented.jpg'))).orientation,6)
++})
++await test('GIF is inspectable, but unsupported EXIF deletion never silently flattens animation',async()=>{
++ const bytes=await readFile('scripts/ui-fixture/animated.gif'), info=await core.readImageProperties(new File([bytes],'animated.gif'))
++ assert.equal(info.format,'GIF');assert.equal(info.hasExif,false);assert.equal(info.canClean,false)
++ assert.throws(()=>core.stripExifBytes(bytes),/不支持/)
++})
++await test('Malformed containers and empty input fail explicitly',async()=>{
++ const bytes=await readFile('scripts/image-properties-fixtures/photo.webp');assert.throws(()=>core.stripExifBytes(bytes.subarray(0,bytes.length-3)),/损坏/)
++ await assert.rejects(()=>core.readImageProperties(new File([],'empty.jpg')),/为空/)
++ const png=await readFile('scripts/image-properties-fixtures/photo.png');assert.throws(()=>core.stripExifBytes(png.subarray(0,33)),/损坏/)
++})
+diff --git a/scripts/test-ui-image-properties.mjs b/scripts/test-ui-image-properties.mjs
+new file mode 100644
+index 0000000..b5d69fd
+--- /dev/null
++++ b/scripts/test-ui-image-properties.mjs
+@@ -0,0 +1,90 @@
++/** Real Vue, multipart upload and protobuf send; only virtual accounts and local fixture bytes. */
++import assert from 'node:assert/strict'
++import { readFile, mkdir } from 'node:fs/promises'
++import { resolve } from 'node:path'
++import { createServer } from 'vite'
++import vue from '@vitejs/plugin-vue'
++import * as pb from '../src/core/pb.ts'
++import { build } from 'esbuild'
++const built=await build({stdin:{contents:"export * from './src/core/image-properties'",resolveDir:process.cwd()},bundle:true,platform:'node',format:'esm',write:false})
++
++const core=await import('data:text/javascript;base64,'+Buffer.from(built.outputFiles[0].contents).toString('base64'))
++const {chromium}=await import(process.env.PLAYWRIGHT_MODULE||'playwright')
++const server=await createServer({configFile:false,plugins:[vue()],server:{host:'127.0.0.1',port:0},logLevel:'error'});await server.listen()
++const browser=await chromium.launch({executablePath:process.env.CHROMIUM_EXECUTABLE||undefined,args:['--no-sandbox','--disable-dev-shm-usage']})
++
++const page=await browser.newPage({viewport:{width:1280,height:820}}),errors=[],uploads=[],sent=[],saved=[],records=[],objects=new Map()
++page.on('pageerror',e=>{errors.push(e.message);console.error('PAGE ERROR',e.message)})
++page.setDefaultTimeout(30000)
++const shot=async name=>{if(process.env.UI_QA_SCREENSHOTS){await mkdir(process.env.UI_QA_SCREENSHOTS,{recursive:true});await page.screenshot({path:resolve(process.env.UI_QA_SCREENSHOTS,name+'.png')})}}
++try {
++
++ await page.exposeFunction('__wireMessages',()=>records)
++ await page.route('**/qa-api/**',async route=>{
++  const req=route.request(),path=new URL(req.url()).pathname
++  if(path.endsWith('/qiniu-token')) return route.fulfill({json:{code:1,data:{token:'offline-upload-token'}}})
++  if(path.endsWith('/configure-distribution')) return route.fulfill({json:{code:1,data:{imageUrl:'https://chat-img.jwznb.com'}}})
++  if(path.endsWith('/send-message')) {
++   const body=pb.decode(req.postDataBuffer()),content=pb.msg(body,5),key=pb.str(content,3);assert.equal(pb.num(body,6),2);assert.ok(objects.has(key))
++   sent.push({key,width:pb.num(content,33),height:pb.num(content,34)})
++   records.push({id:pb.str(body,2),chatId:'normal',chatType:2,type:2,senderId:'me',sender:'Me',right:true,ts:Date.now(),content:{image_url:key,width:pb.num(content,33),height:pb.num(content,34)}})
++   return route.fulfill({json:{code:1}})
++  }
++  throw new Error('Unexpected API '+path)
++ })
++ await page.route('**/up/**',async route=>{
++  const req=route.request(),fd=await new Response(req.postDataBuffer(),{headers:await req.allHeaders()}).formData(),key=fd.get('key'),file=fd.get('file'),bytes=Buffer.from(await file.arrayBuffer())
++  uploads.push({key,name:file.name,mime:file.type,bytes});objects.set(key,{bytes,mime:file.type});return route.fulfill({json:{key}})
++ })
++ await page.route('**/local-save-image?*',async route=>{saved.push(route.request().postDataBuffer());return route.fulfill({json:{ok:true,path:'C:\\Offline\\cleaned-copy.png'}})})
++ await page.route('**/res/chat-img.jwznb.com/**',route=>{const object=objects.get(new URL(route.request().url()).pathname.split('/').pop());return object?route.fulfill({contentType:object.mime,body:object.bytes}):route.fulfill({status:404})})
++
++ await page.goto(`http://127.0.0.1:${server.httpServer.address().port}/scripts/ui-fixture/index.html`, {waitUntil:'domcontentloaded'});await page.waitForFunction(()=>window.__qa)
++ await page.evaluate(async()=>{
++  const ctx=window.__qa.ctx;await ctx.chat.open(ctx.chat.state.conversations[0]);ctx.chat.state.messages=[];ctx.chat.state.hasMore=false
++  const {apiPlugin}=await import('/src/plugins/api.ts'),wire={set(k,v){this[k]=v}};apiPlugin.apply(wire,{base:'/qa-api'});wire.api.setToken('offline-only')
++  for(const k of ['uploadFile','uploadAndUrl','send'])ctx.api[k]=wire.api[k]
++  ctx.api.messages=()=>window.__wireMessages();window.__TAURI__={};document.documentElement.dataset.theme='dark'
++ })
++
++ for(const [i,ext] of ['jpg','png','webp'].entries()) {
++
++  const original=await readFile(`scripts/image-properties-fixtures/photo.${ext}`)
++  await page.locator('input[type=file][accept="image/*"]').setInputFiles({name:`photo.${ext}`,mimeType:ext==='jpg'?'image/jpeg':`image/${ext}`,buffer:original})
++  await page.getByRole('button',{name:'附件图片属性',exact:true}).click()
++  const dialog=page.getByRole('dialog',{name:'图片属性',exact:true});await dialog.getByText('QA Camera',{exact:true}).waitFor();assert.ok((await dialog.textContent()).includes('GPS 纬度'))
++  await dialog.getByLabel('搜索 EXIF',{exact:true}).fill('设备型号');assert.equal(await dialog.locator('.properties-tags dt').count(),1);await dialog.getByLabel('搜索 EXIF',{exact:true}).fill('')
++  if(i===0){await dialog.evaluate(async el=>{await Promise.all(el.getAnimations({subtree:true}).map(a=>a.finished.catch(()=>{})))});await shot('image-properties-dark');await page.evaluate(()=>document.documentElement.dataset.theme='light');await shot('image-properties-light');await page.setViewportSize({width:360,height:760});assert.ok(await dialog.evaluate(el=>el.getBoundingClientRect().right<=innerWidth));await shot('image-properties-mobile');await page.setViewportSize({width:1280,height:820})}
++  await dialog.getByRole('button',{name:'清除 EXIF',exact:true}).click();await dialog.getByRole('button',{name:'保存副本',exact:true}).waitFor()
++  assert.equal(await dialog.getByText('QA Camera',{exact:true}).count(),0);assert.ok((await dialog.textContent()).includes('未检测到'))
++  await dialog.getByRole('button',{name:'保存副本',exact:true}).click();await page.waitForFunction(()=>document.querySelector('.properties-status')?.textContent.includes('副本已保存'))
++  await dialog.getByRole('button',{name:'用于发送（替换附件）',exact:true}).click();await dialog.waitFor({state:'detached'})
++  const pending=await page.evaluate(async()=>{const ctx=window.__qa.ctx,p=ctx.chat.drafts.get(ctx.chat.state.current).pending[0];return {name:p.file.name,hasElements:!!p.elements,bytes:Array.from(new Uint8Array(await p.file.arrayBuffer()))}})
++  assert.match(pending.name,/_no-exif/);assert.equal(pending.hasElements,false);assert.deepEqual(Buffer.from(pending.bytes),Buffer.from(core.stripExifBytes(original)))
++  await page.getByRole('button',{name:'发送',exact:true}).click();await page.waitForFunction(n=>window.__qa.ctx.chat.state.messages.length>=n,i+1)
++  assert.deepEqual(uploads[i].bytes,Buffer.from(pending.bytes));assert.deepEqual(saved[i],uploads[i].bytes);assert.equal(sent[i].width,48);assert.equal(sent[i].height,32)
++ }
++ // Rotated JPEG: bake the browser-visible orientation into PNG with exactly the same visible pixels.
++ const oriented=await readFile('scripts/image-properties-fixtures/oriented.jpg')
++ await page.locator('input[type=file][accept="image/*"]').setInputFiles({name:'oriented.jpg',mimeType:'image/jpeg',buffer:oriented})
++ const before=await page.evaluate(async()=>{const ctx=window.__qa.ctx,p=ctx.chat.drafts.get(ctx.chat.state.current).pending[0],img=new Image();img.src=p.url;await img.decode();const c=document.createElement('canvas');c.width=img.naturalWidth;c.height=img.naturalHeight;const x=c.getContext('2d');x.drawImage(img,0,0);return {w:c.width,h:c.height,pixels:Array.from(x.getImageData(0,0,c.width,c.height).data)}})
++ await page.getByRole('button',{name:'附件图片属性',exact:true}).click();const dialog=page.getByRole('dialog',{name:'图片属性',exact:true});await dialog.getByText('QA Camera',{exact:true}).waitFor()
++ await dialog.getByRole('button',{name:'清除 EXIF',exact:true}).click();await dialog.getByRole('button',{name:'用于发送（替换附件）',exact:true}).click();await dialog.waitFor({state:'detached'})
++ const after=await page.evaluate(async()=>{const ctx=window.__qa.ctx,p=ctx.chat.drafts.get(ctx.chat.state.current).pending[0],img=new Image();img.src=p.url;await img.decode();const c=document.createElement('canvas');c.width=img.naturalWidth;c.height=img.naturalHeight;const x=c.getContext('2d');x.drawImage(img,0,0);return {w:c.width,h:c.height,pixels:Array.from(x.getImageData(0,0,c.width,c.height).data),name:p.file.name}})
++ assert.equal(after.name,'oriented_no-exif.png');assert.deepEqual({w:before.w,h:before.h},{w:32,h:48});assert.deepEqual(after.pixels,before.pixels)
++ await page.getByRole('button',{name:'发送',exact:true}).click();await page.waitForFunction(()=>window.__qa.ctx.chat.state.messages.length>=4);assert.equal(sent[3].width,32);assert.equal(sent[3].height,48)
++ // Open the actual message toolbar; cleaning and queuing is separate from sending.
++ const viewerSource=await readFile('scripts/image-properties-fixtures/photo.jpg');objects.set('viewer-photo.jpg',{bytes:viewerSource,mime:'image/jpeg'})
++ await page.evaluate(()=>{const ctx=window.__qa.ctx;ctx.chat.state.messages.push({id:'viewer-photo',chatId:'normal',chatType:2,type:2,senderId:'me',sender:'Me',ts:Date.now(),content:{image_url:'viewer-photo.jpg',width:48,height:32}})})
++ await page.locator('img.media').last().click();await page.getByRole('button',{name:'图片属性',exact:true}).click();await dialog.getByText('QA Camera',{exact:true}).waitFor()
++ await page.keyboard.press('Escape');await dialog.waitFor({state:'detached'});await page.locator('.viewer-mask').waitFor()
++ await page.getByRole('button',{name:'图片属性',exact:true}).click();await dialog.getByText('QA Camera',{exact:true}).waitFor();await dialog.getByRole('button',{name:'清除 EXIF',exact:true}).click()
++ await dialog.getByRole('button',{name:'加入待发送附件',exact:true}).click();await dialog.waitFor({state:'detached'});assert.equal(uploads.length,4)
++ await page.locator('.viewer-bar button[title="关闭"]').click();assert.equal(await page.getByRole('button',{name:'附件图片属性',exact:true}).count(),1)
++ // No EXIF and GIF states don't enable destructive operations.
++ await page.locator('.pend-x').click()
++ await page.locator('input[type=file][accept="image/*"]').setInputFiles({name:'animation.gif',mimeType:'image/gif',buffer:await readFile('scripts/ui-fixture/animated.gif')})
++ await page.getByRole('button',{name:'附件图片属性',exact:true}).click();await dialog.getByText('GIF 不含标准 EXIF；动画数据保持原样。',{exact:true}).waitFor();assert.equal(await dialog.getByRole('button',{name:'清除 EXIF',exact:true}).isDisabled(),true)
++ await page.getByRole('button',{name:'关闭属性',exact:true}).click();assert.deepEqual(errors,[])
++ console.log('PASS: real EXIF/GPS panel, search, dark/light/mobile, saved bytes == replacement == multipart upload, protobuf dimensions, Orientation 6 pixel equality, message toolbar queuing without auto-send, Escape and GIF states')
++} finally {await browser.close();await server.close()}
+diff --git a/src-tauri/Cargo.lock b/src-tauri/Cargo.lock
+index 3a108d2..58e87f3 100644
+--- a/src-tauri/Cargo.lock
++++ b/src-tauri/Cargo.lock
+@@ -4833,7 +4833,7 @@ dependencies = [
+ 
+ [[package]]
+ name = "yunhulaoda-desktop"
+-version = "1.0.22"
++version = "1.0.23"
+ dependencies = [
+  "base64 0.22.1",
+  "serde",
+diff --git a/src-tauri/Cargo.toml b/src-tauri/Cargo.toml
+index 99136c6..2508ec5 100644
+--- a/src-tauri/Cargo.toml
++++ b/src-tauri/Cargo.toml
+@@ -1,6 +1,6 @@
+ [package]
+ name = "yunhulaoda-desktop"
+-version = "1.0.22"
++version = "1.0.23"
+ description = "云湖牢大版桌面客户端（Tauri 壳 + Node sidecar 服务）"
+ authors = ["yibanm"]
+ edition = "2021"
+diff --git a/src-tauri/tauri.conf.json b/src-tauri/tauri.conf.json
+index e325d0c..50f20d0 100644
+--- a/src-tauri/tauri.conf.json
++++ b/src-tauri/tauri.conf.json
+@@ -1,7 +1,7 @@
+ {
+   "$schema": "https://schema.tauri.app/config/2",
+   "productName": "YunhuLaoda",
+-  "version": "1.0.22",
++  "version": "1.0.23",
+   "identifier": "com.richkobe.yunhulaoda",
+   "build": {
+     "beforeBuildCommand": "",
+diff --git a/src/components/Composer.vue b/src/components/Composer.vue
+index 0e76dda..ea8a475 100644
+--- a/src/components/Composer.vue
++++ b/src/components/Composer.vue
+@@ -4,6 +4,7 @@ import { inject, ref, nextTick, computed, onUnmounted, toRefs, defineAsyncCompon
+ import QuoteBar from './QuoteBar.vue'
+ import AiInstructionDialog from './AiInstructionDialog.vue'
+ const ImageEditor = defineAsyncComponent(() => import('./ImageEditor.vue'))
++const ImageProperties = defineAsyncComponent(() => import('./ImageProperties.vue'))
+ import { h } from '../satori/element'
+ import Icon from '../console/components/Icon.vue'
+ import { resUrl } from '../core/res'
+@@ -296,6 +297,28 @@ if (w.__TAURI__?.event?.listen) {
+ }
+ onUnmounted(() => { offTauriDrop?.() })
+ 
++const propertiesAttachment = ref<Pending | null>(null)
++const applyingProperties = ref(false)
++function openAttachmentProperties(p: Pending) {
++  if (!uploading.value && !p.sent) propertiesAttachment.value = p
++}
++async function useCleanedAttachment(file: File) {
++  const p = propertiesAttachment.value
++  if (!p || uploading.value || p.sent || applyingProperties.value) return
++  applyingProperties.value = true
++  let url = ''
++  try {
++    url = await decodedImageUrl(file)
++    if (!isCurrent() || propertiesAttachment.value !== p || !pending.value.includes(p) || uploading.value || p.sent) return
++    const previous = p.url
++    p.file = file; p.url = url; url = ''; p.elements = undefined; p.error = ''; p.progress = 0; p.speed = 0
++    await nextTick(); propertiesAttachment.value = null
++    if (previous) URL.revokeObjectURL(previous)
++    ctx.ui?.toast?.('已替换为无 EXIF 附件，点击发送即可', 'success')
++  } catch (e: any) { ctx.ui?.toast?.('替换附件失败：' + e.message, 'error') }
++  finally { if (url) URL.revokeObjectURL(url); applyingProperties.value = false }
++}
++
+ /* ---- 发送前图片编辑（裁剪/旋转/翻转） ---- */
+ const editing = ref<Pending | null>(null)
+ const applyingEdit = ref(false)
+@@ -597,6 +620,7 @@ function fmtSize(n: number) {
+           <span class="nm">{{ p.file.name }}</span>
+         </div>
+         <span class="pend-meta">{{ p.kind === 'file' || p.kind === 'audio' ? fmtSize(p.file.size) : fmtSize(p.file.size) }}</span>
++        <button v-if="p.kind === 'image'" class="pend-properties" title="图片属性（EXIF）" aria-label="附件图片属性" :disabled="uploading || p.sent || applyingProperties" @click="openAttachmentProperties(p)"><Icon name="info" :size="14" /> 属性</button>
+         <!-- 上传进度条 + 实时速度 MB/s -->
+         <div v-if="uploading && p.progress > 0 && !p.error" class="pend-prog">
+           <div class="bar" :style="{ width: Math.round(p.progress * 100) + '%' }"></div>
+@@ -630,6 +654,7 @@ function fmtSize(n: number) {
+       </div>
+     </div>
+ 
++    <ImageProperties v-if="propertiesAttachment" :file="propertiesAttachment.file" mode="attachment" :disabled="uploading || propertiesAttachment.sent || applyingProperties" @use="useCleanedAttachment" @close="propertiesAttachment = null" />
+     <ImageEditor v-if="editing" :file="editing.file" :url="editing.url" :saving="applyingEdit"
+                  @done="onEdited" @close="editing = null" />
+   </div>
+@@ -637,6 +662,7 @@ function fmtSize(n: number) {
+ 
+ <style scoped>
+ .composer { z-index: 4; }
++.pend-properties{display:inline-flex;align-items:center;gap:4px;padding:3px 7px;margin:4px 0;border:1px solid var(--line);border-radius:7px;color:var(--fg);background:var(--bg);font-size:11px;cursor:pointer}.pend-properties:hover:enabled{background:var(--acc-soft)}.pend-properties:disabled{opacity:.45}
+ .ai-wrap { position: relative; flex: 0 0 auto; }
+ .ai-detach{touch-action:none;cursor:grab!important}.ai-detach:active{cursor:grabbing!important}.ai-detached-notice{display:flex;align-items:center;flex-wrap:wrap;gap:8px;font-size:12px;color:var(--fg2)}.ai-detached-notice span{margin-right:auto}
+ .ai-trigger { position: relative; font-weight: 700; }
+diff --git a/src/components/ImageProperties.vue b/src/components/ImageProperties.vue
+new file mode 100644
+index 0000000..dd8b39c
+--- /dev/null
++++ b/src/components/ImageProperties.vue
+@@ -0,0 +1,109 @@
++<script setup lang="ts">
++import { computed, inject, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
++import Icon from '../console/components/Icon.vue'
++import { clearImageExif, exifLabels, propertyValue, readImageProperties, type ImageProperties } from '../core/image-properties'
++import { saveImageCopy } from '../core/save-image'
++const props = defineProps<{ file?: File; url?: string; mode: 'viewer' | 'attachment'; disabled?: boolean }>()
++const emit = defineEmits<{ (e: 'close'): void; (e: 'use', file: File): void }>()
++const ctx = inject<any>('ctx')
++const source = ref<File>(), info = ref<ImageProperties>(), cleaned = ref<File>()
++const loading = ref(true), busy = ref(false), error = ref(''), status = ref(''), search = ref('')
++const dialog = ref<HTMLElement>(), trigger = document.activeElement as HTMLElement
++let request: AbortController, generation = 0, disposed = false
++const sizeLabel = (size: number) => `${size.toLocaleString()} 字节（${(size / 1024).toFixed(1)} KB）`
++const rows = computed(() => Object.entries(info.value?.exif || {}).flatMap(([group, tags]) =>
++  tags && typeof tags === 'object' ? Object.entries(tags).map(([key, value]) => ({ group, key, label: exifLabels[key] || key, value: propertyValue(value) })) : []
++).filter(row => `${row.group} ${row.key} ${row.label} ${row.value}`.toLowerCase().includes(search.value.toLowerCase())))
++async function load() {
++  const seq = ++generation; request?.abort(); request = new AbortController()
++  loading.value = true; error.value = ''; cleaned.value = undefined; info.value = undefined; source.value = undefined
++  try {
++    let file = props.file
++    if (!file) {
++      const response = await fetch(props.url!, { signal: request.signal })
++      if (!response.ok) throw new Error('读取图片失败 HTTP ' + response.status)
++      const blob = await response.blob()
++      let name = /^(data|blob):/.test(props.url!) ? 'image' : props.url!.split('?')[0].split('/').pop() || 'image'
++      try { name = decodeURIComponent(name) } catch {}
++      file = new File([blob], name, { type: blob.type })
++    }
++    const result = await readImageProperties(file)
++    if (!disposed && seq === generation) { source.value = file; info.value = result }
++  } catch (e: any) { if (!disposed && seq === generation && e.name !== 'AbortError') error.value = e.message || '读取失败' }
++  finally { if (!disposed && seq === generation) loading.value = false }
++}
++watch(() => [props.file, props.url], load, { immediate: true })
++async function clean() {
++  if (!source.value || busy.value || props.disabled) return
++  busy.value = true; error.value = ''; status.value = ''
++  try {
++    const file = await clearImageExif(source.value)
++    const result = await readImageProperties(file)
++    if (disposed) return
++    cleaned.value = file; source.value = file; info.value = result
++    status.value = 'EXIF 已清除并校验。请选择保存副本或用于发送。'
++  } catch (e: any) { if (!disposed) error.value = e.message || '清除失败' }
++  finally { busy.value = false }
++}
++async function save() {
++  if (!cleaned.value || busy.value) return
++  busy.value = true; error.value = ''
++  try { const path = await saveImageCopy(cleaned.value, ctx.api?.token || ''); if (!disposed) status.value = path ? '副本已保存：' + path : '副本已导出' }
++  catch (e: any) { if (!disposed) error.value = '保存失败：' + e.message }
++  finally { busy.value = false }
++}
++function use() { if (cleaned.value && !props.disabled && !busy.value) emit('use', cleaned.value) }
++function keydown(e: KeyboardEvent) {
++  if (ctx?.lock?.isLocked) return
++  if (e.key === 'Escape') { e.preventDefault(); e.stopImmediatePropagation(); emit('close') }
++  if (e.key !== 'Tab') return
++  const items = Array.from(dialog.value?.querySelectorAll<HTMLElement>('button:not(:disabled), input') || [])
++  const first = items[0], last = items.at(-1)
++  if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last?.focus() }
++  else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first?.focus() }
++}
++onMounted(async () => { window.addEventListener('keydown', keydown, true); await nextTick(); dialog.value?.focus() })
++onBeforeUnmount(() => { disposed = true; request?.abort(); window.removeEventListener('keydown', keydown, true); trigger?.focus() })
++</script>
++<template>
++  <Teleport to="body">
++    <Transition name="properties" appear>
++      <div class="properties-mask" @click.self="emit('close')" @wheel.stop @mousedown.stop>
++        <section ref="dialog" class="properties-dialog" role="dialog" aria-modal="true" aria-label="图片属性" tabindex="-1">
++          <header><span class="properties-icon"><Icon name="info" :size="22" /></span><div><h2>图片属性</h2><p>基本信息与 EXIF</p></div><button class="properties-close" aria-label="关闭属性" @click="emit('close')"><Icon name="close" :size="20" /></button></header>
++          <div class="properties-body">
++            <p v-if="loading" role="status">正在读取图片属性…</p>
++            <template v-else-if="info && source">
++              <dl class="properties-basic">
++                <dt>文件名</dt><dd>{{ source.name }}</dd><dt>格式</dt><dd>{{ info.format }} · {{ info.mime }}</dd>
++                <dt>尺寸</dt><dd>{{ info.width && info.height ? `${info.width} × ${info.height} 像素` : '当前环境无法解码尺寸' }}</dd>
++                <dt>大小</dt><dd>{{ sizeLabel(info.size) }}</dd><dt v-if="props.file?.lastModified">本地文件修改时间</dt><dd v-if="props.file?.lastModified">{{ new Date(props.file.lastModified).toLocaleString() }}</dd>
++              </dl>
++              <div class="properties-exif-head"><h3>EXIF <span>{{ info.hasExif ? '已检测到' : '未检测到' }}</span></h3><input v-if="info.hasExif" v-model="search" aria-label="搜索 EXIF" placeholder="搜索属性…" /></div>
++              <p v-if="info.parseError" class="properties-error">{{ info.parseError }}</p>
++              <p v-if="!info.hasExif" class="properties-note">{{ info.format === '其他' ? '此格式暂不支持 EXIF 读取。' : info.format === 'GIF' ? 'GIF 不含标准 EXIF；动画数据保持原样。' : '当前文件未检测到标准 EXIF。' }}</p>
++              <dl v-else class="properties-tags"><template v-for="(row, i) in rows" :key="i"><dt :title="row.group + '.' + row.key">{{ row.label }}<small>{{ row.key }}</small></dt><dd>{{ row.value }}</dd></template></dl>
++              <p v-if="info.hasExif && !rows.length && !info.parseError" class="properties-note">没有匹配的 EXIF 字段。</p>
++              <p class="properties-note">清除 EXIF 会移除其中的设备、拍摄时间、GPS 和缩略图；XMP 等其他元数据不在本次清除范围内。原文件保留。</p>
++              <p v-if="info.hasExif && info.orientation !== 1" class="properties-note">此图含方向信息。清除时将校正方向并导出 PNG 副本，文件大小可能增加。</p>
++              <p v-if="!info.canClean && info.hasExif" class="properties-note">此格式可查看属性，暂不支持安全清除 EXIF。</p>
++            </template>
++            <p v-if="error" class="properties-error" role="alert">{{ error }}</p><p v-if="status" class="properties-status" role="status">{{ status }}</p>
++          </div>
++          <footer>
++            <button v-if="!info && !loading" @click="load">重试</button>
++            <button v-if="!cleaned" class="properties-primary" :disabled="loading || busy || disabled || !info?.hasExif || !info?.canClean || !!info?.parseError" @click="clean">{{ busy ? '正在清除…' : '清除 EXIF' }}</button>
++            <template v-else><button :disabled="busy" @click="save">保存副本</button><button class="properties-primary" :disabled="busy || disabled" @click="use">{{ mode === 'attachment' ? '用于发送（替换附件）' : '加入待发送附件' }}</button></template>
++          </footer>
++        </section>
++      </div>
++    </Transition>
++  </Teleport>
++</template>
++<style scoped>
++.properties-mask{position:fixed;inset:0;z-index:16000;display:grid;place-items:center;padding:16px;background:#0008;color:var(--fg);box-sizing:border-box}
++.properties-dialog{display:flex;flex-direction:column;width:min(560px,100%);max-height:85dvh;border:1px solid var(--line);border-radius:20px;background:var(--card,var(--bg));box-shadow:0 24px 80px #0006;outline:none;overflow:hidden}
++header{display:flex;align-items:center;gap:12px;padding:20px 22px;border-bottom:1px solid var(--line)}h2{font-size:18px;margin:0}header p{margin:3px 0 0;color:var(--fg2);font-size:12px}.properties-icon{display:grid;place-items:center;width:40px;height:40px;border-radius:13px;color:var(--acc);background:var(--acc-soft)}
++button{font:inherit;cursor:pointer;color:var(--fg);background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:9px 13px;transition:background .16s,transform .16s}button:hover:enabled{background:var(--acc-soft)}button:active:enabled{transform:scale(.97)}button:disabled{opacity:.45;cursor:default}.properties-close{margin-left:auto;padding:7px;display:grid;place-items:center;border:0;background:transparent}.properties-body{overflow:auto;padding:18px 22px;overscroll-behavior:contain}.properties-basic,.properties-tags{display:grid;grid-template-columns:minmax(100px,35%) minmax(0,1fr);gap:12px;margin:0;font-size:13px}dt{color:var(--fg2)}dd{margin:0;overflow-wrap:anywhere;white-space:pre-wrap;user-select:text}small{display:block;font-size:10px;opacity:.8;overflow-wrap:anywhere}.properties-exif-head{display:flex;gap:12px;align-items:center;margin:22px 0 14px}h3{font-size:14px;margin:0;white-space:nowrap}h3 span{font-size:11px;font-weight:400;color:var(--fg2);margin-left:6px}input{width:100%;min-width:0;box-sizing:border-box;border:1px solid var(--line);border-radius:8px;padding:8px;background:var(--bg);color:var(--fg);font:inherit;font-size:12px}.properties-tags{font-size:12px}.properties-note{font-size:12px;line-height:1.7;color:var(--fg2);margin:16px 0 0}.properties-error{color:var(--danger,#d74747);font-size:13px;line-height:1.6}.properties-status{color:var(--acc);font-size:13px;line-height:1.6}footer{display:flex;justify-content:flex-end;flex-wrap:wrap;gap:8px;padding:16px 22px;border-top:1px solid var(--line)}.properties-primary{background:var(--acc);color:var(--on-acc);border-color:transparent}.properties-primary:hover:enabled{background:var(--acc);filter:brightness(1.08)}.properties-enter-active,.properties-leave-active{transition:opacity .18s}.properties-enter-active .properties-dialog,.properties-leave-active .properties-dialog{transition:transform .2s}.properties-enter-from,.properties-leave-to{opacity:0}.properties-enter-from .properties-dialog,.properties-leave-to .properties-dialog{transform:translateY(10px) scale(.98)}
++@media(prefers-reduced-motion:reduce){*{transition:none!important}}@media(max-width:420px){header,.properties-body,footer{padding:14px}.properties-basic,.properties-tags{grid-template-columns:100px minmax(0,1fr)}}
++</style>
+diff --git a/src/components/MessageElements.vue b/src/components/MessageElements.vue
+index 70f376d..73f181f 100644
+--- a/src/components/MessageElements.vue
++++ b/src/components/MessageElements.vue
+@@ -22,6 +22,7 @@ import Icon from '../console/components/Icon.vue'
+ import { saveImageCopy } from '../core/save-image'
+ import { openExternalUrl } from '../core/links'
+ const ImageEditor = defineAsyncComponent(() => import('./ImageEditor.vue'))
++const ImageProperties = defineAsyncComponent(() => import('./ImageProperties.vue'))
+ 
+ const props = defineProps<{
+   elements: Element[]
+@@ -179,6 +180,28 @@ function ratioOf(el: Element) {
+ /** 点击图片/视频 → 页内灯箱查看（QQ 式），点空白处收起 */
+ const viewer = ref<{ kind: 'image' | 'video'; url: string } | null>(null)
+ const viewerVideo = ref<HTMLVideoElement | null>(null)
++const viewerFile = ref<File | null>(null)
++const propertiesOpen = ref(false)
++let propertiesTarget: any
++let propertiesAccount: any
++function openProperties() {
++  const current = ctx.chat?.state.current
++  propertiesTarget = current ? { ...current } : null
++  propertiesAccount = ctx.auth?.state.user?.id
++  propertiesOpen.value = true
++}
++function stageCleanedImage(file: File) {
++  const current = ctx.chat?.state.current
++  if (!current || !propertiesTarget || current.id !== propertiesTarget.id || current.type !== propertiesTarget.type || ctx.auth?.state.user?.id !== propertiesAccount) {
++    ctx.ui?.toast?.('会话已切换，请重新打开图片属性后添加附件', 'warn'); return
++  }
++  const draft = ctx.chat.drafts.get(propertiesTarget)
++  if (draft.uploading) { ctx.ui?.toast?.('正在发送附件，请稍后再试', 'warn'); return }
++  const id = Math.max(Date.now(), ...draft.pending.map((p: any) => p.id)) + 1
++  draft.pending.push({ id, file, url: URL.createObjectURL(file), kind: 'image', caption: '', error: '', progress: 0, speed: 0 })
++  propertiesOpen.value = false
++  ctx.ui?.toast?.('已加入当前会话的待发送附件，点击发送即可', 'success')
++}
+ const editingImage = ref<File | null>(null)
+ const editLoading = ref(false)
+ const savingEdited = ref(false)
+@@ -189,7 +212,7 @@ const zoom = ref(1)
+ const pan = ref({ x: 0, y: 0 })
+ function openRaw(src: string) {
+   const u = resUrl(src)
+-  if (u) { viewer.value = { kind: 'image', url: u }; zoom.value = 1; pan.value = { x: 0, y: 0 } }
++  if (u) { viewerFile.value = null; viewer.value = { kind: 'image', url: u }; zoom.value = 1; pan.value = { x: 0, y: 0 } }
+ }
+ function openVideo(src: string) {
+   const u = mediaUrl(src, 'video')
+@@ -214,7 +237,7 @@ function toggleVideoFull() {
+ }
+ function closeViewer() {
+   editRequest?.abort(); editRequest = undefined; editLoading.value = false; editingImage.value = null
+-  stopPan?.(); viewer.value = null; videoFull.value = false
++  stopPan?.(); viewer.value = null; viewerFile.value = null; propertiesOpen.value = false; videoFull.value = false
+   if (editedPreview) { URL.revokeObjectURL(editedPreview); editedPreview = '' }
+ }
+ async function editImage() {
+@@ -242,7 +265,7 @@ async function saveEdited(file: File) {
+     if (viewer.value !== target) return
+     const previousPreview = editedPreview
+     editedPreview = nextPreview; nextPreview = ''
+-    viewer.value = { kind: 'image', url: editedPreview }; zoom.value = 1; pan.value = { x: 0, y: 0 }
++    viewerFile.value = file; viewer.value = { kind: 'image', url: editedPreview }; zoom.value = 1; pan.value = { x: 0, y: 0 }
+     await nextTick()
+     editingImage.value = null
+     if (previousPreview) URL.revokeObjectURL(previousPreview)
+@@ -250,7 +273,7 @@ async function saveEdited(file: File) {
+   } catch (e: any) { if (e.name !== 'AbortError') ctx.ui?.toast?.('图片保存失败：' + e.message, 'error') }
+   finally { if (nextPreview) URL.revokeObjectURL(nextPreview); savingEdited.value = false }
+ }
+-function viewerKey(e: KeyboardEvent) { if (e.key === 'Escape' && !editingImage.value && !ctx.lock?.isLocked) closeViewer() }
++function viewerKey(e: KeyboardEvent) { if (e.key === 'Escape' && !editingImage.value && !propertiesOpen.value && !ctx.lock?.isLocked) closeViewer() }
+ watch(viewer, value => { window.removeEventListener('keydown', viewerKey); if (value) window.addEventListener('keydown', viewerKey) })
+ onUnmounted(() => { closeViewer(); window.removeEventListener('keydown', viewerKey) })
+ 
+@@ -274,7 +297,7 @@ function setMediaZoom(next: number, x = innerWidth / 2, y = innerHeight / 2) {
+     y: (pan.value.y - y + innerHeight / 2) * factor + y - innerHeight / 2 }
+ }
+ function onWheel(e: WheelEvent) {
+-  if (!viewer.value || (e.target as HTMLElement)?.closest('.viewer-bar')) return
++  if (propertiesOpen.value || !viewer.value || (e.target as HTMLElement)?.closest('.viewer-bar')) return
+   e.preventDefault()
+   // Mouse wheels commonly report pixel deltas too; plain wheel must zoom as requested.
+   setMediaZoom(zoom.value * Math.exp(-e.deltaY * (e.deltaMode === 1 ? .08 : e.deltaMode === 2 ? .8 : .01)), e.clientX, e.clientY)
+@@ -529,6 +552,7 @@ watch(() => props.elements, fix, { deep: true })
+           <span class="viewer-zoom">{{ Math.round(zoom * 100) }}%</span>
+           <button class="viewer-ctl" title="放大" @click="setMediaZoom(zoom * 1.25)">＋</button>
+           <button class="viewer-ctl" title="还原" @click="zoom = 1; pan = { x: 0, y: 0 }">1:1</button>
++          <button v-if="viewer.kind === 'image'" class="viewer-ctl" title="图片属性（EXIF）" aria-label="图片属性" @click="openProperties"><Icon name="info" :size="17" /></button>
+           <button v-if="viewer.kind === 'image'" class="viewer-ctl" :disabled="editLoading" aria-label="编辑图片" :title="editLoading ? '加载中…' : '编辑图片'" @click="editImage"><Icon name="pencil" :size="15" /></button>
+         </template>
+         <template v-if="viewer.kind === 'video'">
+@@ -541,6 +565,7 @@ watch(() => props.elements, fix, { deep: true })
+         <button class="viewer-ctl" title="关闭" @click="closeViewer">×</button>
+       </div>
+     </div>
++    <ImageProperties v-if="propertiesOpen && viewer?.kind === 'image'" :file="viewerFile || undefined" :url="viewer.url" mode="viewer" @close="propertiesOpen = false" @use="stageCleanedImage" />
+     <ImageEditor v-if="editingImage" :file="editingImage" :saving="savingEdited" confirm-label="保存副本" @done="saveEdited" @close="editingImage = null" />
+     <!-- 文章弹窗：标题 + 净化渲染正文，右上 × 关闭 -->
+     <div v-if="postView" class="post-mask" @click.self="closePost">
+diff --git a/src/console/components/Icon.vue b/src/console/components/Icon.vue
+index c5f08dd..3edc4aa 100644
+--- a/src/console/components/Icon.vue
++++ b/src/console/components/Icon.vue
+@@ -29,6 +29,7 @@ const PATHS = {
+   send: 'M22 2 11 13M22 2l-7 20-4-9-9-4z',
+   search: 'M11 19a8 8 0 1 0 0-16 8 8 0 0 0 0 16zM21 21l-4.3-4.3',
+   folder: 'M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z',
++  info: 'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM12 11v6M12 7h.01',
+   pencil: 'M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z',
+   settings: 'M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1A1.7 1.7 0 0 0 9 19.4a1.7 1.7 0 0 0-1.9.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.9 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1A1.7 1.7 0 0 0 4.6 9a1.7 1.7 0 0 0-.3-1.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.9.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.9-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.9V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z',
+   palette: 'M12 21a9 9 0 1 1 0-18c4.97 0 9 3.58 9 8 0 2.5-2 4-4 4h-1.5a1.5 1.5 0 0 0-1.1 2.5c.3.4.6.9.6 1.5a2 2 0 0 1-2 2zM7.5 12a1 1 0 1 0 0-2 1 1 0 0 0 0 2zM10.5 8a1 1 0 1 0 0-2 1 1 0 0 0 0 2zM15 8.5a1 1 0 1 0 0-2 1 1 0 0 0 0 2z',
+diff --git a/src/core/image-properties.ts b/src/core/image-properties.ts
+new file mode 100644
+index 0000000..b1eeb7b
+--- /dev/null
++++ b/src/core/image-properties.ts
+@@ -0,0 +1,142 @@
++/** Container-only EXIF removal; keep compressed image, animation and ICC chunks intact. */
++import { imageMetadata } from './media'
++export type ImageFormat = 'JPEG' | 'PNG' | 'WebP' | 'GIF' | 'TIFF' | '其他'
++interface Part { start: number; end: number; kind: string; data: Uint8Array }
++export interface ImageProperties {
++  format: ImageFormat; mime: string; width: number; height: number; size: number
++  exif: Record<string, any>; hasExif: boolean; orientation: number; animated: boolean
++  canClean: boolean; parseError: string
++}
++const ascii = (bytes: Uint8Array, start: number, length: number) => String.fromCharCode(...bytes.subarray(start, start + length))
++const invalid = () => { throw new Error('图片数据不完整或结构损坏，无法安全清除 EXIF') }
++function inspect(bytes: Uint8Array) {
++  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
++  const parts: Part[] = [], exif: Uint8Array[] = []
++  let format: ImageFormat = '其他', animated = false
++  const add = (start: number, end: number, kind: string, dataStart: number, dataEnd = end) => {
++    if (end > bytes.length || end <= start) invalid()
++    const part = { start, end, kind, data: bytes.subarray(dataStart, dataEnd) }; parts.push(part)
++    if (kind === 'EXIF') exif.push(part.data)
++  }
++  if (bytes[0] === 0xff && bytes[1] === 0xd8) {
++    format = 'JPEG'; let p = 2
++    while (p < bytes.length) {
++      const start = p
++      if (bytes[p++] !== 0xff) invalid()
++      while (bytes[p] === 0xff) p++
++      const marker = bytes[p++]
++      if (marker === 0xda || marker === 0xd9) break // entropy-coded scan is copied byte-for-byte
++      if (marker === 0x01 || marker >= 0xd0 && marker <= 0xd7) continue
++      if (p + 2 > bytes.length) invalid()
++      const length = view.getUint16(p), end = p + length
++      if (length < 2) invalid()
++      const isExif = marker === 0xe1 && ascii(bytes, p + 2, 6) === 'Exif\0\0'
++      add(start, end, isExif ? 'EXIF' : 'keep', p + 2); p = end
++    }
++  } else if (ascii(bytes, 0, 8) === '\x89PNG\r\n\x1a\n') {
++    format = 'PNG'; let p = 8, ended = false
++    while (p + 12 <= bytes.length) {
++      const length = view.getUint32(p), kind = ascii(bytes, p + 4, 4), end = p + 12 + length
++      add(p, end, kind === 'eXIf' ? 'EXIF' : kind, p + 8, end - 4)
++      if (kind === 'acTL') animated = true
++      p = end
++      if (kind === 'IEND') { ended = true; break }
++    }
++    if (!ended) invalid()
++  } else if (ascii(bytes, 0, 4) === 'RIFF' && ascii(bytes, 8, 4) === 'WEBP') {
++    format = 'WebP'
++    if (bytes.length < 12 || view.getUint32(4, true) + 8 !== bytes.length) invalid()
++    let p = 12
++    while (p + 8 <= bytes.length) {
++      const length = view.getUint32(p + 4, true), kind = ascii(bytes, p, 4), end = p + 8 + length + (length % 2)
++      add(p, end, kind, p + 8, p + 8 + length)
++      if (kind === 'ANIM' || kind === 'ANMF') animated = true
++      p = end
++    }
++    if (p !== bytes.length) invalid()
++  } else if (/^GIF8[79]a$/.test(ascii(bytes, 0, 6))) { format = 'GIF'; animated = true }
++  else if (ascii(bytes, 0, 4) === 'II*\0' || ascii(bytes, 0, 4) === 'MM\0*') { format = 'TIFF'; exif.push(bytes) }
++  return { format, parts, exif, animated }
++}
++const mimeOf = (format: ImageFormat) => ({ JPEG: 'image/jpeg', PNG: 'image/png', WebP: 'image/webp', GIF: 'image/gif', TIFF: 'image/tiff' }[format] || '')
++export async function readImageProperties(file: File): Promise<ImageProperties> {
++  if (!file.size) throw new Error('图片内容为空')
++  const bytes = new Uint8Array(await file.arrayBuffer()), info = inspect(bytes)
++  const exif: Record<string, any> = {}; let orientation = 1, parseError = ''
++  if (info.exif.length) {
++    const parser = await import('exifr')
++    for (const block of info.exif) {
++      try {
++        const tiff = ascii(block, 0, 6) === 'Exif\0\0' ? block.subarray(6) : block
++        const tags = await parser.parse(tiff, { tiff: true, ifd1: true, interop: true, makerNote: true, userComment: true, mergeOutput: false, translateValues: false })
++        if (!tags || tags.errors?.length) throw new Error('EXIF 结构无法完整解析')
++        Object.assign(exif, tags)
++        const raw = tags.ifd0?.Orientation
++        if (raw != null) { if (raw < 1 || raw > 8) throw new Error('方向信息无效'); orientation = raw }
++      } catch { parseError = '检测到 EXIF，但部分信息损坏或无法解析；不会将其显示为“无 EXIF”。' }
++    }
++  }
++  const typed = new File([file], file.name, { type: mimeOf(info.format) || file.type })
++  const size = await imageMetadata(typed)
++  return { format: info.format, mime: typed.type || 'application/octet-stream', ...size, size: file.size,
++    exif, hasExif: info.exif.length > 0, orientation, animated: info.animated,
++    canClean: ['JPEG', 'PNG', 'WebP'].includes(info.format), parseError }
++}
++/** Pure container rewrite; all non-EXIF bytes, including animation, remain unchanged. */
++export function stripExifBytes(bytes: Uint8Array): Uint8Array {
++  const info = inspect(bytes)
++  if (!['JPEG', 'PNG', 'WebP'].includes(info.format)) throw new Error('此格式暂不支持安全清除 EXIF')
++  const removed = info.parts.filter(p => p.kind === 'EXIF')
++  if (!removed.length) return bytes.slice()
++  const result = new Uint8Array(bytes.length - removed.reduce((n, p) => n + p.end - p.start, 0))
++  let from = 0, to = 0
++  for (const part of removed) { result.set(bytes.subarray(from, part.start), to); to += part.start - from; from = part.end }
++  result.set(bytes.subarray(from), to)
++  if (info.format === 'WebP') {
++    new DataView(result.buffer).setUint32(4, result.length - 8, true)
++    const vp8x = inspect(result).parts.find(p => p.kind === 'VP8X')
++    if (vp8x) result[vp8x.start + 8] &= ~8 // EXIF-present bit, RFC 9649
++  }
++  return result
++}
++export async function clearImageExif(file: File): Promise<File> {
++  const info = await readImageProperties(file)
++  if (!info.canClean) throw new Error('此格式暂不支持安全清除 EXIF；原文件保持不变')
++  if (info.parseError) throw new Error('无法确认 EXIF 方向信息，请先用图片编辑器导出副本')
++  if (!info.hasExif) throw new Error('此图片没有可清除的标准 EXIF')
++  let blob: Blob
++  if (info.orientation !== 1) {
++    if (info.animated) throw new Error('该动图含旋转方向信息，暂不支持在保留动画的同时清除 EXIF')
++    // Browsers apply all 8 EXIF orientations while decoding; bake the visible pixels into lossless PNG.
++    const url = URL.createObjectURL(file), image = new Image()
++    try {
++      image.src = url; await image.decode()
++      if (image.naturalWidth * image.naturalHeight > 32_000_000) throw new Error('图片过大，无法安全校正方向，请先缩小图片')
++      const canvas = document.createElement('canvas'); canvas.width = image.naturalWidth; canvas.height = image.naturalHeight
++      const context = canvas.getContext('2d'); if (!context) throw new Error('无法创建图片画布')
++      context.drawImage(image, 0, 0)
++      blob = await new Promise<Blob>((resolve, reject) => canvas.toBlob(b => b ? resolve(b) : reject(new Error('图片导出失败')), 'image/png'))
++      canvas.width = canvas.height = 0
++    } finally { image.removeAttribute('src'); URL.revokeObjectURL(url) }
++  } else blob = new Blob([stripExifBytes(new Uint8Array(await file.arrayBuffer())) as BlobPart], { type: info.mime })
++  const extension = blob.type === 'image/png' ? 'png' : info.format === 'JPEG' ? 'jpg' : 'webp'
++  const name = (file.name.replace(/\.[^.]*$/, '').replace(/[\\/:*?"<>|]/g, '_') || 'image') + '_no-exif.' + extension
++  const output = new File([blob], name, { type: blob.type })
++  const verified = await readImageProperties(output)
++  if (verified.hasExif || !verified.width || !verified.height) throw new Error('清除后的图片校验失败，原文件保持不变')
++  return output
++}
++export const exifLabels: Record<string, string> = {
++  Make: '制造商', Model: '设备型号', Software: '软件', DateTimeOriginal: '拍摄时间', CreateDate: '数字化时间', ModifyDate: '修改时间',
++  Orientation: '方向', ExposureTime: '曝光时间（秒）', FNumber: '光圈', ISO: 'ISO 感光度', FocalLength: '焦距（mm）', LensModel: '镜头型号',
++  GPSLatitude: 'GPS 纬度', GPSLatitudeRef: '纬度方向', GPSLongitude: 'GPS 经度', GPSLongitudeRef: '经度方向', GPSAltitude: '海拔',
++  Artist: '作者', Copyright: '版权', ImageDescription: '描述', UserComment: '用户备注', MakerNote: '厂商数据',
++}
++export function propertyValue(value: any): string {
++  if (value instanceof Date) return value.toLocaleString()
++  if (ArrayBuffer.isView(value)) return value instanceof DataView || value.byteLength > 256
++    ? `[${value.byteLength} 字节二进制数据]` : Array.from(value as unknown as ArrayLike<number>).join(', ')
++  if (Array.isArray(value)) return value.slice(0, 50).map(propertyValue).join(', ') + (value.length > 50 ? '…' : '')
++  if (value && typeof value === 'object') return JSON.stringify(value).slice(0, 3000)
++  return String(value ?? '').slice(0, 3000)
++}

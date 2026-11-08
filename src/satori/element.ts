@@ -70,7 +70,7 @@ export const h = Object.assign(_h, {
 /** 云湖 content_type 枚举 */
 export const ContentType = {
   text: 1, image: 2, markdown: 3, file: 4, form: 5, post: 6,
-  sticker: 7, html: 8, tip: 9, video: 10, audio: 11, call: 13, a2ui: 14,
+  sticker: 7, html: 8, tip: 9, video: 10, audio: 11, videoCall: 12, call: 13, a2ui: 14,
 } as const
 
 /** 云湖消息 -> 元素树 */
@@ -84,12 +84,13 @@ export function parse(content: any = {}, contentType: number = ContentType.text,
     // 表情：content.image 往往是相对 key，优先用带域名的 image_url
     case ContentType.sticker: out.push(h.sticker(content.image || content.image_url || '', content.sticker_item_id, content.sticker_pack_id, content.expression_id, content.width, content.height, content.image_url)); break
     case ContentType.file: out.push(h.file(content.file_url, content.file_name, content.file_size)); break
-    case ContentType.video: out.push(h('video', { src: content.video_url || content.video, time: content.video_time, name: content.file_name, size: content.file_size, width: content.width, height: content.height })); break
+    case ContentType.video: out.push(h('video', { src: content.video_url || content.video, poster: content.video_cover_url || content.video_thumbnail_url, time: content.video_time, name: content.file_name, size: content.file_size, width: content.width, height: content.height })); break
     case ContentType.audio: out.push(h.audio(content.audio_url, content.audio_time)); break
-    case ContentType.call: out.push(h.call(content.call_status_text || '')); break
+    case ContentType.videoCall: out.push(h.call(content.call_status_text ? `视频通话 · ${content.call_status_text}` : '视频通话')); break
+    case ContentType.call: out.push(h.call(content.call_status_text || '语音通话')); break
     case ContentType.tip: out.push(h.tip(content.tip || content.text || '')); break
     case ContentType.form: out.push(h.form(content.form)); break
-    case ContentType.post: out.push(h.post(content.post_title, content.post_content, content.post_id)); break
+    case ContentType.post: out.push(h('post', { title: content.post_title, content: content.post_content, id: content.post_id, contentType: content.post_content_type })); break
     case ContentType.a2ui: out.push(h.a2ui(content.text ?? content.form ?? '')); break
     default: out.push(h('unknown', { contentType, content }))
   }

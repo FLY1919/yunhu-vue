@@ -8,7 +8,10 @@
 import { inject } from 'vue'
 import Login from './components/Login.vue'
 import Console from './console/Console.vue'
+import FloatingVideoPlayer from './components/FloatingVideoPlayer.vue'
+import PrivateCallPanel from './components/PrivateCallPanel.vue'
 import Toasts from './components/Toasts.vue'
+import CommunityEditorHost from './components/CommunityEditorHost.vue'
 
 const ctx = inject<any>('ctx')
 </script>
@@ -20,4 +23,7 @@ const ctx = inject<any>('ctx')
   </div>
   <Console v-else />
   <Toasts />
+  <FloatingVideoPlayer />
+  <PrivateCallPanel v-if="ctx.calls?.state.enabled" />
+  <CommunityEditorHost v-if="ctx.community" />
 </template>

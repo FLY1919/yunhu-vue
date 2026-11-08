@@ -17,6 +17,7 @@
     "opener:default",
     "allow-restart-sidecar",
     "allow-open-external-url",
+    "allow-reset-media-permission",
     "allow-native-notifications-supported",
     "allow-show-message-notification",
     "allow-dismiss-message-notification",
@@ -27,6 +28,10 @@
     "allow-ai-bridge-token",
     "allow-open-ai-panel",
     "allow-close-ai-panel",
-    "allow-set-privacy"
+    "allow-set-privacy",
+    "allow-open-community-editor",
+    "allow-close-community-editor",
+    "allow-open-chat-window",
+    "allow-close-chat-windows"
   ]
 }

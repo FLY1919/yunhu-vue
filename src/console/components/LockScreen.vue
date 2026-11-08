@@ -76,7 +76,7 @@ async function forgotReset() {
       await auth.verifyToken(fToken.value)
     } else if (fEmail.value.trim() && fPass.value) {
       // 账密验证：用临时 token 校验（不覆盖当前会话）——先取当前 token 备份语义由 verifyToken 保证
-      const t = await ctx.api.login(fEmail.value.trim(), fPass.value, auth.deviceId || 'web', 'web')
+      const t = await ctx.api.login(fEmail.value.trim(), fPass.value, auth.deviceId || 'web')
       await auth.verifyToken(t)
     } else {
       err.value = '请填写账号密码或 token'

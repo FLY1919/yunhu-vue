@@ -352,8 +352,18 @@ await test('cancelling, timing out, changing rules or logging out never executes
 })
 await test('disabling review permits only checked action types, never grants missing account privileges', async () => {
   const h = await groupFixture({ review: false }); try {
+    h.ctx.userbot.state.config.conversations['2:group'].mergeSeconds = 3
+    let groupChecks = 0, targetChecks = 0
+    h.ctx.api.groupInfo = async () => { groupChecks++; return structuredClone(h.info) }
+    const listMembers = h.ctx.api.listMembers
+    h.ctx.api.listMembers = (...args) => {
+      if (args[1]?.keywords === 'other') targetChecks++
+      return listMembers(...args)
+    }
     await h.propose([muteAction()]); await waitFor(() => h.calls.length === 1)
     assert.equal(h.ctx.userbot.state.review, null)
+    assert.equal(groupChecks, 2, 'AI context and execution each check the group once')
+    assert.equal(targetChecks, 1, 'execution checks the target once')
   } finally { h.dispose() }
   for (const blocked of ['bot', 'account', 'action']) {
     const h = await groupFixture({ review: false }); try {
@@ -598,6 +608,61 @@ await test('rule moderation uses the review queue and execution checks without c
     await waitFor(() => h.ctx.userbot.state.review)
     assert.equal(h.pending.length, 0); assert.equal(h.calls.length, 0)
     h.ctx.userbot.resolveReview(h.ctx.userbot.state.review.id, true)
+    await waitFor(() => h.calls.length === 1)
+    assert.deepEqual(h.calls[0], ['gagMember', 'group', 'other', 600])
+  } finally { h.dispose() }
+})
+await test('unreviewed rule moderation starts without the stored merge delay and handles each trigger once', async () => {
+  const h = await groupFixture({ review: false }); try {
+    const cfg = h.ctx.userbot.state.config, setting = cfg.conversations['2:group']
+    cfg.bots[0].useAI = false; cfg.bots[0].canSend = false; cfg.services = []
+    setting.automationAction = 'recall'; setting.mergeSeconds = 3
+    let groupChecks = 0
+    const lookups = []
+    h.ctx.api.groupInfo = async () => { groupChecks++; return structuredClone(h.info) }
+    h.ctx.api.messagesAround = async (_gid, _type, mid) => {
+      lookups.push(mid)
+      return [{ id: mid, chatId: 'group', senderId: 'other' }]
+    }
+    h.ctx.emit('message-created', msg('rule-first', '违规示例', 2, 'group'))
+    assert.equal(groupChecks, 1, 'the first trigger starts checking permissions immediately')
+    assert.equal(h.ctx.userbot.state.queued['2:group'], undefined)
+    h.ctx.emit('message-created', msg('rule-second', '另一条违规示例', 2, 'group'))
+    h.ctx.emit('message-created', msg('rule-second', '重复推送', 2, 'group'))
+    await waitFor(() => !h.ctx.userbot.state.busy['2:group'])
+    assert.deepEqual(h.calls, [['recall', 'group', 2, 'rule-first'], ['recall', 'group', 2, 'rule-second']])
+    assert.deepEqual(lookups, ['rule-first', 'rule-second'])
+    assert.equal(groupChecks, 2)
+    assert.equal(h.pending.length, 0); assert.equal(h.ctx.userbot.state.review, null)
+  } finally { h.dispose() }
+})
+await test('authorized rule recall works with an inherited default, exact-ID fallback and member-role verification', async () => {
+  const h = await groupFixture(); try {
+    const cfg = h.ctx.userbot.state.config, bot = cfg.bots[0], setting = cfg.conversations['2:group']
+    bot.useAI = false; bot.workMode = 'conversation'; bot.canSend = false; cfg.services = []
+    bot.management.allowed = ['recall']; setting.automationAction = 'recall'
+    h.info.admins = []
+    h.members.push({ id: 'me', name: '当前管理员', level: 2 })
+    h.ctx.api.messagesAround = async (_gid, _type, mid, count) => count === 1
+      ? [{ id: mid, chatId: 'group', senderId: 'other', content: { text: '触发撤回' } }] : []
+    const group = { id: 'group', type: 2 }
+    assert.equal(h.ctx.userbot.workModeFor(group), 'management')
+    assert.equal(await h.ctx.userbot.checkManagement(group), '管理员')
+    h.ctx.emit('message-created', msg('rule-recall', '触发撤回', 2, 'group'))
+    await waitFor(() => h.ctx.userbot.state.review)
+    assert.equal(h.calls.length, 0)
+    h.ctx.userbot.resolveReview(h.ctx.userbot.state.review.id, true)
+    await waitFor(() => h.calls.length === 1)
+    assert.deepEqual(h.calls[0], ['recall', 'group', 2, 'rule-recall'])
+    assert.equal(h.pending.length, 0); assert.equal(h.sent.length, 0)
+    h.ctx.userbot.setWorkMode(group, 'conversation')
+    assert.match(h.ctx.userbot.statusFor(group), /切换为管理模式/)
+  } finally { h.dispose() }
+})
+await test('an unavailable tag catalog does not block an independently authorized group action', async () => {
+  const h = await groupFixture({ review: false }); try {
+    h.ctx.api.listTags = async () => { throw new Error('tag list unavailable') }
+    await h.propose([muteAction()])
     await waitFor(() => h.calls.length === 1)
     assert.deepEqual(h.calls[0], ['gagMember', 'group', 'other', 600])
   } finally { h.dispose() }

@@ -1,11 +1,14 @@
 <script setup lang="ts">
+import { wheelZoomFactor } from '../core/wheel-zoom'
 /** YH LaoDa's editing surface, shared by the viewer and the attachment composer. */
 import { computed, inject, onMounted, onUnmounted, ref } from 'vue'
 import Icon from '../console/components/Icon.vue'
 import { drawStrokes, editedImageName, openImageEdit, type ImageDesignPatch, type BrushStroke } from '../core/image-edit'
+import { clearImageExif, readImageProperties, type ImageProperties } from '../core/image-properties'
+import { saveImageCopy } from '../core/save-image'
 
-const props = defineProps<{ file: File; url?: string; confirmLabel?: string; saving?: boolean }>()
-const emit = defineEmits<{ (e: 'done', file: File): void; (e: 'close'): void }>()
+const props = defineProps<{ file: File; url?: string; confirmLabel?: string; saving?: boolean; allowSend?: boolean }>()
+const emit = defineEmits<{ (e: 'done', file: File): void; (e: 'use', file: File): void; (e: 'close'): void }>()
 const ctx = inject<any>('ctx')
 const canvas = ref<HTMLCanvasElement | null>(null)
 const previewStage = ref<HTMLElement | null>(null)
@@ -18,9 +21,10 @@ const textInput = ref<HTMLTextAreaElement | null>(null), textPosition = ref({ x:
 const brushColor = ref('#ff3030'), brushSize = ref(2), zoom = ref(1)
 const gifFrame = ref(0), gifPlaying = ref(false), frameCount = ref(0), exportProgress = ref(0)
 const controller = new AbortController()
+const metadata = ref<ImageProperties>(), cleaned = ref<File>(), metadataStatus = ref('')
 let gifTimer: ReturnType<typeof setTimeout> | undefined
 const dragging = ref<null | { x: number; y: number; w: number; h: number }>(null)
-const tabs = [{ id: 'transform', title: '裁剪与旋转', icon: 'scissors' }, { id: 'adjust', title: '调色与滤镜', icon: 'sliders' }, { id: 'text', title: '文字标注', icon: 'pencil' }, { id: 'brush', title: '画笔标注', icon: 'pencil' }]
+const tabs = [{ id: 'transform', title: '裁剪与旋转', icon: 'scissors' }, { id: 'adjust', title: '调色与滤镜', icon: 'sliders' }, { id: 'text', title: '文字标注', icon: 'pencil' }, { id: 'brush', title: '画笔标注', icon: 'pencil' }, { id: 'metadata', title: 'EXIF 隐私', icon: 'info' }]
 const filters = [{ id: 'original', name: '原图' }, { id: 'grayscale', name: '黑白' }, { id: 'sepia', name: '复古' }, { id: 'invert', name: '反色' }]
 let editor: Awaited<ReturnType<typeof openImageEdit>> | undefined
 let frame = 0, disposed = false
@@ -70,7 +74,7 @@ function setZoom(value: number, clientX?: number, clientY?: number) {
 function wheel(e: WheelEvent) {
   if (!e.ctrlKey && !e.metaKey) return
   e.preventDefault(); e.stopPropagation()
-  setZoom(zoom.value * Math.exp(-e.deltaY * (e.deltaMode === 1 ? .08 : .01)), e.clientX, e.clientY)
+  setZoom(zoom.value * wheelZoomFactor(e), e.clientX, e.clientY)
 }
 function stopGif() { gifPlaying.value = false; clearTimeout(gifTimer) }
 function playGif() {
@@ -89,7 +93,7 @@ function apply(patch: ImageDesignPatch) {
 function rotate(degrees: number) { apply({ rotate: (design.value?.rotate || 0) + degrees, crop: null, resize: null }) }
 function undo() { if (working.value) return; editor?.session.undo(); syncFields(); repaint() }
 function redo() { if (working.value) return; editor?.session.redo(); syncFields(); repaint() }
-function reset() { editor?.session.reset(); text.value = ''; syncFields(); repaint() }
+function reset() { editor?.session.reset(); cleaned.value = undefined; metadataStatus.value = ''; text.value = ''; syncFields(); repaint() }
 function setSize(axis: 'width' | 'height', value: string) {
   const n = Math.round(Number(value))
   if (!n || n < 1) return
@@ -171,15 +175,47 @@ function beginCrop(e: PointerEvent) {
 }
 async function close() {
   if (working.value) return
-  if (editor?.session.dirty && ctx?.ui?.confirm && !await ctx.ui.confirm('放弃图片编辑', '未保存的编辑将被丢弃。', { okText: '放弃编辑', cancelText: '继续编辑' })) return
+  if ((editor?.session.dirty || cleaned.value) && ctx?.ui?.confirm && !await ctx.ui.confirm('放弃图片编辑', '未保存的编辑将被丢弃。', { okText: '放弃编辑', cancelText: '继续编辑' })) return
   emit('close')
+}
+async function cleanExif() {
+  if (working.value) return
+  busy.value = true; error.value = ''
+  try {
+    const file = await clearImageExif(props.file)
+    if (!disposed) { cleaned.value = file; metadataStatus.value = 'EXIF 已清除并校验。可保存副本，或使用下方按钮应用到待发送附件。' }
+  } catch (e: any) { if (!disposed) error.value = e.message || '清除 EXIF 失败' }
+  finally { busy.value = false }
+}
+async function outputFile() {
+  // Without pixel edits, retain compressed image/animation bytes and the original format.
+  if (cleaned.value && !editor?.session.dirty) return cleaned.value
+  if (!editor) throw new Error('图片尚未打开')
+  const blob = await editor.export(format.value, p => { exportProgress.value = p }, gifFrame.value)
+  return new File([blob], editedImageName(props.file.name, format.value), { type: blob.type })
+}
+async function saveCleanCopy() {
+  if (working.value || !cleaned.value) return
+  busy.value = true; error.value = ''; stopGif()
+  try {
+    const file = await outputFile(), path = await saveImageCopy(file, ctx.api?.token || '')
+    if (!disposed && path !== null) metadataStatus.value = path ? '副本已保存：' + path : '副本已导出'
+  } catch (e: any) { if (!disposed) error.value = '保存失败：' + e.message }
+  finally { busy.value = false }
+}
+async function useCleaned() {
+  if (working.value || !cleaned.value) return
+  busy.value = true; error.value = ''; stopGif()
+  try { const file = await outputFile(); if (!disposed) emit('use', file) }
+  catch (e: any) { if (!disposed) error.value = '生成附件失败：' + e.message }
+  finally { busy.value = false }
 }
 async function confirm() {
   if (!editor || working.value || loading.value) return
   busy.value = true; error.value = ''; exportProgress.value = 0; stopGif()
   try {
-    const blob = await editor.export(format.value, p => { exportProgress.value = p }, gifFrame.value)
-    if (!disposed) emit('done', new File([blob], editedImageName(props.file.name, format.value), { type: blob.type }))
+    const file = await outputFile()
+    if (!disposed) emit('done', file)
   } catch (e: any) { error.value = '导出失败：' + e.message }
   finally { busy.value = false }
 }
@@ -196,6 +232,7 @@ onMounted(async () => {
   document.addEventListener('visibilitychange', visibility)
   observer = new ResizeObserver(fitPreview)
   if (previewStage.value) observer.observe(previewStage.value)
+  void readImageProperties(props.file).then(info => { if (!disposed) metadata.value = info }).catch(() => {})
   try {
     editor = await openImageEdit(props.file, controller.signal)
     if (disposed) return
@@ -230,7 +267,17 @@ onUnmounted(() => { disposed = true; controller.abort(); stopGif(); observer?.di
               <h3>滤镜</h3><div class="ied-grid"><button v-for="filter in filters" :key="filter.id" class="ghost small" :class="{ selected: design?.filter === filter.id }" @click="apply({ filter: filter.id })">{{ filter.name }}</button></div>
             </div>
             <div v-else-if="tool === 'text'" class="ied-panel"><h3>文字标注</h3><p class="ied-hint">输入文字后，点击图片上的任意位置放置；也可以先点击选位置。</p><textarea ref="textInput" v-model="text" placeholder="输入标注或水印文字" aria-label="标注文字" rows="3"></textarea><label class="ied-slider">字号（图片高度的百分比）<input v-model.number="textSize" type="range" min="2" max="20" /></label><label class="ied-check">文字颜色<input type="color" v-model="textColor" /></label><button class="ghost small" :disabled="!text.trim()" @click="addText()">添加到选中位置</button><button class="ghost small" :disabled="!design?.annotations.length" @click="apply({ annotations: [] })">清除文字</button></div>
-            <div v-else class="ied-panel"><h3>画笔标注</h3><p class="ied-hint">在图片上按住拖动绘制；每一笔都可以撤销。GIF 标注会应用到所有帧。</p><label class="ied-check">画笔颜色<input aria-label="画笔颜色" type="color" v-model="brushColor" /></label><label class="ied-slider">笔宽（图片高度的百分比）<span>{{ brushSize }}%</span><input aria-label="画笔粗细" type="range" min=".2" max="15" step=".2" v-model.number="brushSize" /></label><button class="ghost small" :disabled="!design?.strokes.length" @click="apply({ strokes: [] })">清除画笔</button></div>
+            <div v-else-if="tool === 'brush'" class="ied-panel"><h3>画笔标注</h3><p class="ied-hint">在图片上按住拖动绘制；每一笔都可以撤销。GIF 标注会应用到所有帧。</p><label class="ied-check">画笔颜色<input aria-label="画笔颜色" type="color" v-model="brushColor" /></label><label class="ied-slider">笔宽（图片高度的百分比）<span>{{ brushSize }}%</span><input aria-label="画笔粗细" type="range" min=".2" max="15" step=".2" v-model.number="brushSize" /></label><button class="ghost small" :disabled="!design?.strokes.length" @click="apply({ strokes: [] })">清除画笔</button></div>
+            <div v-else-if="tool === 'metadata'" class="ied-panel" aria-label="EXIF 隐私设置">
+              <h3>清除 EXIF</h3><p class="ied-hint">移除设备、拍摄时间、GPS 和内嵌缩略图，生成新副本。XMP 等其他元数据保持不变。</p>
+              <p v-if="!metadata" class="ied-hint">正在读取 EXIF…</p><p v-else-if="!metadata.hasExif || metadata.parseError" class="ied-hint">EXIF：无</p>
+              <p v-else-if="!metadata.canClean" class="ied-hint">此格式暂不支持安全清除 EXIF。</p>
+              <p v-if="metadata?.orientation !== 1 && metadata?.hasExif" class="ied-hint">含方向信息：清除时校正显示方向并导出 PNG。</p>
+              <button class="ghost small" :disabled="working || !metadata?.canClean" @click="cleanExif">清除 EXIF</button>
+              <button v-if="cleaned" class="ghost small" :disabled="working" @click="saveCleanCopy">保存副本</button>
+              <button v-if="cleaned && allowSend" class="ghost small" :disabled="working" @click="useCleaned">加入待发送附件</button>
+              <p v-if="metadataStatus" class="ied-hint ied-metadata-status" role="status">{{ metadataStatus }}</p>
+            </div>
           </aside>
           <div class="ied-preview-area"><div ref="previewStage" class="ied-preview" @wheel="wheel">
             <div v-if="loading" class="ied-loading" role="status">正在加载图片…</div>
@@ -277,7 +324,7 @@ onUnmounted(() => { disposed = true; controller.abort(); stopGif(); observer?.di
 .ied-preview-note { margin: 0; padding: 0 12px 10px; text-align: center; font-size: 11px; color: var(--fg2); }
 .ied-loading { position: absolute; color: var(--fg2); font-size: 13px; }
 .ied-bar { display: flex; align-items: center; gap: 8px; padding: 15px 20px; border-top: 1px solid var(--line); flex-wrap: wrap; }
-.ied-bar select { width: 82px; font-size: 12px; padding: 6px; }.ied-spacer { flex: 1; }
+.ied-metadata-status { color:var(--fg); }.ied-tools nav { overflow:auto; flex-shrink:0; }.ied-bar select { width: 82px; font-size: 12px; padding: 6px; }.ied-spacer { flex: 1; }
 .ied-error { margin: 0; padding: 10px 20px; color: var(--err); background: var(--card2); font-size: 12px; }
 @keyframes editor-enter { from { opacity: 0; transform: translateY(8px) scale(.99); } to { opacity: 1; transform: none; } }
 @media(max-width: 700px) { .ied-mask { padding: 6px; }.ied-box { height: 95vh; width: 100%; border-radius: 14px; }.ied-workspace { grid-template-columns: 1fr; grid-template-rows: minmax(150px, 1fr) minmax(130px, 1fr); }.ied-tools { grid-row: 2; border-right: 0; border-top: 1px solid var(--line); }.ied-tools nav { display: flex; gap: 3px; margin-bottom: 6px; }.ied-tools nav button { padding: 8px; }.ied-panel { gap: 8px; }.ied-preview { grid-row: 1; padding: 12px 12px 34px; }.ied-head { padding: 12px 15px; }.ied-bar { padding: 10px; gap: 5px; } }

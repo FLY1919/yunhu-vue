@@ -1,3 +1,4 @@
+import { shallowReactive } from 'vue'
 import { mediaUrl } from './res'
 
 /** Decode only for dimensions; release the local URL on every completion path. */
@@ -68,18 +69,61 @@ export async function revealMedia(el: any) {
   if (!response.ok || !result?.ok) throw new Error(result?.msg || '打开文件位置失败 HTTP ' + response.status)
 }
 
-export async function downloadMedia(el: any) {
+interface DownloadProgress { received: number; total: number; choosing?: boolean }
+const downloads = shallowReactive(new Map<string, DownloadProgress>())
+const downloadKey = (url: string, name: string) => JSON.stringify([url, name])
+
+export function fileDownloadProgress(url: string, name: string) { return downloads.get(downloadKey(url, name)) }
+export function mediaDownloadProgress(el: any) {
+  if (!el.attrs?.src) return undefined
   const { url, name } = mediaDownload(el)
-  const w = window as any
-  if (typeof w.showSaveFilePicker === 'function') {
-    // The picker requires the original click gesture; fetch must happen after it opens.
-    const handle = await w.showSaveFilePicker({ suggestedName: name })
-    const response = await fetch(url)
-    if (!response.ok) throw new Error('下载失败 HTTP ' + response.status)
-    const writer = await handle.createWritable()
-    try { await writer.write(await response.blob()); await writer.close() }
-    catch (error) { await writer.abort().catch(() => {}); throw error }
+  return fileDownloadProgress(url, name)
+}
+export function downloadLabel(progress: DownloadProgress | undefined, idle: string) {
+  if (!progress) return idle
+  if (progress.choosing) return '选择保存位置…'
+  if (progress.total) return `下载中 ${Math.min(100, Math.floor(progress.received / progress.total * 100))}%`
+  if (!progress.received) return '正在下载…'
+  return `已下载 ${(progress.received / 1048576).toFixed(1)} MB`
+}
+export async function downloadFile(url: string, name: string, token?: string) {
+  if (!(window as any).__TAURI__?.core?.invoke) {
+    const link = document.createElement('a')
+    link.href = url; link.download = name; link.click()
     return
   }
-  await revealMedia(el)
+  const key = downloadKey(url, name)
+  if (downloads.has(key)) return
+  downloads.set(key, { received: 0, total: 0 })
+  try {
+    const query = new URLSearchParams({ url, name })
+    const response = await fetch('/local-download?' + query, { method: 'POST', headers: { token: token || '' } })
+    if (!response.ok || !response.body) {
+      const result = await response.json().catch(() => null)
+      throw new Error(result?.msg || '下载失败 HTTP ' + response.status)
+    }
+    let buffer = ''
+    const reader = response.body.pipeThrough(new TextDecoderStream()).getReader()
+    try {
+      for (;;) {
+        const { value, done } = await reader.read()
+        if (done) throw new Error('下载连接提前结束')
+        buffer += value
+        let lineEnd: number
+        while ((lineEnd = buffer.indexOf('\n')) >= 0) {
+          const update = JSON.parse(buffer.slice(0, lineEnd))
+          buffer = buffer.slice(lineEnd + 1)
+          if (update.ok === true) return update.cancelled ? undefined : String(update.path)
+          if (update.ok === false) throw new Error(update.msg)
+          downloads.set(key, update.choosing ? { choosing: true, received: 0, total: 0 }
+            : { received: update.received, total: update.total })
+        }
+      }
+    } finally { await reader.cancel().catch(() => {}); reader.releaseLock() }
+  } finally { downloads.delete(key) }
+}
+
+export function downloadMedia(el: any, token?: string) {
+  const { url, name } = mediaDownload(el)
+  return downloadFile(url, name, token)
 }

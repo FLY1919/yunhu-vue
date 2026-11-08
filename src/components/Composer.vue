@@ -1,16 +1,25 @@
 <script setup lang="ts">
+import { routeChatMedia } from '../core/media-devices'
+import ThemedSelect from './ThemedSelect.vue'
+import { newMsgId } from '../plugins/api'
 import { decodedImageUrl, imageMetadata, mediaMetadata } from '../core/media'
-import { inject, ref, nextTick, computed, onUnmounted, toRefs, defineAsyncComponent, watch } from 'vue'
+import { inject, ref, nextTick, computed, onMounted, onUnmounted, toRefs, defineAsyncComponent, watch } from 'vue'
 import QuoteBar from './QuoteBar.vue'
+import EditorToolbar from './EditorToolbar.vue'
+import { markdownAction, createTextHistory, escapeHtml, type EditAction } from '../core/editor/core'
 import AiInstructionDialog from './AiInstructionDialog.vue'
 const ImageEditor = defineAsyncComponent(() => import('./ImageEditor.vue'))
+const ImageProperties = defineAsyncComponent(() => import('./ImageProperties.vue'))
 import { h } from '../satori/element'
 import Icon from '../console/components/Icon.vue'
 import { resUrl } from '../core/res'
-import { fallbackAvatar } from '../core/util'
-import type { PendingAttachment as Pending } from '../core/composer-drafts'
+import { fallbackAvatar, formatFileSize } from '../core/util'
+import { moveComposerMentions, type ComposerMention, type PendingAttachment as Pending } from '../core/composer-drafts'
 import { keyOf } from '../plugins/userbot'
+import CallToolbarButtons from './CallToolbarButtons.vue'
+import type { CallKind } from '../core/yunhu-calls'
 
+const props = defineProps<{ detached?: boolean }>()
 const ctx = inject<any>('ctx')
 const chat = ctx.chat
 const quickreply = ctx.quickreply
@@ -23,6 +32,23 @@ let disposed = false
 const isCurrent = () => !disposed && chat.state.current?.id === target.id && chat.state.current?.type === target.type
   && ctx.auth?.state.user?.id === accountId
 onUnmounted(() => { disposed = true })
+const showCalls = computed(() => !props.detached && ctx.calls?.supported
+  && (target.type === 2 || (target.type === 1 && target.id !== String(accountId))))
+const enablingCalls = ref(false)
+async function startCall(kind: CallKind) {
+  const calls = ctx.calls
+  if (!isCurrent() || !showCalls.value || enablingCalls.value || calls.state.session) return
+  if (!calls.state.enabled) {
+    enablingCalls.value = true
+    try {
+      const enabled = await ctx.ui.confirm('启用通话', '开启后可以发起和接收语音、视频通话。可以在「音频与视频」设置中关闭。', { okText: '启用通话' })
+      if (!enabled || !isCurrent()) return
+      calls.setEnabled(true)
+    } finally { enablingCalls.value = false }
+  }
+  if (!calls.ready()) { ctx.ui.toast('实时连接暂不可用，请连接后再发起通话。', 'warn'); return }
+  await calls.start(target, kind)
+}
 const aiOpen = ref(false)
 const aiInstructionOpen = ref(false)
 const aiInstructionError = ref('')
@@ -55,7 +81,7 @@ onUnmounted(() => stopAiDrag?.())
 const aiKey = keyOf(target)
 const aiHasAI = computed(() => ctx.userbot?.usesAIFor(target) !== false)
 const aiWorkMode = computed(() => ctx.userbot?.workModeFor(target) || 'conversation')
-function switchAiMode(event: Event) { try { ctx.userbot.setWorkMode(target, (event.target as HTMLSelectElement).value) } catch (e: any) { (event.target as HTMLSelectElement).value = aiWorkMode.value; ctx.ui.toast(e.message, 'warn') } }
+function switchAiMode(value: string | number) { try { ctx.userbot.setWorkMode(target, value) } catch (e: any) { ctx.ui.toast(e.message, 'warn') } }
 const aiBusy = computed(() => !!ctx.userbot?.state.busy[aiKey])
 const aiNow = ref(Date.now())
 const aiQueued = computed(() => ctx.userbot?.state.queued?.[aiKey])
@@ -97,11 +123,22 @@ function useAiDraft() {
   kind.value = ctx.userbot.state.draftKinds?.[aiKey] || 1
   delete ctx.userbot.state.draftKinds?.[aiKey]
   delete ctx.userbot.state.drafts[aiKey]; aiOpen.value = false
-  nextTick(() => { autoresize(); ta.value?.focus() })
+  nextTick(() => ta.value?.focus())
 }
 
 // 1 文本 / 3 Markdown / 8 HTML
 const ta = ref<HTMLTextAreaElement | null>(null)
+const formatting = ref(false), moreTools = ref(false), composerHistory = createTextHistory(text.value), historyVersion = ref(0)
+let textSelection = {start:0,end:0}
+const historyState = computed(()=>{historyVersion.value;return {undo:composerHistory.canUndo,redo:composerHistory.canRedo}})
+function rememberSelection(){if(ta.value)textSelection={start:ta.value.selectionStart,end:ta.value.selectionEnd}}
+watch(text, value => {
+  composerHistory.record(value)
+  historyVersion.value++
+})
+function formatText(action:EditAction){if(uploading.value)return;const value=markdownAction(text.value,textSelection,action);composerHistory.record(text.value,false);kind.value=3;text.value=value.text;composerHistory.record(value.text,false);historyVersion.value++;nextTick(()=>{ta.value?.focus();ta.value?.setSelectionRange(value.start,value.end);rememberSelection()})}
+function historyMove(redo=false){text.value=redo?composerHistory.redo():composerHistory.undo();historyVersion.value++;nextTick(()=>{ta.value?.focus()})}
+
 const imgInput = ref<HTMLInputElement | null>(null)
 const fileInput = ref<HTMLInputElement | null>(null)
 const audioInput = ref<HTMLInputElement | null>(null)
@@ -128,6 +165,9 @@ function sortByOrder(list: any[], order: string[]) {
   return [...list].sort((a, b) => (idx.get(a.id) ?? 9999) - (idx.get(b.id) ?? 9999))
 }
 const barItems = computed(() => sortByOrder((chat.composerOf?.('composer') || []).filter((it: any) => it.kind !== 'quick'), barOrder.value))
+const primaryTools = computed(() => barItems.value.filter(it => ['emoji', 'image', 'file'].includes(it.kind)))
+const messageKinds = computed(() => barItems.value.filter(it => it.kind === 'type'))
+const extraTools = computed(() => barItems.value.filter(it => it.kind !== 'type' && !['emoji', 'image', 'file'].includes(it.kind)))
 const qrItems = computed(() => sortByOrder((chat.composerOf?.('composer') || []).filter((it: any) => it.kind === 'quick'), qrOrder.value))
 
 /* ---- 拖拽排序：dragstart 记 id，drop 到目标上即把拖拽项插到目标位置 ---- */
@@ -156,7 +196,6 @@ const BAR_ICON: Record<string, string> = {
 }
 
 function onInput() {
-  autoresize()
   onInputAt()
   if (!text.value.startsWith('/')) return
   const kw = text.value.slice(1)
@@ -166,16 +205,16 @@ function onInput() {
 
 const offCommandPick = ctx.on('commands/pick', (t: string) => {
   text.value = t
-  nextTick(() => { autoresize(); ta.value?.focus() })
+  nextTick(() => ta.value?.focus())
 })
-/* 群面板「@ TA」等外部追加文本到输入框 */
+/* 插件可以向输入框追加普通文本。 */
 const offAppend = ctx.on('composer/append', (t: string) => {
   text.value += t
-  nextTick(() => { autoresize(); ta.value?.focus() })
+  nextTick(() => ta.value?.focus())
 })
+const offMention = ctx.on('composer/mention', (member: { id: string; name?: string }) => insertMention(member))
 
-onUnmounted(() => { offCommandPick(); offAppend() })
-nextTick(autoresize)
+onUnmounted(() => { offCommandPick(); offAppend(); offMention() })
 
 function onBar(it: any) {
   if (it.kind === 'type') { kind.value = it.value; return }
@@ -204,14 +243,56 @@ const placeholder = computed(() => ({
   8: '<b>HTML</b> 消息，支持内联标签',
 }[kind.value]))
 
-/** 用户拖拽设定的输入框最小高度（0=跟随内容） */
-const manualMinH = ref(0)
-function autoresize() {
-  const el = ta.value
-  if (!el) return
-  el.style.height = 'auto'
-  // 尊重用户手动拖拽的高度：输入只往上长，不缩回 scrollHeight
-  el.style.height = Math.max(el.scrollHeight, manualMinH.value) + 'px'
+const MIN_HEIGHT = 52
+const MAX_HEIGHT = 300
+const HEIGHT_KEY = 'yh.composer.height'
+function savedHeight() {
+  try {
+    const value = Number(localStorage.getItem(HEIGHT_KEY))
+    if (Number.isInteger(value) && value >= MIN_HEIGHT && value <= MAX_HEIGHT) return value
+  } catch { /* Storage can be unavailable in private sessions. */ }
+  return 0
+}
+const manualHeight = ref(savedHeight())
+function saveHeight() {
+  try {
+    if (manualHeight.value) localStorage.setItem(HEIGHT_KEY, String(manualHeight.value))
+    else localStorage.removeItem(HEIGHT_KEY)
+  } catch { /* Keep the current height for this session. */ }
+}
+
+// New WebViews size the textarea natively. Older engines measure at most once per frame.
+const nativeSizing = globalThis.CSS?.supports?.('field-sizing', 'content') === true
+let measureFrame = 0
+let textareaObserver: ResizeObserver | undefined
+function scheduleHeight() {
+  if (!ta.value || nativeSizing || manualHeight.value || measureFrame) return
+  measureFrame = requestAnimationFrame(() => {
+    measureFrame = 0
+    const el = ta.value
+    if (!el || manualHeight.value) return
+    el.style.height = 'auto'
+    el.style.height = Math.max(MIN_HEIGHT, el.scrollHeight) + 'px'
+  })
+}
+if (!nativeSizing) {
+  watch([text, kind], scheduleHeight, { flush: 'post' })
+  onMounted(() => {
+    scheduleHeight()
+    if (ta.value && typeof ResizeObserver !== 'undefined') {
+      let width = 0
+      textareaObserver = new ResizeObserver(([entry]) => {
+        if (entry.contentRect.width === width) return
+        width = entry.contentRect.width
+        scheduleHeight()
+      })
+      textareaObserver.observe(ta.value)
+    }
+  })
+  onUnmounted(() => {
+    if (measureFrame) cancelAnimationFrame(measureFrame)
+    textareaObserver?.disconnect()
+  })
 }
 
 /* ---------------- 待发送附件：由 chat 服务保存，切会话保留草稿与预览 ---------------- */
@@ -230,7 +311,7 @@ function classify(f: File): Pending['kind'] {
 function stage(f: File) {
   const k = classify(f)
   const url = (k === 'image' || k === 'video') ? URL.createObjectURL(f) : ''
-  pending.value.push({ id: ++pendingSeq, file: f, url, kind: k, caption: '', error: '', progress: 0, speed: 0 })
+  pending.value.push({ id: ++pendingSeq, file: f, url, kind: k, error: '', progress: 0, speed: 0 })
 }
 
 function unstage(p: Pending) {
@@ -270,9 +351,12 @@ function onDrop(e: DragEvent) {
 /* 拖到页面其他位置时阻止浏览器直接打开文件（window 级兜底） */
 function winDragOver(e: DragEvent) { e.preventDefault() }
 function winDrop(e: DragEvent) { e.preventDefault() }
+function dismissMore(e:PointerEvent){if(!(e.target as HTMLElement)?.closest('.composer-more'))moreTools.value=false}
+window.addEventListener('pointerdown',dismissMore)
 window.addEventListener('dragover', winDragOver)
 window.addEventListener('drop', winDrop)
 onUnmounted(() => {
+  window.removeEventListener('pointerdown',dismissMore)
   window.removeEventListener('dragover', winDragOver)
   window.removeEventListener('drop', winDrop)
 })
@@ -296,6 +380,11 @@ if (w.__TAURI__?.event?.listen) {
 }
 onUnmounted(() => { offTauriDrop?.() })
 
+const propertiesAttachment = ref<Pending | null>(null)
+function openAttachmentProperties(p: Pending) {
+  if (!uploading.value && !p.sent) propertiesAttachment.value = p
+}
+
 /* ---- 发送前图片编辑（裁剪/旋转/翻转） ---- */
 const editing = ref<Pending | null>(null)
 const applyingEdit = ref(false)
@@ -309,7 +398,7 @@ async function onEdited(f: File) {
     url = await decodedImageUrl(f)
     if (!isCurrent() || editing.value !== p || !pending.value.includes(p)) return
     const previous = p.url
-    p.elements = undefined; p.file = f; p.url = url; url = ''; p.error = ''
+    p.elements = undefined; p.messageId = undefined; p.file = f; p.url = url; url = ''; p.error = ''
     await nextTick()
     editing.value = null
     if (previous) URL.revokeObjectURL(previous)
@@ -361,8 +450,11 @@ async function prepareAttachment(p: Pending) {
     try {
       const onProg = progressOf(p)
       if (p.kind === 'image') {
-        const { url } = await ctx.api.uploadAndUrl(p.file, 'image', onProg)
-        p.elements = [h.image(url, await imageMetadata(p.file))]
+        if (!p.file.size) throw new Error('文件内容为空，请重新选择文件')
+        const meta = await imageMetadata(p.file)
+        if (typeof Image === 'function' && (!meta.width || !meta.height)) throw new Error('无法解码图片，请重新选择有效原图')
+        const { key, url } = await ctx.api.uploadAndUrl(p.file, 'image', onProg)
+        p.elements = [h.image(key || url, meta)]
       } else if (p.kind === 'video') {
         const { key } = await ctx.api.uploadFile(p.file, 'video', onProg)
         const meta = await mediaMetadata(p.file, 'video')
@@ -383,12 +475,16 @@ async function prepareAttachment(p: Pending) {
   }
 }
 
-async function submit() {
+async function submit(onlyId?: number) {
   if (!isCurrent() || uploading.value || chat.state.sending) return
-  const originalText = text.value
+  const originalText = typeof onlyId==='number' ? '' : text.value
   const v = originalText.trim()
   const contentKind = kind.value
-  const todo = [...pending.value]
+  const mentionedIds = [...new Set<string>((draft.mentions as ComposerMention[])
+    .filter(({ start, end }) => originalText[start] === '@' && (start === 0 || /\s/.test(originalText[start - 1]))
+      && (end === originalText.length || /[\s,!?;:，。！？；：]/.test(originalText[end] || '')))
+    .map(({ id }) => id))]
+  const todo = typeof onlyId==='number' ? pending.value.filter(p=>p.id===onlyId) : [...pending.value]
   if (!v && !todo.length) return
   uploading.value = true
   let attachFailed = 0
@@ -401,12 +497,10 @@ async function submit() {
         // 上传期间可能切换会话或退出登录，保留草稿，不向新会话发送。
         if (!isCurrent()) break
         if (!p.sent) {
-          await chat.sendMedia(p.elements)
+          const retry = !!p.messageId
+          p.messageId ||= newMsgId()
+          await chat.sendMedia(p.elements, { msgId: p.messageId, retry })
           p.sent = true
-        }
-        if (p.caption.trim()) {
-          if (!isCurrent()) break
-          await chat.send(p.caption.trim(), 1)
         }
         unstage(p)
       } catch (err: any) {
@@ -417,13 +511,13 @@ async function submit() {
     }
     if (v && isCurrent()) {
       try {
-        await chat.send(v, contentKind)
+        await chat.send(v, contentKind, mentionedIds)
         // 失败不清空；等待上传/发送时新输入的内容也必须保留。
         if (text.value === originalText) text.value = ''
       } catch { /* chat.send 已提示，草稿保留 */ }
     }
     await nextTick()
-    if (isCurrent()) { autoresize(); if (!text.value.trim() && !pending.value.length) ctx.emit('chat/scroll-bottom') }
+    if (isCurrent() && !text.value.trim() && !pending.value.length) ctx.emit('chat/scroll-bottom')
   } finally {
     uploading.value = false
     if (attachFailed && isCurrent()) {
@@ -433,33 +527,61 @@ async function submit() {
   }
 }
 
-/* ---- 输入区高度拖拽（顶边把手）：最低一行字高，双击复位 ---- */
-const taMinH = 24   // 一行字的高度（px）
-function startResize(e: MouseEvent) {
-  const startY = e.clientY
-  const el = ta.value
-  const startH = el ? el.getBoundingClientRect().height : 140
-  const move = (ev: MouseEvent) => {
-    const h = Math.max(taMinH, Math.min(startH + (startY - ev.clientY), window.innerHeight * 0.7))
-    manualMinH.value = h          // 记住拖拽高度，autoresize 不再缩回
-    if (el) el.style.height = h + 'px'
+/* Only the resize handle captures the active pointer. Release it on every exit path. */
+let resizeDrag: { el: HTMLElement; pointer: number; y: number; height: number; max: number; next: number | null } | undefined
+let resizeFrame = 0
+function startResize(e: PointerEvent) {
+  const input = ta.value
+  if (e.button !== 0 || !e.isPrimary || !input || resizeDrag) return
+  const el = e.currentTarget as HTMLElement
+  el.setPointerCapture(e.pointerId)
+  e.preventDefault()
+  resizeDrag = {
+    el, pointer: e.pointerId, y: e.clientY, height: input.getBoundingClientRect().height,
+    max: Math.max(MIN_HEIGHT, Math.min(MAX_HEIGHT, Math.floor(innerHeight * .38))),
+    next: null,
   }
-  const up = () => {
-    window.removeEventListener('mousemove', move)
-    window.removeEventListener('mouseup', up)
-  }
-  window.addEventListener('mousemove', move)
-  window.addEventListener('mouseup', up)
 }
+function moveResize(e: PointerEvent) {
+  const drag = resizeDrag
+  if (!drag || e.pointerId !== drag.pointer || (e.clientY === drag.y && drag.next === null)) return
+  drag.next = Math.round(Math.max(MIN_HEIGHT, Math.min(drag.max, drag.height + drag.y - e.clientY)))
+  if (resizeFrame) return
+  resizeFrame = requestAnimationFrame(() => {
+    resizeFrame = 0
+    if (drag.next !== null) manualHeight.value = drag.next
+  })
+}
+function endResize(e?: PointerEvent) {
+  const drag = resizeDrag
+  if (!drag || (e && e.pointerId !== drag.pointer)) return
+  resizeDrag = undefined
+  cancelAnimationFrame(resizeFrame)
+  resizeFrame = 0
+  if (drag.el.hasPointerCapture(drag.pointer)) drag.el.releasePointerCapture(drag.pointer)
+  if (drag.next !== null) {
+    manualHeight.value = drag.next
+    saveHeight()
+  }
+}
+const stopResizeOnBlur = () => endResize()
+window.addEventListener('blur', stopResizeOnBlur)
+onUnmounted(() => {
+  window.removeEventListener('blur', stopResizeOnBlur)
+  endResize()
+})
 function resetHeight() {
-  manualMinH.value = 0
-  const el = ta.value
-  if (el) { el.style.height = ''; autoresize() }
+  endResize()
+  manualHeight.value = 0
+  saveHeight()
+  scheduleHeight()
 }
 
 function onKey(e: KeyboardEvent) {
   // 中文输入法 Enter 确认候选字时不能发送消息。
   if (e.isComposing || e.keyCode === 229) return
+  rememberSelection()
+  if(e.ctrlKey||e.metaKey){const key=e.key.toLowerCase();if(['b','i','k'].includes(key)){e.preventDefault();formatText(key==='b'?'bold':key==='i'?'italic':'link');return}if(['z','y'].includes(key)){e.preventDefault();historyMove(key==='y'||e.shiftKey);return}}
   if (e.key === 'Enter' && !e.shiftKey && !e.ctrlKey && !e.metaKey) {
     // @ 成员下拉打开时，Enter 选中当前高亮项而不是发送
     if (atOpen.value && atList.value.length) { e.preventDefault(); pickAt(atIdx.value); return }
@@ -489,7 +611,8 @@ function onInputAt() {
   // 检测光标前最近的 @ 片段：@xxx（无空格）即处于 at 输入态
   const el = ta.value
   if (!el) { atOpen.value = false; return }
-  const before = text.value.slice(0, el.selectionStart ?? text.value.length)
+  const position = el.selectionStart ?? text.value.length
+  const before = text.value.slice(Math.max(0, position - 13), position)
   const m = before.match(/@([^\s@]{0,12})$/)
   if (m && chat.state.current?.type === 2) {
     atKeyword.value = m[1]
@@ -503,12 +626,33 @@ function onInputAt() {
 function pickAt(i: number) {
   const m = atList.value[i]
   if (!m) return
-  const el = ta.value
-  const pos = el?.selectionStart ?? text.value.length
-  const before = text.value.slice(0, pos).replace(/@([^\s@]{0,12})$/, `@${m.name} `)
-  text.value = before + text.value.slice(pos)
+  const pos = ta.value?.selectionStart ?? text.value.length
+  const match = text.value.slice(0, pos).match(/@([^\s@]{0,12})$/)
+  if (match) insertMention(m, match.index, pos)
+}
+
+function insertMention(member: { id: string; name?: string }, start = text.value.length, end = start) {
+  if (!member.id || !isCurrent() || target.type !== 2) return
+  const id = String(member.id)
+  const name = String(member.name || id).replace(/\s+/g, ' ').trim() || id
+  const label = '@' + (kind.value === 8 ? escapeHtml(name) : name)
+  const left = text.value.slice(0, start)
+  const padding = left && !/\s$/.test(left) ? ' ' : ''
+  const insertion = padding + label + ' '
+  const previous = draft.mentions
+  text.value = left + insertion + text.value.slice(end)
+  draft.mentions = [
+    ...moveComposerMentions(previous, start, end, insertion.length),
+    { id, start: start + padding.length, end: start + insertion.length - 1 },
+  ]
   atOpen.value = false
-  nextTick(() => { autoresize(); el?.focus() })
+  nextTick(() => {
+    if (!isCurrent()) return
+    const caret = start + insertion.length
+    ta.value?.focus()
+    ta.value?.setSelectionRange(caret, caret)
+    rememberSelection()
+  })
 }
 
 /* ---- 快捷回复 chips 管理 ---- */
@@ -521,52 +665,24 @@ function qrAdd() {
   addingQr.value = false
 }
 
-function fmtSize(n: number) {
-  if (n < 1024) return n + ' B'
-  if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB'
-  return (n / 1024 / 1024).toFixed(1) + ' MB'
-}
 </script>
 
 <template>
   <div class="composer" :class="{ 'drag-over': dragOver }"
        @drop="onDrop" @dragover.prevent="dragOver = true" @dragleave="dragOver = false">
-    <!-- 顶边拖拽调输入区高度（最低=一行字高，双击复位） -->
+    <!-- 双击顶边把手恢复自动高度。 -->
     <div class="resize-bar" title="拖拽调整输入区高度（双击复位）"
-         @mousedown.prevent="startResize" @dblclick="resetHeight"></div>
+         @pointerdown="startResize" @pointermove="moveResize" @pointerup="endResize"
+         @pointercancel="endResize" @lostpointercapture="endResize" @dblclick="resetHeight"></div>
     <QuoteBar />
-    <div class="bar-row">
-      <template v-for="it in barItems" :key="it.id">
-        <button v-if="it.kind === 'type'" class="ghost tiny" draggable="true"
-                :class="{ on: kind === it.value }" @click="onBar(it)"
-                @dragstart="onDragStart(it.id)" @dragover.prevent @drop.stop="onDropReorder(it.id, 'bar')">{{ it.label }}</button>
-        <button v-else class="ghost tiny icon-btn" :title="it.label" draggable="true"
-                @click="onBar(it)"
-                @dragstart="onDragStart(it.id)" @dragover.prevent @drop.stop="onDropReorder(it.id, 'bar')">
-          <Icon :name="BAR_ICON[it.kind] || 'page'" :size="16" />
-        </button>
-      </template>
-      <div v-if="ctx.userbot" class="ai-wrap">
-        <button class="ghost tiny ai-trigger" title="用户 Bot / AI" aria-label="用户 Bot / AI" :aria-expanded="aiOpen" aria-controls="ai-reply-strip" :class="{ active: aiOpen }" @click="aiOpen = !aiOpen">AI<span v-if="ctx.userbot.state.drafts[aiKey]" class="ai-dot"></span></button>
-      </div>
-      <input ref="imgInput" type="file" accept="image/*" multiple hidden @change="onPick" />
-      <input ref="fileInput" type="file" multiple hidden @change="onPick" />
-      <input ref="audioInput" type="file" accept="audio/*" multiple hidden @change="onPick" />
-      <input ref="videoInput" type="file" accept="video/*" multiple hidden @change="onPick" />
-      <span v-if="ctx.stickers?.state?.recording" class="rec-dot">
-        录音中 {{ ctx.stickers.state.seconds }}s（再点「语音」结束并发送）
-      </span>
-      <span v-if="ctx.stickers?.state?.recordingVideo" class="rec-dot">
-        录制中 {{ ctx.stickers.state.videoSeconds }}s（再点「录制视频」结束并发送）
-      </span>
-    </div>
+    <input ref="imgInput" type="file" accept="image/*" multiple hidden @change="onPick"/><input ref="fileInput" type="file" multiple hidden @change="onPick"/><input ref="audioInput" type="file" accept="audio/*" multiple hidden @change="onPick"/><input ref="videoInput" type="file" accept="video/*" multiple hidden @change="onPick"/>
     <Transition name="ai-strip">
       <section v-if="aiOpen && ctx.userbot && !aiDetached" id="ai-reply-strip" class="ai-menu" aria-label="AI 回复助手" @keydown.esc.stop="aiOpen = false">
         <div class="ai-strip-row">
           <span class="ai-badge"><Icon name="robot" :size="18" /></span>
           <div class="ai-info"><strong>{{ aiWorkMode === 'management' ? 'AI 管理' : 'AI 回复' }}</strong><span class="ai-status" role="status"><i v-if="aiActive" class="ai-working"></i>{{ aiStatus }}</span></div>
           <div class="ai-actions">
-            <select v-if="target.type === 2" class="ai-mode" aria-label="AI 工作模式" :value="aiWorkMode" @change="switchAiMode"><option value="conversation">对话模式</option><option value="management">管理模式</option></select>
+            <ThemedSelect v-if="target.type === 2" class="ai-mode" label="AI 工作模式" :model-value="aiWorkMode" :options="[{value:'conversation',label:'对话模式'},{value:'management',label:'管理模式'}]" @update:model-value="switchAiMode" />
             <button class="ai-generate" :disabled="!aiHasAI || aiActive || aiSubmitting" @click="generateAiDraft()">{{ !aiHasAI ? '规则自动化运行中' : aiActive ? '处理中…' : ctx.userbot.state.drafts[aiKey] ? '重新生成' : '生成回复草稿' }}</button>
             <button class="ai-instruction-trigger" :disabled="!aiHasAI || aiActive || aiSubmitting" @click="aiInstructionError = ''; aiInstructionOpen = true">快捷指令</button>
             <button v-if="ctx.userbot.state.drafts[aiKey]" @click="useAiDraft">填入输入框</button>
@@ -587,24 +703,34 @@ function fmtSize(n: number) {
     <div v-if="aiOpen && aiDetached" class="ai-menu ai-detached-notice" role="status"><span>AI 回复已在独立浮窗中</span><button @click="detachAi()">显示浮窗</button><button @click="ctx.aiPanel.dock()">嵌回聊天框</button></div>
     <AiInstructionDialog :management="aiWorkMode === 'management'" v-if="aiInstructionOpen" :busy="aiSubmitting" :error="aiInstructionError" :has-draft="!!ctx.userbot?.state.drafts[aiKey]" @submit="submitAiInstruction" @close="aiInstructionOpen = false" />
 
-    <!-- 待发送附件预览区：图片可点开发送前编辑，可写独立配文 -->
+    <!-- 待发送附件预览区：图片可点开发送前编辑 -->
     <div v-if="pending.length" class="pending">
-      <div v-for="p in pending" :key="p.id" class="pend" :class="{ wide: p.kind === 'image', err: !!p.error }">
+      <div v-for="p in pending" :key="p.id" class="pend" :class="{ 'pend-video': p.kind === 'video', err: !!p.error }">
         <img v-if="p.kind === 'image'" :src="p.url" alt="" title="点击编辑（裁剪/旋转/翻转）" @click="openEditor(p)" />
-        <video v-else-if="p.kind === 'video'" :src="p.url" muted preload="metadata" controls></video>
-        <div v-else class="pend-file">
-          <Icon :name="p.kind === 'audio' ? 'mic' : 'paperclip'" :size="18" />
-          <span class="nm">{{ p.file.name }}</span>
+        <video v-else-if="p.kind === 'video'" :src="p.url" muted preload="metadata" controls @play="routeChatMedia"></video>
+        <div v-else class="pend-file" aria-hidden="true">
+          <Icon :name="p.kind === 'audio' ? 'mic' : 'paperclip'" :size="19" />
         </div>
-        <span class="pend-meta">{{ p.kind === 'file' || p.kind === 'audio' ? fmtSize(p.file.size) : fmtSize(p.file.size) }}</span>
+        <div class="pend-details">
+          <span class="pend-name" :title="p.file.name">{{ p.file.name }}</span>
+          <div class="pend-info">
+            <span>{{ formatFileSize(p.file.size) }}</span>
+            <button v-if="p.kind === 'image'" type="button" class="pend-properties" title="图片属性（EXIF）"
+                    aria-label="附件图片属性" :disabled="uploading || p.sent" @click="openAttachmentProperties(p)">
+              <Icon name="info" :size="12" aria-hidden="true" /> 属性
+            </button>
+          </div>
+        </div>
         <!-- 上传进度条 + 实时速度 MB/s -->
         <div v-if="uploading && p.progress > 0 && !p.error" class="pend-prog">
           <div class="bar" :style="{ width: Math.round(p.progress * 100) + '%' }"></div>
           <span class="spd">{{ p.speed.toFixed(1) }} MB/s</span>
         </div>
-        <span v-if="p.error" class="pend-err" :title="p.error">发送失败：{{ p.error }} · 点发送重试</span>
-        <button class="pend-x" title="移除" :disabled="uploading" @click="unstage(p)">×</button>
-        <input v-if="p.kind === 'image'" v-model="p.caption" :disabled="uploading" class="pend-cap" placeholder="给这张图配一句话（可选）" />
+        <div v-if="p.error" class="pend-err">
+          <span :title="p.error">{{ p.error }}</span>
+          <button type="button" :disabled="uploading" @click="submit(p.id)">重试</button>
+        </div>
+        <button type="button" class="pend-x" title="移除" aria-label="移除附件" :disabled="uploading" @click="unstage(p)">×</button>
       </div>
     </div>
 
@@ -619,17 +745,25 @@ function fmtSize(n: number) {
       </button>
     </div>
 
+    <Transition name="composer-format"><div v-if="formatting" class="composer-format"><EditorToolbar compact popup-above :disabled="uploading" :undo="historyState.undo" :redo="historyState.redo" @action="formatText" @undo="historyMove()" @redo="historyMove(true)"/></div></Transition>
     <div class="line">
-      <textarea ref="ta" v-model="text" :placeholder="placeholder"
-                @input="onInput" @keydown="onKey" @paste="onPaste"></textarea>
-      <div class="send-row">
-        <span class="hint">{{ pending.length ? pending.length + ' 个附件待发' : '' }}</span>
-        <button :disabled="chat.state.sending || uploading || (!text.trim() && !pending.length)" @click="submit">
-          {{ chat.state.sending || uploading ? '…' : '发送' }}
-        </button>
-      </div>
+      <textarea ref="ta" v-model="text" rows="1" :placeholder="placeholder"
+                :class="{ 'has-manual-height': manualHeight }" :style="{ '--composer-height': manualHeight + 'px' }"
+                aria-label="聊天消息" @input="onInput" @keydown="onKey" @paste="onPaste" @select="rememberSelection" @click="rememberSelection" @keyup="rememberSelection" @blur="rememberSelection"></textarea>
+      <div class="composer-footer"><div class="bar-row">
+        <button v-for="it in primaryTools" :key="it.id" class="ghost tiny icon-btn" :title="it.label" :aria-label="it.label" draggable="true" @click="onBar(it)" @dragstart="onDragStart(it.id)" @dragover.prevent @drop.stop="onDropReorder(it.id,'bar')"><Icon :name="BAR_ICON[it.kind]||'page'" :size="17"/></button>
+        <CallToolbarButtons v-if="showCalls" :busy="enablingCalls || !!ctx.calls.state.session" @call="startCall" />
+        <ThemedSelect class="composer-kind" label="消息格式" :model-value="kind" :options="messageKinds" @update:model-value="kind = Number($event)" />
+        <button class="ghost tiny" aria-label="Markdown 格式工具" :aria-expanded="formatting" :class="{on:formatting}" @click="formatting=!formatting; moreTools=false"><Icon name="code" :size="17"/></button>
+        <div class="composer-more"><button class="ghost tiny" aria-label="更多输入功能" :aria-expanded="moreTools" @click="moreTools=!moreTools; if (moreTools) formatting=false"><Icon name="plus" :size="17"/></button><Transition name="composer-format"><div v-if="moreTools" class="composer-more-menu" @keydown.esc.stop="moreTools=false"><button v-for="it in extraTools" :key="it.id" @click="onBar(it);moreTools=false"><Icon :name="BAR_ICON[it.kind]||'page'" :size="16"/>{{it.label}}</button><button v-for="it in qrItems" :key="it.id" draggable="true" @dragstart="onDragStart(it.id)" @dragover.prevent @drop.stop="onDropReorder(it.id,'qr')" @click="onBar(it);moreTools=false">{{it.label}}</button><input v-if="addingQr" v-model="qrNew" aria-label="快捷回复内容" @keydown.enter.prevent="qrAdd"/><button @click="addingQr?qrAdd():addingQr=true">{{addingQr?'保存快捷回复':'添加快捷回复'}}</button></div></Transition></div>
+        <button v-if="ctx.userbot" class="ghost tiny ai-trigger" title="用户 Bot / AI" aria-label="用户 Bot / AI" :aria-expanded="aiOpen" :class="{active:aiOpen}" @click="aiOpen=!aiOpen">AI<span v-if="ctx.userbot.state.drafts[aiKey]" class="ai-dot"></span></button>
+      </div><div class="send-row"><button aria-label="发送" :disabled="chat.state.sending||uploading||(!text.trim()&&!pending.length)" @click="submit()"><Icon name="send" :size="16"/><span>{{chat.state.sending||uploading?'发送中':'发送'}}</span></button></div></div>
+      <div v-if="draft.remoteText!=null" class="draft-conflict" role="status">另一台设备修改了草稿<button @click="chat.drafts.useRemote(target)">采用云端</button><button @click="chat.drafts.keepLocal(target)">保留本机</button></div>
+      <span v-if="ctx.stickers?.state?.recording" class="rec-dot">录音中 {{ctx.stickers.state.seconds}}s <button @click="ctx.stickers.recordStop()">结束录音</button></span><span v-if="ctx.stickers?.state?.recordingVideo" class="rec-dot">录制中 {{ctx.stickers.state.videoSeconds}}s <button @click="ctx.stickers.recordVideoStop()">结束录制</button></span>
+
     </div>
 
+    <ImageProperties v-if="propertiesAttachment" :file="propertiesAttachment.file" @close="propertiesAttachment = null" />
     <ImageEditor v-if="editing" :file="editing.file" :url="editing.url" :saving="applyingEdit"
                  @done="onEdited" @close="editing = null" />
   </div>
@@ -696,7 +830,7 @@ function fmtSize(n: number) {
 /* 顶边拖拽把手：一条细热区，hover 变强调色提示可拖 */
 .resize-bar {
   position: absolute; left: 0; right: 0; top: -4px; height: 8px; cursor: ns-resize;
-  background: transparent; z-index: 2;
+  background: transparent; z-index: 2; touch-action: none;
 }
 .resize-bar:hover, .resize-bar:active { background: color-mix(in srgb, var(--acc) 35%, transparent); }
 
@@ -715,46 +849,43 @@ function fmtSize(n: number) {
 .at-item img { width: 22px; height: 22px; border-radius: 50%; object-fit: cover; background: var(--card2); }
 .at-item.on { background: var(--acc-soft, var(--card2)); color: var(--acc); }
 
-/* 待发送附件预览 */
-.pending { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; max-height: 26vh; overflow-y: auto; }
-.pending .pend { flex-shrink: 0; }
+/* 待发送附件保留在一条可横向滚动的紧凑列表里。 */
+.pending { display: flex; align-items: flex-start; gap: 6px; margin-bottom: 6px; overflow-x: auto; }
 .pend {
-  position: relative; width: 84px; border-radius: 10px; overflow: hidden;
-  border: 1px solid var(--line); background: var(--card2);
+  --preview-width: 48px;
+  position: relative; flex: none; display: grid; grid-template-columns: var(--preview-width) minmax(0, 1fr);
+  align-items: center; column-gap: 6px; width: 166px; padding: 3px;
+  border: 1px solid var(--line); border-radius: 8px; background: var(--card2); overflow: hidden;
 }
-.pend.wide { width: 132px; }
+.pend-video { --preview-width: 84px; width: 202px; }
 .pend.err { border-color: var(--err); }
-.pend img, .pend video { width: 100%; height: 84px; object-fit: cover; display: block; cursor: pointer; }
-.pend-file {
-  width: 100%; height: 84px; display: flex; flex-direction: column;
-  align-items: center; justify-content: center; gap: 6px; color: var(--fg2); padding: 6px;
+.pend img, .pend video, .pend-file { width: 100%; height: 44px; border-radius: 5px; }
+.pend img, .pend video { display: block; object-fit: cover; }
+.pend img { cursor: pointer; }
+.pend-file { display: grid; place-items: center; color: var(--fg2); background: var(--card); }
+.pend-details { display: grid; gap: 2px; }
+.pend-name, .pend-err span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pend-name { padding-inline-end: 20px; font-size: 11px; }
+.pend-info { display: flex; align-items: center; gap: 4px; color: var(--fg2); font-size: 10px; white-space: nowrap; }
+.pend-properties, .pend-err button {
+  display: inline-flex; align-items: center; gap: 2px; padding: 1px 4px; border: 1px solid var(--line);
+  border-radius: 5px; color: var(--fg); background: var(--card); font-size: 10px;
 }
-.pend-file .nm {
-  font-size: 10.5px; max-width: 100%; overflow: hidden; text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.pend-meta {
-  position: absolute; left: 0; right: 0; bottom: 0; font-size: 10px; color: #fff;
-  background: rgba(0, 0, 0, .45); text-align: center;
-}
-.pend-cap {
-  width: 100%; border: none; border-top: 1px solid var(--line); background: var(--card);
-  color: var(--fg); font-size: 11px; padding: 4px 6px; outline: none;
-}
+.pend-properties:hover:enabled, .pend-err button:hover:enabled { background: var(--acc-soft); }
 .pend-err {
-  position: absolute; left: 0; right: 0; top: 0; font-size: 10px; color: #fff;
-  background: rgba(200, 40, 40, .82); text-align: center; padding: 2px 0;
+  grid-column: 1 / -1; display: flex; align-items: center; justify-content: space-between;
+  gap: 4px; margin-top: 2px; padding: 1px 2px; font-size: 10px; color: var(--err);
 }
+.pend-err button { flex: none; }
 .pend-x {
-  position: absolute; top: 3px; right: 3px; width: 18px; height: 18px; padding: 0;
-  border-radius: 50%; background: rgba(0, 0, 0, .55); color: #fff; font-size: 13px; line-height: 1;
+  position: absolute; top: 3px; right: 3px; width: 20px; height: 20px; padding: 0;
+  border-radius: 5px; background: var(--card); color: var(--fg2); font-size: 14px; line-height: 1;
   display: grid; place-items: center;
 }
-.pend-x:hover { background: var(--err); }
-/* 上传进度条（底部）+ 速度标签 */
+.pend-x:hover:enabled { background: var(--err); color: #fff; }
 .pend-prog {
   position: absolute; left: 0; right: 0; bottom: 0; height: 14px;
-  background: rgba(0, 0, 0, .55); display: flex; align-items: center;
+  background: rgba(0, 0, 0, .65); display: flex; align-items: center; pointer-events: none;
 }
 .pend-prog .bar {
   position: absolute; left: 0; top: 0; bottom: 0; background: var(--acc); opacity: .8;
@@ -763,4 +894,22 @@ function fmtSize(n: number) {
 .pend-prog .spd {
   position: relative; width: 100%; text-align: center; font-size: 9.5px; color: #fff; line-height: 14px;
 }
+.composer{position:relative;background:var(--card);padding:10px 12px;border:0;border-top:1px solid var(--line);color:var(--fg)}
+.composer .line {
+  display: flex; flex-direction: column; background: var(--card2); border-radius: 11px;
+  padding: 0; overflow: visible; transition: background-color .15s;
+}
+.composer .line:focus-within { background-color: color-mix(in srgb, var(--card2) 90%, black); }
+.composer .line textarea {
+  display: block; flex: 0 0 auto; box-sizing: border-box; min-height: 52px;
+  max-height: max(52px, min(300px, 38vh)); height: auto; width: 100%; resize: none;
+  border: 0; border-radius: 11px; background: transparent; padding: 12px 14px;
+  color: var(--fg); font-family: inherit; font-size: 14px; line-height: 1.65;
+  overflow: auto; box-shadow: none; outline: none;
+}
+@supports (field-sizing: content) {
+  .composer .line textarea { field-sizing: content; }
+}
+.composer .line textarea.has-manual-height { height: var(--composer-height) !important; }
+.composer-footer{display:flex;align-items:center;gap:8px;padding:4px 8px 8px;min-width:0}.composer .bar-row{display:flex;align-items:center;gap:3px;margin:0;flex:1;min-width:0;flex-wrap:wrap}.composer .bar-row button:not(.composer-kind){width:29px;height:29px;padding:5px;border:0;border-radius:6px;display:inline-flex;align-items:center;justify-content:center;background:transparent;color:var(--fg);transition:background .13s,transform .12s}.composer .bar-row button:not(.composer-kind):hover{background:var(--acc-soft)}.composer button:active{transform:translateY(1px)}.composer :focus-visible:not(textarea){outline:2px solid var(--link,var(--fg));outline-offset:1px}.composer button:disabled{opacity:.45;cursor:default}.composer-kind{font-family:inherit;font-size:11px;border:0;border-radius:5px;background:transparent;color:var(--fg2);max-width:88px;padding:4px;min-width:0}.send-row{position:static;display:flex;align-items:center;gap:7px;flex-shrink:0}.send-row button{display:inline-flex;align-items:center;gap:5px;height:31px;padding:5px 10px;border:0;background:var(--acc);color:var(--on-acc,var(--fg));border-radius:7px;font-size:12px}.composer-format{min-height:32px;padding:3px 4px 5px;position:relative;z-index:10}.composer-format-enter-active,.composer-format-leave-active{transition:opacity .16s,transform .16s,max-height .16s;max-height:220px}.composer-format-leave-active{pointer-events:none}.composer-format-enter-from,.composer-format-leave-to{opacity:0;transform:translateY(4px);max-height:0;overflow:hidden}.composer-more{position:static}.composer-more-menu{position:absolute;bottom:calc(100% + 8px);inset-inline:4px;z-index:80;max-height:min(280px,38dvh);overflow:auto;overscroll-behavior:contain;scrollbar-gutter:stable;border:1px solid var(--line);background:var(--card);border-radius:8px;padding:5px;box-shadow:0 6px 18px #0002}.composer .bar-row .composer-more-menu button{display:flex;width:100%;justify-content:flex-start;gap:8px;font-size:12px;min-height:32px;height:auto;text-align:left;overflow-wrap:anywhere}.composer-more-menu input{width:100%;box-sizing:border-box}.draft-conflict{display:flex;gap:6px;align-items:center;flex-wrap:wrap;font-size:11px;padding:6px 10px;color:var(--fg2)}.draft-conflict button{font-size:11px;padding:3px 6px}.composer-more-menu input{max-width:100%}@media(max-width:650px){.composer{padding:7px}.composer-footer{gap:3px;padding-inline:5px}.composer .bar-row{gap:1px}.composer .bar-row button:not(.composer-kind){width:27px}.composer-kind{max-width:72px}.send-row button{padding:5px 8px}.composer .line textarea{font-size:14px}}@media(prefers-reduced-motion:reduce){.composer *{transition:none!important;animation:none!important}}
 </style>

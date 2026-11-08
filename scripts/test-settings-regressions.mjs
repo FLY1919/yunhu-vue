@@ -107,19 +107,39 @@ try {
   await test('API validation sends an isolated auth header without changing active credentials', async () => {
     const previous = globalThis.fetch, calls = [], ctx = { set(k, v) { this[k] = v } }
     apiPlugin.apply(ctx, { base: '/api' }); ctx.api.setToken('active')
-    globalThis.fetch = async (_url, init) => {
+    globalThis.fetch = async (url, init) => {
+      assert.equal(url, '/api/v1/user/info')
+      assert.equal(init.method, 'GET')
+      assert.equal(init.headers.Accept, 'application/x-protobuf')
       calls.push(init.headers.token)
       return new Response(pb.build(pb.fBytes(1, pb.fNum(2, 1)), pb.fBytes(2, pb.build(pb.fStr(1, 'b'), pb.fStr(2, 'B')))))
     }
     try { assert.equal((await ctx.api.self('candidate')).id, 'b'); await ctx.api.self(); assert.deepEqual(calls, ['candidate', 'active']); assert.equal(ctx.api.token, 'active') }
     finally { globalThis.fetch = previous }
   })
+  await test('JSON and Protobuf auth failures are recognized without conflating ACL or server errors', async () => {
+    const previous = globalThis.fetch, ctx = { set(k, v) { this[k] = v } }
+    apiPlugin.apply(ctx, { base: '/api' })
+    const failures = [
+      [Response.json({ code: -101, msg: '未登录' }), 401],
+      [new Response(pb.build(pb.fBytes(1, pb.fNum(2, 2)))), 401],
+      [new Response('', { status: 401, headers: { 'content-type': 'application/json' } }), 401],
+      [Response.json({ code: -101, msg: '未登录' }, { status: 403 }), 403],
+      [Response.json({ code: -1, msg: '系统错误' }), undefined],
+    ]
+    try {
+      for (const [response, status] of failures) {
+        globalThis.fetch = async () => response
+        await assert.rejects(ctx.api.self('candidate'), error => error.status === status)
+      }
+    } finally { globalThis.fetch = previous }
+  })
   await test('adding an email account never attaches the active account token to its login request', async () => {
     const previous = globalThis.fetch, ctx = { set(k, v) { this[k] = v } }
     apiPlugin.apply(ctx, { base: '/api' }); ctx.api.setToken('active')
     globalThis.fetch = async (_url, init) => {
       assert.equal(init.headers.token, undefined)
-      assert.equal(JSON.parse(init.body).email, 'offline@example.test')
+      assert.deepEqual(JSON.parse(init.body), { email: 'offline@example.test', password: 'fake-password', deviceId: 'fake-device', platform: 'Web' })
       return new Response(JSON.stringify({ code: 1, data: { token: 'new-account' } }))
     }
     try { assert.equal(await ctx.api.login('offline@example.test', 'fake-password', 'fake-device'), 'new-account'); assert.equal(ctx.api.token, 'active') }

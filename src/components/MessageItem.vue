@@ -7,17 +7,20 @@ import { vResourceMedia } from '../core/resource-media'
 import { inject, computed, ref, watch } from 'vue'
 import { fmtTime, fmtFullTime, fallbackAvatar } from '../core/util'
 import { resUrl } from '../core/res'
-import { groupTagStyle, messageGroupTags } from '../core/group-tag'
+import { messageGroupTags } from '../core/group-tag'
 import { showRetainedRecall } from '../core/recall-display'
 import { hasRecallBody } from '../core/recall-cache'
 import { parse } from '../satori/element'
 import type { Element } from '../satori/element'
 import MessageElements from './MessageElements.vue'
+import MessageTags from './MessageTags.vue'
+import Icon from '../console/components/Icon.vue'
 
 const props = defineProps<{ msg: any }>()
 const emit = defineEmits<{
-  (e: 'menu', payload: { msg: any; x: number; y: number; anchor?: any }): void
+  (e: 'menu', payload: { msg: any; x: number; y: number; anchor?: any; avatar?: boolean; image?: string }): void
   (e: 'quote-jump', id: string): void
+  (e: 'keep-mounted', active: boolean): void
 }>()
 
 const ctx = inject<any>('ctx')
@@ -36,10 +39,12 @@ const elements = computed<Element[]>(() => {
  *  ⚠️ 延迟优化（用户报「看别人引用有延迟」）：本地没有且无回退文本时，
  *     异步拉被引消息单条补 preview，不再长期显示「不在本地记录中」。 */
 const remoteQuote = ref<any>(null)
+const quoteId = computed(() => props.msg.quoteId || props.msg.content?.quote_msg_id)
+const localQuote = computed(() => quoteId.value ? chat.findMessage(quoteId.value) : null)
 const quote = computed(() => {
-  const qid = props.msg.quoteId || props.msg.content?.quote_msg_id
+  const qid = quoteId.value
   if (!qid) return null
-  const hit = (chat.state.messages || []).find((m: any) => m.id === qid)
+  const hit = localQuote.value
   if (hit) return chat.quoteOf(hit)
   if (remoteQuote.value?.id === qid) return remoteQuote.value
   const t = props.msg.content?.quote_msg_text
@@ -53,11 +58,11 @@ const quote = computed(() => {
   return { id: qid, sender: '', preview: '引用的消息不在本地记录中' }
 })
 // 引用目标变更或组件重用时重新取摘要；同一引用的远端请求由服务缓存合并。
-watch([() => props.msg.quoteId || props.msg.content?.quote_msg_id, () => chat.state.current], async ([qid], _old, onCleanup) => {
+watch([quoteId, () => chat.state.current, () => !!localQuote.value], async ([qid], _old, onCleanup) => {
   let stale = false
   onCleanup(() => { stale = true })
   remoteQuote.value = null
-  if (!qid) return
+  if (!qid || localQuote.value) return
   const summary = await chat.getQuote(qid)
   if (!stale) remoteQuote.value = summary
 }, { immediate: true })
@@ -83,6 +88,13 @@ const senderTags = computed<any[]>(() => {
   if (!uid) return []
   try { return ctx.group?.tagsOf?.(uid) || [] } catch { return [] }
 })
+const senderRole = computed(() => props.msg.senderType !== 3
+  ? ctx.group?.roleOf?.(props.msg.senderId) : null)
+const showSenderHeader = computed(() => !props.msg.recalled || showRetained.value)
+const hasTags = computed(() => showSenderHeader.value && senderTags.value.length > 0)
+const tagsOpen = ref(false)
+const contentOpen = ref(false)
+watch(() => contentOpen.value || (hasTags.value && tagsOpen.value), active => emit('keep-mounted', active))
 /** 点头像/昵称看主页 */
 function openProfile() {
   if (props.msg.senderId) {
@@ -100,10 +112,13 @@ const timeExpanded = ref(false)
 const timeText = computed(() => timeExpanded.value ? fmtFullTime(props.msg.ts) : fmtTime(props.msg.ts))
 function toggleTime() { timeExpanded.value = !timeExpanded.value }
 
-function onContextMenu(e: MouseEvent) {
+function onContextMenu(e: MouseEvent, avatar = false) {
   e.preventDefault()
   if (selecting.value) return
-  emit('menu', { msg: props.msg, x: Math.min(e.clientX, window.innerWidth - 180), y: Math.min(e.clientY, window.innerHeight - 220) })
+  const image = !avatar && e.target instanceof HTMLImageElement && !e.target.matches('.q-thumb')
+    ? (e.target.dataset.copyImage || (e.target.closest('.rich') ? e.target.currentSrc : ''))
+    : undefined
+  emit('menu', { msg: props.msg, image: image || undefined, x: Math.min(e.clientX, window.innerWidth - 180), y: Math.min(e.clientY, window.innerHeight - 220), avatar })
 }
 
 function onMore(e: MouseEvent) {
@@ -132,21 +147,23 @@ function onA2uiAction(a: any) {
   <div v-if="isTip" class="sys">{{ msg.content?.text || msg.content?.tip }}</div>
 
   <div v-else class="row message-row" :data-mid="msg.id"
-       :class="{ right: msg.right, picked: selected, selecting, recalled: msg.recalled && !showRetained, locate: isLocated }"
+       :class="{ right: msg.right, picked: selected, selecting, recalled: msg.recalled && !showRetained,
+                 locate: isLocated, 'has-tags': hasTags }"
        @contextmenu="onContextMenu" @click="onClick">
     <span v-if="selecting" class="pick" :class="{ on: selected }">{{ selected ? '✓' : '' }}</span>
 
     <!-- 头像：点一下看 TA 的主页 -->
     <img class="av" v-resource-media="{ src: msg.avatar ? resUrl(msg.avatar) : fallbackAvatar(msg.sender), animated: true, width: 34, height: 34 }" alt=""
          title="查看 TA 的主页" @click.stop="openProfile"
+         @contextmenu.stop="onContextMenu($event, true)"
          @error="(e: any) => (e.target.src = fallbackAvatar(msg.sender))" />
 
     <div class="msg-wrap">
-      <!-- 发送者在本群的标签（显示在消息头顶，多了可以横向滑动） -->
-      <div class="mtags" v-if="senderTags.length">
-        <span v-for="t in senderTags" :key="t.id" class="mtag"
-              :style="groupTagStyle(t.color)">{{ t.tag }}</span>
-      </div>
+      <span v-if="showSenderHeader && senderRole" class="sender-role" :class="senderRole">
+        <Icon :name="senderRole === 'owner' ? 'groupOwner' : 'groupAdmin'" :size="13" aria-hidden="true" />
+        {{ senderRole === 'owner' ? '群主' : '管理员' }}
+      </span>
+      <MessageTags v-if="hasTags" :tags="senderTags" :right="msg.right" @expanded="tagsOpen = $event" />
       <div class="meta">
         <span class="who" title="查看 TA 的主页" @click.stop="openProfile">{{ msg.sender }}</span>
         <span class="t" :title="timeExpanded ? '点击显示简短时间' : '点击显示完整日期与秒'" @click.stop="toggleTime">{{ timeText }}</span>
@@ -159,7 +176,8 @@ function onA2uiAction(a: any) {
       <div v-else class="bubble" :class="'t' + msg.type">
         <span v-if="showRetained" class="retained-label">已撤回 · 本地保留</span>
         <MessageElements :elements="elements" :quote="quote" :msg="msg"
-                         @a2ui-action="onA2uiAction" @quote-jump="id => emit('quote-jump', id)" />
+                         @a2ui-action="onA2uiAction" @quote-jump="id => emit('quote-jump', id)"
+                         @keep-mounted="contentOpen = $event" />
       </div>
     </div>
 
@@ -168,8 +186,17 @@ function onA2uiAction(a: any) {
 </template>
 
 <style scoped>
+.bubble.t6:has(.post-message) { width:100%; padding:0; background:transparent; }
+.message-row:has(.bubble.t6 .post-message) { width:100%; }
+.message-row:has(.bubble.t6 .post-message) .msg-wrap { width:min(360px, calc(100% - 42px)); flex:0 1 auto; }
+.bubble.t4:has(.file-attachment) { padding: 0; background: transparent; }
+.bubble:has(.message-share-card) { width: 100%; padding: 0; background: transparent; }
 .message-row { flex-wrap: nowrap !important; align-items: flex-start; width: fit-content; min-width: 0; }
+.message-row:has(.message-share-card) { width: 100%; }
+.message-row.has-tags { width: 100%; }
 .message-row .msg-wrap { min-width: 0; max-width: calc(100% - 42px); flex: 0 1 auto; }
+.message-row.has-tags .msg-wrap { flex: 1 1 0; }
+.message-row:has(.message-share-card) .msg-wrap { width: min(600px, calc(100% - 42px)); flex: 0 1 auto; }
 .message-row .bubble { min-width: 0; max-width: 100%; box-sizing: border-box; }
 .message-row .meta { align-items: baseline; flex-wrap: nowrap; max-width: 100%; line-height: 1.4; }
 .message-row .meta .who { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -183,23 +210,20 @@ function onA2uiAction(a: any) {
 .row img.av { cursor: pointer; }
 .meta .who { cursor: pointer; }
 .meta .who:hover { color: var(--acc); text-decoration: underline; }
-/* 标签多的时候不换行，直接横向滑动（手机上也好用） */
-.mtags {
-  display: flex; flex-wrap: nowrap; gap: 4px; margin-bottom: 3px;
-  overflow-x: auto; overflow-y: hidden; max-width: 100%;
-  scrollbar-width: none; -webkit-overflow-scrolling: touch;
+.sender-role {
+  display: inline-flex; align-items: center; gap: 4px; max-width: 100%;
+  border-radius: 6px; padding: 2px 6px; font-size: 11px; font-weight: 600; line-height: 1.3;
 }
-.mtags::-webkit-scrollbar { display: none; }
-.row.right .mtags { flex-direction: row-reverse; }
-.mtag { font-size: 10.5px; border-radius: 5px; padding: 1px 6px; white-space: nowrap; flex: 0 0 auto; }
-.meta .who { cursor: pointer; }
-.meta .who:hover { color: var(--acc); text-decoration: underline; }
-.row img.av { cursor: pointer; }
+.sender-role svg { flex: none; }
+.sender-role.owner { background: #ffe7ad; color: #674300; }
+.sender-role.admin { background: #d5eeff; color: #164c76; }
+:global(:root[data-theme='dark']) .sender-role.owner { background: #49361c; color: #ffda8a; }
+:global(:root[data-theme='dark']) .sender-role.admin { background: #203e58; color: #a5d8ff; }
 /* 撤回：整行居中灰色胶囊（QQ 式），隐藏头像/昵称/时间 */
 .message-row.recalled { width: 100%; max-width: 100%; box-sizing: border-box; justify-content: center; align-self: stretch; margin-inline: 0; }
 .row.recalled .av, .row.recalled .pick { display: none; }
 .row.recalled .msg-wrap { display: contents; }
-.row.recalled .meta, .row.recalled .mtags { display: none; }
+.row.recalled .meta { display: none; }
 .recall-capsule {
   font-size: 12px; color: var(--fg2); background: var(--card2);
   border-radius: 999px; padding: 3px 12px; margin: 2px 0;

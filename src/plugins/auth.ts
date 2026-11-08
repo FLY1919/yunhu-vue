@@ -16,7 +16,15 @@ export const authPlugin = {
     let restoration: Promise<any> | undefined
     const newDevice = () => 'web-' + crypto.randomUUID()
     // A permission/ACL failure (403) does not establish that saved credentials expired.
-    const invalidCredential = (error: any) => error?.status === 401 || /(?:token|credential).{0,20}(?:invalid|expired)|(?:invalid|expired).{0,20}(?:token|credential)|unauthori[sz]ed|未登录|(?:登录|凭证|令牌|token).{0,8}(?:失效|过期|无效)|HTTP\s*401/i.test(error?.message || String(error || ''))
+    const invalidCredential = (error: any) => error?.status != null ? error.status === 401
+      : /(?:token|credential).{0,20}(?:invalid|expired)|(?:invalid|expired).{0,20}(?:token|credential)|unauthori[sz]ed|未登录|(?:登录|凭证|令牌|token).{0,8}(?:失效|过期|无效)|HTTP\s*401/i.test(error?.message || String(error || ''))
+    function loginError(error: any, action: string) {
+      const message = error?.message || String(error)
+      if (/^系统错误[。！!]?$/u.test(message.trim())) {
+        return Object.assign(new Error(`云湖${action}接口返回系统错误，请稍后重试`), { status: error?.status })
+      }
+      return error
+    }
     const publicUser = (u: any) => ({ id: String(u.id), name: u.name || String(u.id), avatar: u.avatar || '', email: u.email || '' })
     function publish() {
       state.savedAccounts = accounts.map(a => ({ ...a.user, id: a.id, savedAt: a.savedAt, needsLogin: !!a.needsLogin }))
@@ -39,7 +47,7 @@ export const authPlugin = {
           publish()
           state.error = ''
         } finally { state.accountsLoading = false }
-      })().catch((error: any) => { loaded = undefined; state.error = error?.message || String(error); throw error })
+      })().catch((error: any) => { loaded = undefined; throw error })
       return loaded
     }
     async function persistAccounts() {
@@ -56,7 +64,6 @@ export const authPlugin = {
       const task = operations.then(async () => {
         busy = true; state.error = ''
         try { return await fn() }
-        catch (e: any) { state.error = e?.message || String(e); throw e }
         finally { busy = false }
       })
       operations = task.catch(() => {})
@@ -66,7 +73,7 @@ export const authPlugin = {
       token = token.trim()
       if (!token) throw new Error('请填写账号 Token')
       // Validate using a per-request header, leaving live credentials intact on failure.
-      const user = await api.self(token)
+      const user = await api.self(token).catch(error => { throw loginError(error, '账号验证') })
       if (!user?.id) throw new Error('账号信息不完整，请重新登录')
       await loadAccounts()
       const id = String(user.id)
@@ -99,7 +106,7 @@ export const authPlugin = {
         return exclusive(async () => {
           if (!email.trim() || !password) throw new Error('请填写邮箱和密码')
           const device = state.status === 'ready' ? newDevice() : await ensureDevice()
-          const token = await api.login(email.trim(), password, device, 'web')
+          const token = await api.login(email.trim(), password, device).catch(error => { throw loginError(error, '邮箱登录') })
           return enter(token, device)
         })
       },
@@ -148,6 +155,7 @@ export const authPlugin = {
         catch (error) {
           const item = accounts.find(a => a.token === token)
           if (item && invalidCredential(error)) { item.needsLogin = true; await persistAccounts() }
+          else state.error = error?.message || String(error)
           api.setToken(''); state.status = 'guest'; state.user = null
         }
         })

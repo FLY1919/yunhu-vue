@@ -86,6 +86,11 @@ function quickSetup() {
   setting.value.botId = b.id; setting.value.mode = 'draft'
   ctx.ui.toast('已启用当前会话的自动草稿；选择自动发送后，记得开启发送权限', 'success')
 }
+function openManagementSettings() {
+  if (!chosenBot.value) return
+  selectedBot.value = chosenBot.value.id
+  void choose('bots', 'bot-management')
+}
 function addBot() { const x = newBot(); s.config.bots.push(x); selectedBot.value = x.id }
 function addService() { const x = newService(); s.config.services.push(x); selectedService.value = x.id; if (!s.config.defaultServiceId) s.config.defaultServiceId = x.id }
 function addPreset(preset: typeof PERSONA_PRESETS[number]) {
@@ -182,7 +187,7 @@ const usage = computed(() => {
               <p class="muted">仅对已授权群聊生效，当前账号必须是该群管理员或群主。群消息类型权限仅群主可改；执行前会重新校验。</p>
               <template v-if="bot.management.enabled">
                 <label class="check"><input type="checkbox" v-model="bot.management.requireConfirmation" />操作执行前弹窗确认（默认开启）</label>
-                <p class="muted">{{ bot.management.requireConfirmation ? 'AI 提出操作后，核对群聊、目标、修改内容与理由；确认后才执行。取消或超时均不执行。' : '已关闭操作审核：AI 可直接执行下方勾选的操作，仍受账号权限和会话授权限制。' }}</p>
+                <p class="muted">{{ bot.management.requireConfirmation ? 'AI 提出操作后，核对群聊、目标、修改内容与理由；确认后才执行。取消或超时均不执行。' : '已关闭操作审核。群管理跳过消息合并等待，核实权限和目标后执行。会话设置中的冷却时间仍生效。' }}</p>
                 <div class="management-options"><label v-for="a in ACTION_TYPES" :key="a.id" class="check"><input type="checkbox" v-model="bot.management.allowed" :value="a.id" />{{ a.label }}</label></div>
               </template>
             </div>
@@ -228,7 +233,7 @@ const usage = computed(() => {
             <div v-if="channel.type === 2 && chosenBot?.management?.enabled" class="management-status"><span>本群管理权限：{{ s.managementStatus[selectedChannel] || '尚未检查，运行时会自动核对' }}</span><button @click="ub.checkManagement(channel)">检查本群管理权限</button></div>
             <label v-if="chosenBot" class="check"><input type="checkbox" :checked="useAI" @change="setting.useAI = ($event.target as HTMLInputElement).checked" :disabled="chosenBot.useAI === false" />此会话使用 AI</label>
             <p v-if="chosenBot?.useAI === false" class="muted">Bot 全局 AI 已关闭，当前使用规则自动化。</p>
-            <label v-if="channel.type === 2">工作模式<select v-model="setting.workMode"><option value="inherit">跟随 Bot 默认模式</option><option value="conversation">对话模式（仅回复）</option><option value="management" :disabled="!chosenBot?.management?.enabled">管理模式（已授权操作）</option></select></label>
+            <label v-if="channel.type === 2">工作模式<select v-model="setting.workMode"><option value="inherit">自动（按规则或 Bot 默认）</option><option value="conversation">对话模式（仅回复）</option><option value="management" :disabled="!chosenBot?.management?.enabled">管理模式（已授权操作）</option></select></label>
             <label data-setting-id="conversation-mode">运行方式<select aria-label="回复模式" v-model="setting.mode"><option value="off">暂停（默认）</option><option value="manual">手动生成</option><option value="draft">自动生成草稿，人工确认</option><option value="auto">自动回复并发送</option></select></label>
             <label v-if="useAI">回复消息格式<select v-model="setting.replyFormat"><option value="auto">AI 自动判断（文字 / Markdown）</option><option value="text">始终使用文字</option><option value="markdown">始终使用 Markdown</option></select></label>
             <label v-if="chosenBot" class="check"><input type="checkbox" v-model="chosenBot.canSend" />允许自动发送（文字 / Markdown）</label>
@@ -238,6 +243,7 @@ const usage = computed(() => {
               <label>规则动作<select v-model="setting.automationAction"><option value="reply">固定回复</option><option value="recall" :disabled="channel.type !== 2">撤回触发消息（管理模式）</option><option value="mute" :disabled="channel.type !== 2">禁言触发者（管理模式）</option></select></label>
               <label v-if="setting.automationAction === 'reply'">自动回复内容<textarea v-model="setting.automationText" rows="3" placeholder="可使用 {name} 和 {text}" /></label>
               <label v-if="setting.automationAction === 'mute'">禁言时长<select v-model.number="setting.automationSeconds"><option :value="600">10 分钟</option><option :value="3600">1 小时</option><option :value="21600">6 小时</option><option :value="43200">12 小时</option><option :value="-1">永久</option></select></label>
+              <button v-if="chosenBot && channel.type === 2 && setting.automationAction !== 'reply'" @click="openManagementSettings">查看 Bot 管理授权与审核</button>
               <p class="muted">回复可使用 {name}（发送者）和 {text}（消息内容）。规则按上方触发方式运行，不请求 AI；群操作沿用 Bot 的审核与权限设置。</p>
             </div>
             <details class="advanced-options"><summary>高级选项（按需设置）</summary><div class="fields">

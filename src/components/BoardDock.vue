@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { downloadFile, downloadLabel, fileDownloadProgress } from '../core/media'
 /**
  * 群界面（全屏，覆盖右侧内容区）—— 看板 / 成员 / 记录 / 群资料 / 群文件 / 群标签 / 全部看板。
  *
@@ -16,6 +17,10 @@ import { resUrl } from '../core/res'
 import { fallbackAvatar, fmtTime } from '../core/util'
 import { sanitizeHtml, renderRich, postProcess } from '../core/render'
 import Icon from '../console/components/Icon.vue'
+import GroupMembers from './GroupMembers.vue'
+import GroupInfo from './GroupInfo.vue'
+import './group-panel.css'
+import { useGroupPanelFocus } from '../core/group-panel-focus'
 
 const ctx = inject<any>('ctx')
 const g = ctx.group
@@ -53,6 +58,11 @@ function mountFileUrl(name: string) {
   // 新标签页没有 Basic 认证上下文 → 带 token query（网关支持），否则 401「打不开」
   const token = ctx.api?.token || ''
   return `${location.origin}/webdav/${gid}/@mount/${mid}/${p}?token=${encodeURIComponent(token)}`
+}
+
+async function saveFile(url: string, name: string) {
+  try { if (await downloadFile(url, name, ctx.api?.token)) ctx.ui?.toast('下载完成', 'success') }
+  catch (error: any) { ctx.ui?.toast('下载失败：' + error.message, 'error') }
 }
 
 /** 定位文件：一律走系统资源管理器（server /local-open 下载缓存 + explorer /select）；
@@ -101,7 +111,7 @@ async function delDisk(f: any) {
 const isOwner = computed(() => {
   const me = ctx.auth?.state?.user?.id
   const info = g.state.info
-  return !!me && (info?.owner === me || info?.createBy === me)
+  return !!me && String(info?.owner || info?.createBy || '') === String(me)
 })
 async function setAdmin(m: any) {
   const gid = chat.state.current?.id
@@ -109,8 +119,11 @@ async function setAdmin(m: any) {
   const next = m.level >= 2 ? 0 : 2
   try {
     await ctx.api.setManageSetting(gid, m.id, next)
+    if (chat.state.current?.id !== gid) return false
     ctx.ui?.toast?.(next === 2 ? `已设 ${m.name} 为管理员` : `已撤销 ${m.name} 的管理员`, 'success')
-    m.level = next
+    m.level = next; m.role = next === 2 ? '管理员' : '成员'
+    await g.loadInfo()
+    return true
   } catch (e: any) { ctx.ui?.toast?.('设置失败：' + e.message, 'error') }
 }
 
@@ -124,47 +137,45 @@ async function jumpToMsg(r: any) {
 
 /* ---- 成员「管理」弹窗（居中模态：发言权限/成员角色/其它操作分组，不再只是行内禁言小浮层） ---- */
 const mgmt = ref<any>(null)
+const mgmtBusy = ref(false)
+const dockDialog = ref<HTMLElement | null>(null), memberDialog = ref<HTMLElement | null>(null)
+useGroupPanelFocus(dockDialog, () => g.state.dockOpen, () => g.closeDock())
+useGroupPanelFocus(memberDialog, () => !!mgmt.value, closeMgmt)
+const myRole = computed(() => g.roleOf(String(ctx.auth.state.user?.id || '')))
+const canManageTarget = computed(() => !!myRole.value && mgmt.value?.level < 100 && String(mgmt.value?.id) !== String(ctx.auth.state.user?.id))
+let managementVersion = 0
+watch(() => chat.state.current?.id, () => { managementVersion++; mgmt.value = null; mgmtBusy.value = false }, { flush:'sync' })
 function openMemberMgmt(m: any) { mgmt.value = m }
-function closeMgmt() { mgmt.value = null }
+function closeMgmt() { if (!mgmtBusy.value) mgmt.value = null }
 /** 弹窗内各操作执行后关闭弹窗 */
-async function mgmtGag(seconds: number) { const m = mgmt.value; closeMgmt(); if (m) await g.gag(m, seconds) }
-async function mgmtSetAdmin() { const m = mgmt.value; closeMgmt(); if (m) await setAdmin(m) }
+async function performManagement(action: (member: any) => Promise<any>) {
+  if (mgmtBusy.value || !mgmt.value) return
+  const version = ++managementVersion, member = mgmt.value
+  mgmtBusy.value = true
+  try { if (await action(member) && version === managementVersion) mgmt.value = null }
+  finally { if (version === managementVersion) mgmtBusy.value = false }
+}
+function mgmtGag(seconds: number) { if (canManageTarget.value) void performManagement(m => g.gag(m, seconds)) }
+function mgmtSetAdmin() { if (isOwner.value) void performManagement(setAdmin) }
 function mgmtTag() { const m = mgmt.value; closeMgmt(); if (m) { g.setDockTab('tags'); g.openTagMember(m) } }
 function mgmtProfile() { const m = mgmt.value; closeMgmt(); if (m) g.openProfile(m) }
-async function mgmtKick() { const m = mgmt.value; closeMgmt(); if (m) await g.kick(m) }
-
-/* ---- 群主管理：编辑群资料 / 消息自动删除 / 入群口令 ---- */
-const gEdit = reactive({ name: '', intro: '', autoDel: 0, keyword: '' })
-watch(() => g.state.info, (info) => {
-  if (!info) return
-  gEdit.name = info.name || ''
-  gEdit.intro = info.introduction || ''
-  gEdit.autoDel = info.autoDeleteMessage || 0
-}, { immediate: true })
-async function saveGroupEdit() {
-  const gid = chat.state.current?.id
-  if (!gid) return
-  try {
-    await ctx.api.editGroup(gid, { name: gEdit.name.trim(), introduction: gEdit.intro.trim() })
-    ctx.ui?.toast?.('群资料已保存', 'success')
-    g.loadInfo()
-  } catch (e: any) { ctx.ui?.toast?.('保存失败：' + e.message, 'error') }
+function mgmtKick() { if (canManageTarget.value) void performManagement(m => g.kick(m)) }
+function mgmtMessage() { const m = mgmt.value; closeMgmt(); g.closeDock(); if (m) void chat.open({ ...m, type:1 }) }
+function mgmtMention() { const m = mgmt.value; closeMgmt(); g.closeDock(); if (m) ctx.emit('composer/mention', { id:m.id, name:m.name }) }
+async function mgmtCopy() {
+  if (!mgmt.value) return
+  try { await navigator.clipboard.writeText(String(mgmt.value.id)); ctx.ui.toast('ID 已复制', 'success') }
+  catch { ctx.ui.toast('复制失败', 'error') }
 }
-async function saveAutoDel() {
-  const gid = chat.state.current?.id
-  if (!gid) return
-  try {
-    await ctx.api.editAutoDeleteMessage(gid, gEdit.autoDel)
-    ctx.ui?.toast?.('自动删除设置已保存', 'success')
-  } catch (e: any) { ctx.ui?.toast?.('保存失败：' + e.message, 'error') }
-}
-async function saveKeyword() {
-  const gid = chat.state.current?.id
-  if (!gid) return
-  try {
-    await ctx.api.editGroupKeyword(gid, gEdit.keyword.trim())
-    ctx.ui?.toast?.('群口令已保存', 'success')
-  } catch (e: any) { ctx.ui?.toast?.('保存失败：' + e.message, 'error') }
+function refreshTab() {
+  const t = g.state.dockTab
+  if (t === 'members') { g.loadMembers(); g.loadBots() }
+  else if (t === 'info') g.loadInfo()
+  else if (t === 'board') g.loadBoard()
+  else if (t === 'disk') g.loadDisk()
+  else if (t === 'tags') g.loadTags()
+  else if (t === 'search') g.doSearch()
+  else g.scanAllBoards()
 }
 
 /* ---- 第三方网盘挂载增删（mount-setting create/delete，审计补齐 UI） ---- */
@@ -251,8 +262,9 @@ function boardHtmlOf(b: any) { return b?.content ? renderRich(b.content) : '' }
 
 <template>
   <!-- 遮罩：点空白处关闭 dock（与所有弹窗行为一致） -->
-  <div v-if="g.state.dockOpen" class="dock-mask" @click.self="g.closeDock()">
-  <div class="dock">
+  <Transition name="group-dialog">
+  <div v-if="g.state.dockOpen" class="dock-mask" @click.self="g.closeDock()" @keydown.esc="g.closeDock()">
+  <div ref="dockDialog" class="dock" tabindex="-1" role="dialog" aria-modal="true" aria-label="群聊功能面板">
     <!-- 顶部：页签一行可横向滑动，最后一个按钮固定为「退出」 -->
     <div class="dock-head">
       <b class="dock-title">群</b>
@@ -282,13 +294,15 @@ function boardHtmlOf(b: any) { return b?.content ? renderRich(b.content) : '' }
 
       <span class="grow"></span>
       <button class="ghost small" title="刷新"
-              @click="g.state.dockTab === 'board' ? g.loadBoard() : g.state.dockTab === 'disk' ? g.loadDisk() : g.scanAllBoards()">
+              @click="refreshTab">
         <Icon name="refresh" :size="13" />
       </button>
       <button class="ghost small dock-x" title="关闭" @click="g.closeDock()">×</button>
     </div>
 
     <div v-show="g.state.boardOpen" class="dock-body">
+      <Transition name="group-content" mode="out-in">
+      <div :key="g.state.dockTab" class="dock-content">
       <!-- ===== 当前会话看板 ===== -->
       <template v-if="g.state.dockTab === 'board'">
         <div v-if="g.state.boardLoading" class="dim">加载中…</div>
@@ -316,33 +330,7 @@ function boardHtmlOf(b: any) { return b?.content ? renderRich(b.content) : '' }
         </div>
       </template>
 
-      <!-- ===== 成员列表（收纳在停靠栏里，不用再开右侧抽屉）===== -->
-      <template v-else-if="g.state.dockTab === 'members'">
-        <div class="gp-search">
-          <input v-model="g.state.memberKeyword" placeholder="搜索成员…" @keyup.enter="g.loadMembers()" />
-          <button class="ghost small" @click="g.loadMembers()">搜索</button>
-          <span class="dim small">{{ g.state.members.length }}/{{ g.state.membersTotal }}</span>
-        </div>
-        <ul class="dock-members">
-          <li v-for="m in g.state.members" :key="m.id">
-            <img :src="m.avatar ? resUrl(m.avatar) : fallbackAvatar(m.name)"
-                 @error="(e: any) => (e.target.src = fallbackAvatar(m.name))" alt="" />
-            <span class="nm" @click="g.openProfile(m)">{{ m.name }}</span>
-            <em v-if="m.level >= 100" class="role owner">群主</em>
-            <em v-else-if="m.level >= 2" class="role admin">管理员</em>
-            <em v-if="m.isGag" class="role gag">已禁言</em>
-            <span class="grow"></span>
-            <!-- 「管理」按钮：打开居中弹窗（发言权限/角色/资料/踢出集中一处，一目了然） -->
-            <button class="ghost small" @click.stop="openMemberMgmt(m)">管理</button>
-          </li>
-          <li v-if="!g.state.members.length" class="dim center">
-            {{ g.state.membersLoading ? '加载中…' : '暂无成员' }}
-          </li>
-        </ul>
-        <div class="center" v-if="g.state.members.length < g.state.membersTotal">
-          <button class="ghost small" :disabled="g.state.membersLoading" @click="g.loadMoreMembers()">加载更多</button>
-        </div>
-      </template>
+      <GroupMembers v-else-if="g.state.dockTab === 'members'" @manage="openMemberMgmt" />
 
       <!-- ===== 聊天记录搜索 ===== -->
       <template v-else-if="g.state.dockTab === 'search'">
@@ -360,47 +348,7 @@ function boardHtmlOf(b: any) { return b?.content ? renderRich(b.content) : '' }
         </ul>
       </template>
 
-      <!-- ===== 群资料（群详细信息） ===== -->
-      <template v-else-if="g.state.dockTab === 'info'">
-        <div v-if="g.state.infoLoading" class="dim center">加载中…</div>
-        <div v-else-if="g.state.info" class="ginfo">
-          <div class="ginfo-top">
-            <img :src="g.state.info.avatar ? resUrl(g.state.info.avatar) : fallbackAvatar(g.state.info.name)"
-                 @error="(e: any) => (e.target.src = fallbackAvatar(g.state.info.name))" alt="" />
-            <div>
-              <div class="ginfo-name">{{ g.state.info.name }}</div>
-              <div class="dim small">群 ID {{ g.state.info.id }} · {{ g.state.info.headcount }} 人</div>
-            </div>
-          </div>
-          <div class="ginfo-grid">
-            <div class="kv"><span class="k">群简介</span><span>{{ g.state.info.introduction || '—' }}</span></div>
-            <div class="kv"><span class="k">群主</span><span>{{ g.state.info.createBy || '—' }}</span></div>
-            <div class="kv"><span class="k">创建时间</span><span class="dim">云湖接口不返回该字段</span></div>
-          </div>
-          <!-- 群主管理区（审计补齐：编辑群资料/自动删除/群口令） -->
-          <template v-if="isOwner">
-            <div class="ginfo-sec">群主管理</div>
-            <div class="ginfo-row">
-              <input v-model="gEdit.name" placeholder="群名称" />
-              <textarea v-model="gEdit.intro" rows="3" placeholder="群公告/简介（可多行编辑）"></textarea>
-              <button class="ghost small" @click="saveGroupEdit">保存群资料</button>
-            </div>
-            <div class="ginfo-row">
-              <select v-model.number="gEdit.autoDel">
-                <option :value="0">不自动删除消息</option>
-                <option :value="3600">1 小时后删除</option>
-                <option :value="86400">1 天后删除</option>
-                <option :value="604800">7 天后删除</option>
-              </select>
-              <button class="ghost small" @click="saveAutoDel">保存</button>
-              <input v-model="gEdit.keyword" placeholder="入群口令（可空）" />
-              <button class="ghost small" @click="saveKeyword">保存口令</button>
-            </div>
-          </template>
-          <p class="dim small">接口：/v1/group/info（GroupInfoRequest{group_id=2}）</p>
-        </div>
-        <div v-else class="dim center">没拿到群信息</div>
-      </template>
+      <GroupInfo v-else-if="g.state.dockTab === 'info'" />
 
       <!-- ===== 群文件（群网盘） ===== -->
       <template v-else-if="g.state.dockTab === 'disk'">
@@ -503,7 +451,10 @@ function boardHtmlOf(b: any) { return b?.content ? renderRich(b.content) : '' }
             <span class="dim small">{{ fmtTime(f.uploadTime) }}</span>
             <button class="ghost small icon-btn" title="重命名" @click="renameDisk(f)"><Icon name="pencil" :size="13" /></button>
             <button class="ghost small icon-btn" title="删除" @click="delDisk(f)"><Icon name="trash" :size="13" /></button>
-            <a v-if="!f.isFolder && f.fileUrl" class="ghost small" :href="resUrl(f.fileUrl)" target="_blank" rel="noreferrer" :download="f.name">下载</a>
+            <button v-if="!f.isFolder && f.fileUrl" type="button" class="ghost small"
+              :disabled="!!fileDownloadProgress(resUrl(f.fileUrl), f.name)" @click="saveFile(resUrl(f.fileUrl), f.name)">
+              {{ downloadLabel(fileDownloadProgress(resUrl(f.fileUrl), f.name), '下载') }}
+            </button>
           </li>
           <li v-if="!g.state.diskList.length" class="dim center">
             {{ g.state.diskLoading ? '加载中…' : '这个文件夹是空的' }}
@@ -582,14 +533,18 @@ function boardHtmlOf(b: any) { return b?.content ? renderRich(b.content) : '' }
           点上面的按钮扫描一次
         </div>
       </template>
+      </div>
+      </Transition>
     </div>
   </div>
   </div>
 
+  </Transition>
   <!-- 成员「管理」弹窗：居中模态，分组展示所有管理动作（不再只是禁言小浮层） -->
   <Teleport to="body">
-    <div v-if="mgmt" class="mgmt-mask" @click.self="closeMgmt">
-      <div class="mgmt-box">
+    <Transition name="group-dialog">
+    <div v-if="mgmt" class="mgmt-mask" @click.self="closeMgmt" @keydown.esc.stop="closeMgmt">
+      <div ref="memberDialog" class="mgmt-box group-ui" tabindex="-1" role="dialog" aria-modal="true" aria-label="成员操作" :aria-busy="mgmtBusy">
         <div class="mgmt-head">
           <img :src="mgmt.avatar ? resUrl(mgmt.avatar) : fallbackAvatar(mgmt.name)"
                @error="(e: any) => (e.target.src = fallbackAvatar(mgmt.name))" alt="" />
@@ -601,16 +556,15 @@ function boardHtmlOf(b: any) { return b?.content ? renderRich(b.content) : '' }
             </span>
           </div>
           <span class="grow"></span>
-          <button class="mgmt-x" title="关闭" @click="closeMgmt">×</button>
+          <button class="mgmt-x" title="关闭" :disabled="mgmtBusy" @click="closeMgmt">×</button>
         </div>
 
         <div class="mgmt-body">
           <!-- 发言权限（禁言） -->
-          <div class="mgmt-sec">发言权限</div>
-          <div class="mgmt-chips">
+          <div v-if="myRole" class="mgmt-sec">发言权限</div>
+          <div v-if="myRole" class="mgmt-chips">
             <button v-for="o in g.GAG_OPTIONS" :key="o.value" class="ghost small"
-                    :class="{ on: mgmt.isGag && o.value !== 0 }"
-                    :disabled="mgmt.level >= 100" @click="mgmtGag(o.value)">{{ o.label }}</button>
+                    :disabled="!canManageTarget || mgmtBusy" @click="mgmtGag(o.value)">{{ o.label }}</button>
           </div>
           <p v-if="mgmt.level >= 100" class="dim small">群主不可被禁言。</p>
 
@@ -618,7 +572,7 @@ function boardHtmlOf(b: any) { return b?.content ? renderRich(b.content) : '' }
           <template v-if="isOwner && mgmt.level < 100">
             <div class="mgmt-sec">成员角色</div>
             <div class="mgmt-chips">
-              <button class="ghost small" @click="mgmtSetAdmin">
+              <button class="ghost small" :disabled="mgmtBusy" @click="mgmtSetAdmin">
                 {{ mgmt.level >= 2 ? '取消管理员' : '设为管理员' }}
               </button>
             </div>
@@ -628,12 +582,16 @@ function boardHtmlOf(b: any) { return b?.content ? renderRich(b.content) : '' }
           <div class="mgmt-sec">其它操作</div>
           <div class="mgmt-chips">
             <button class="ghost small" @click="mgmtProfile">查看资料</button>
-            <button v-if="g.state.tags.length" class="ghost small" @click="mgmtTag">打群标签</button>
-            <button v-if="mgmt.level < 100" class="ghost small danger" @click="mgmtKick">踢出群聊</button>
+            <button class="ghost small" @click="mgmtMessage">发消息</button>
+            <button class="ghost small" @click="mgmtMention">@ 他</button>
+            <button class="ghost small" @click="mgmtCopy">复制 ID</button>
+            <button v-if="myRole" class="ghost small" :disabled="mgmtBusy" @click="mgmtTag">打群标签</button>
+            <button v-if="canManageTarget" class="ghost small danger" :disabled="mgmtBusy" @click="mgmtKick">踢出群聊</button>
           </div>
         </div>
       </div>
     </div>
+    </Transition>
   </Teleport>
 </template>
 
@@ -644,7 +602,7 @@ function boardHtmlOf(b: any) { return b?.content ? renderRich(b.content) : '' }
 .dock {
   /* 居中大弹窗（用户偏好）：不透明、层级 75（高于三栏与 rail 菜单，低于对话框 80+） */
   position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%);
-  width: min(860px, 94vw); height: min(640px, 90vh);
+  width: min(980px, 94vw); height: min(760px, 90vh);
   z-index: 75; background: var(--card); border: 1px solid var(--line); border-radius: 14px;
   box-shadow: 0 18px 60px rgba(0, 0, 0, .5);
   display: flex; flex-direction: column; overflow: hidden;
@@ -663,7 +621,13 @@ function boardHtmlOf(b: any) { return b?.content ? renderRich(b.content) : '' }
 .dock-head .owner { display: inline-flex; align-items: center; gap: 4px; color: var(--fg2); }
 .dock-head .owner img { width: 16px; height: 16px; border-radius: 50%; }
 .bot-sel { font-size: 12px; padding: 3px 6px; max-width: 170px; }
-.dock-body { flex: 1; min-height: 320px; overflow: auto; padding: 14px 18px; background: var(--card); }
+.dock-body { flex: 1; min-height: 0; overflow: auto; padding: 24px; background: var(--bg); overscroll-behavior: contain; }
+.dock-content { min-width: 0; }
+.dock-head { gap: 8px; }
+.dock-tabs button { height: 32px; border-color: transparent; background: transparent; color: var(--fg2); padding: 5px 10px; }
+.dock-tabs button.on { color: var(--fg); background: var(--card2); border-color: transparent; }
+.dock-title { color: var(--fg2); font-weight: 500; }
+@media(max-width:600px) { .dock { width:96vw; height:94dvh; border-radius:16px; }.dock-body { padding:16px; }.dock-head { padding:10px; }.dock-title { display:none; }.dock-head .grow { display:none; }.dock-tabs { flex:1; min-width:0; }.dock-tabs button { padding:5px 8px; }.mgmt-box { max-width:92vw; } }
 .dock-body .rich :deep(img) { max-width: 100%; border-radius: 8px; }
 .dock-body .rich :deep(a) { color: var(--acc); }
 .dock-body .rich :deep(h1), .dock-body .rich :deep(h2), .dock-body .rich :deep(h3) { margin: 6px 0; }

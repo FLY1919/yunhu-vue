@@ -3,7 +3,7 @@ import type { Context } from '../core/context'
 import { boundedTurns, estimate, generate, models, type AiService, type AiUsage, type Turn } from '../userbot/providers'
 import { h } from '../satori/element'
 import { replyFormatPrompt, type ReplyFormat } from '../userbot/reply-format'
-import { ActionError, actionContext, executeAction, groupRole, loadActionScope, newActionPolicy, parseActionReply, previewAction, validateAction, type ActionPolicy, type ActionPreview } from '../userbot/actions'
+import { ActionError, actionContext, executeAction, loadGroupRole, loadActionScope, newActionPolicy, parseActionReply, previewAction, validateAction, type ActionPolicy, type ActionPreview } from '../userbot/actions'
 import UserBotActionDialog from '../components/UserBotActionDialog.vue'
 import UserBotPage from '../console/pages/UserBotPage.vue'
 import { afterMemory, clampNumber, clipTokens, contextCost, memoryBatch, memoryPrompt, type MemoryCursor, type MemoryTurn } from '../userbot/memory'
@@ -22,7 +22,26 @@ export const newService = (): AiService => ({ id: newId(), name: '新服务', fo
 export const newPersona = (): Persona => ({ id: newId(), name: '新人设', avatar: '', description: '', background: '', personality: '', style: '', relationship: '', boundaries: '', examples: '', extra: '' })
 export const newBot = (): UserBot => ({ id: newId(), name: '新 Bot', enabled: false, useAI: true, workMode: 'conversation', canRead: true, canSend: false, management: newActionPolicy(), allowed: [], personaId: '', serviceId: '' })
 export const usesAI = (bot: UserBot, setting: ConversationBot) => bot.useAI !== false && setting.useAI !== false
-export const managesGroup = (bot: UserBot, setting: ConversationBot) => bot.management?.enabled === true && (setting.workMode === 'management' || (setting.workMode !== 'conversation' && bot.workMode === 'management'))
+export function managesGroup(bot: UserBot, setting: ConversationBot) {
+  if (bot.management?.enabled !== true || setting.workMode === 'conversation') return false
+  if (setting.workMode === 'management' || bot.workMode === 'management') return true
+  // Choosing an authorized moderation rule explicitly selects a management action in automatic mode.
+  return !usesAI(bot, setting) && setting.automationAction !== 'reply'
+    && bot.management.allowed?.includes(setting.automationAction)
+}
+function skipsManagementMerge(channel: { type: number }, bot: UserBot | undefined, setting: ConversationBot) {
+  return channel.type === 2 && bot?.management?.requireConfirmation === false && managesGroup(bot, setting)
+    && (usesAI(bot, setting) || setting.automationAction !== 'reply')
+}
+function managementRuleError(channel: any, bot: UserBot, setting: ConversationBot) {
+  if (setting.automationAction === 'reply') return ''
+  if (Number(channel.type) !== 2) return '撤回和禁言规则仅支持群聊'
+  if (!bot.management?.enabled) return '请在 Bot 管理中开启群管理权限'
+  if (!bot.management.allowed?.includes(setting.automationAction)) {
+    return setting.automationAction === 'recall' ? '请在 Bot 管理中授权「撤回群消息」' : '请在 Bot 管理中授权「禁言 / 解除禁言」'
+  }
+  return managesGroup(bot, setting) ? '' : '请将该群聊的工作模式切换为管理模式'
+}
 export function automationReply(setting: ConversationBot, incoming: any[], allowManagement: boolean) {
   const source = incoming.at(-1)
   if (!source) throw new Error('自动化规则需要一条触发消息，请等待新消息触发')
@@ -244,7 +263,11 @@ export const userBotPlugin = {
       try {
         let management: Awaited<ReturnType<typeof loadActionScope>> = null
         let result: { text: string; usage?: AiUsage }, reply: ReturnType<typeof parseActionReply>
-        snapshot.setting.workMode = !replyOnly && managesGroup(snapshot.bot, snapshot.setting) ? 'management' : 'conversation'
+        if (!snapshot.useAI && automatic) {
+          const error = managementRuleError(channel, snapshot.bot, snapshot.setting)
+          if (error) throw new ActionError(error)
+        }
+        snapshot.setting.workMode = !replyOnly && Number(channel.type) === 2 && managesGroup(snapshot.bot, snapshot.setting) ? 'management' : 'conversation'
         if (snapshot.useAI) {
           const chosen = { ...snapshot.service!, model: snapshot.setting.model || snapshot.service!.model }
           async function request(system: string, turns: Turn[], service = chosen) {
@@ -341,7 +364,7 @@ export const userBotPlugin = {
         if (reply.actions.length) {
           activeBatches.delete(k)
           state.context[k].stage = '正在核对群管理操作'
-          const planningScope = await loadActionScope(api, channel, owner, snapshot.bot.management, stillValid)
+          const planningScope = snapshot.useAI ? await loadActionScope(api, channel, owner, snapshot.bot.management, stillValid) : management
           if (!planningScope) throw new ActionError('当前账号已失去群管理权限')
           planningScope.messageHints = messageHints()
           const previews: ActionPreview[] = []
@@ -350,10 +373,11 @@ export const userBotPlugin = {
             if (!stillValid()) throw new DOMException('任务已取消', 'AbortError')
           }
           log(k, snapshot.bot.name, '管理操作待处理', `${previews.length} 项`)
+          const requiresReview = snapshot.bot.management.requireConfirmation !== false
           let approved = true
-          if (snapshot.bot.management.requireConfirmation !== false) {
+          if (requiresReview) {
             state.context[k].stage = '等待群管理操作确认'
-            approved = await requestReview({ botName: snapshot.bot.name, groupId: String(channel.id), groupName: management!.info.name || channel.name || channel.id, items: previews }, controller.signal, stillValid)
+            approved = await requestReview({ botName: snapshot.bot.name, groupId: String(channel.id), groupName: planningScope.info.name || channel.name || channel.id, items: previews }, controller.signal, stillValid)
           }
           if (!stillValid()) throw new DOMException('任务已取消', 'AbortError')
           if (!approved) {
@@ -365,13 +389,16 @@ export const userBotPlugin = {
               const preview = previews[i]
               state.context[k].stage = `正在执行群管理操作 ${i + 1} / ${previews.length}`
               try {
-                const current = resolve(channel)
-                const scope = await loadActionScope(api, channel, owner, current.bot.management, stillValid)
-                if (!scope) throw new ActionError('当前账号已失去群管理权限')
-                scope.messageHints = messageHints()
-                const fresh = await previewAction(api, scope, preview.action)
+                // A single unreviewed action has just passed the live checks above.
+                if (requiresReview || previews.length > 1) {
+                  const current = resolve(channel)
+                  const scope = await loadActionScope(api, channel, owner, current.bot.management, stillValid)
+                  if (!scope) throw new ActionError('当前账号已失去群管理权限')
+                  scope.messageHints = messageHints()
+                  const fresh = await previewAction(api, scope, preview.action)
+                  if (fresh.before !== preview.before) throw new ActionError('目标或原设置已变化，请重新生成并审核')
+                }
                 if (!stillValid()) throw new DOMException('任务已取消', 'AbortError')
-                if (fresh.before !== preview.before) throw new ActionError('目标或原设置已变化，请重新生成并审核')
                 // No automatic retry: a timed-out mutation may already have reached the server.
                 await executeAction(api, String(channel.id), preview.action)
                 if (!stillValid()) throw new DOMException('任务已取消', 'AbortError')
@@ -425,18 +452,22 @@ export const userBotPlugin = {
       const k = keyOf(channel)
       if (timers.has(k) || state.busy[k] || !queues.get(k)?.length) return
       const setting = state.config.conversations[k]; if (!setting) return
-      const wait = Math.max(Math.max(0, Math.min(30, Number(setting.mergeSeconds) || 0)) * 1000, (lastReply.get(k) || 0) + Math.max(0, Number(setting.cooldown) || 0) * 1000 - Date.now())
-      state.queued[k] = { dueAt: Date.now() + wait, count: queues.get(k)?.length || 0 }
-      timers.set(k, setTimeout(() => {
+      const bot = state.config.bots.find(b => b.id === setting.botId)
+      const skipMerge = skipsManagementMerge(channel, bot, setting)
+      const mergeWait = skipMerge ? 0 : Math.max(0, Math.min(30, Number(setting.mergeSeconds) || 0)) * 1000
+      const wait = Math.max(mergeWait, (lastReply.get(k) || 0) + Math.max(0, Number(setting.cooldown) || 0) * 1000 - Date.now())
+      const runPending = () => {
         timers.delete(k); delete state.queued[k]
         const pending = queues.get(k) || []; queues.delete(k)
-        const bot = state.config.bots.find(b => b.id === setting.botId)
         // AI merges context; deterministic rules handle each matching event once, in order.
         const batch = bot && !usesAI(bot, setting) ? pending.splice(0, 1) : pending
         if (batch !== pending && pending.length) queues.set(k, pending)
         if (!batch.length) return
         void run(channel, true, batch).catch(() => {})
-      }, wait))
+      }
+      if (skipMerge && wait === 0) { runPending(); return }
+      state.queued[k] = { dueAt: Date.now() + wait, count: queues.get(k)?.length || 0 }
+      timers.set(k, setTimeout(runPending, wait))
     }
     function onIncoming(s: any) {
       const owner = account()
@@ -454,7 +485,7 @@ export const userBotPlugin = {
       const mid = k + ':' + s.id; if (seen.has(mid)) return
       seen.set(mid, Date.now()); if (seen.size > 1000) seen.delete(seen.keys().next().value!)
       const queue = queues.get(k) || []; queue.push(s); if (state.queued[k]) state.queued[k].count = queue.length; queues.set(k, queue.slice(-50)); log(k, bot.name, '已触发')
-      if (state.busy[k] && Number(setting.mergeSeconds) > 0) {
+      if (state.busy[k] && Number(setting.mergeSeconds) > 0 && !skipsManagementMerge(channel, bot, setting)) {
         const earlier = activeBatches.get(k) || []
         if (earlier.length) { queues.set(k, [...earlier, ...(queues.get(k) || [])].slice(-50)); activeBatches.set(k, []); controllers.get(k)?.abort() }
       }
@@ -519,7 +550,8 @@ export const userBotPlugin = {
       if (!state.ready) return state.loadError || '正在读取设置'
       try {
         const { setting, bot, useAI } = resolve(channel)
-        if (!useAI) return '规则自动化 · ' + (setting.mode === 'off' ? '已暂停' : setting.automationAction === 'reply' ? '固定回复' : setting.automationAction === 'mute' ? '禁言触发者' : '撤回触发消息')
+        if (!useAI) return managementRuleError(channel, bot, setting) || '规则自动化 · '
+          + (setting.automationAction === 'reply' ? '固定回复' : setting.automationAction === 'mute' ? '禁言触发者' : '撤回触发消息')
         if (setting.mode === 'auto' && !bot.canSend && bot.management?.enabled !== true) return '未授予 Bot 自动发送权限'
         const mode = { manual: '手动生成', draft: '自动草稿', auto: '自动发送', off: '已暂停' }[setting.mode]
         const trigger = { always: '收到消息', mention: channel.type === 2 ? '提及我' : '收到私聊', keyword: '匹配关键词', command: '匹配指令' }[setting.trigger]
@@ -540,15 +572,15 @@ export const userBotPlugin = {
         setting.workMode = mode as 'conversation' | 'management'
       },
       usesAIFor(channel: any) { const setting = settings(channel), bot = state.config.bots.find(b => b.id === setting.botId); return !bot || usesAI(bot, setting) },
-      workModeFor(channel: any) { const setting = settings(channel), bot = state.config.bots.find(b => b.id === setting.botId); return bot && managesGroup(bot, setting) ? 'management' : 'conversation' },
+      workModeFor(channel: any) { const setting = settings(channel), bot = state.config.bots.find(b => b.id === setting.botId); return Number(channel.type) === 2 && bot && managesGroup(bot, setting) ? 'management' : 'conversation' },
       async checkManagement(channel: any) {
         const owner = account(), version = epoch, k = keyOf(channel)
         if (Number(channel?.type) !== 2) return '仅群聊支持管理操作'
         state.managementStatus[k] = '正在核对权限'
         try {
           const info = await api.groupInfo(channel.id, { timeout: 8000 })
+          const role = await loadGroupRole(api, String(channel.id), info, owner)
           if (disposed || owner !== account() || version !== epoch) return ''
-          const role = groupRole(info, owner)
           return state.managementStatus[k] = role === 'owner' ? '群主' : role === 'admin' ? '管理员' : '当前账号没有本群管理权限'
         } catch { if (disposed || owner !== account() || version !== epoch) return ''; return state.managementStatus[k] = '读取群权限失败，请重试' }
       }, getKey, setKey, reload: load,

@@ -137,11 +137,14 @@ async function stickerDirectory(req, res, search) {
 
 // server.ts
 import https4 from "node:https";
-import { readFile, writeFile, unlink } from "node:fs/promises";
+import { copyFile, link, mkdir, mkdtemp, readFile, rm, writeFile, unlink } from "node:fs/promises";
+import { constants, createWriteStream } from "node:fs";
+import { Transform } from "node:stream";
+import { pipeline } from "node:stream/promises";
 import { execFileSync, execFile, spawn } from "node:child_process";
 import { mkdirSync, readFileSync as readFileSync2 } from "node:fs";
 import { existsSync as existsSync2 } from "node:fs";
-import { extname, join as join2, normalize } from "node:path";
+import { dirname, extname, isAbsolute, join as join2, normalize } from "node:path";
 import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
 
@@ -1303,7 +1306,7 @@ async function handleDataDir(req, res) {
         return;
       }
       mkdirSync(dir, { recursive: true });
-      for (const name of DATA_ALLOW) {
+      for (const name of [...DATA_ALLOW, "download-settings"]) {
         const from = join2(DATA_DIR, name + ".json");
         const to = join2(dir, name + ".json");
         if (existsSync2(from) && !existsSync2(to)) {
@@ -1405,9 +1408,22 @@ function follow(target, req, res, referer, depth = 0, cacheControl = "no-store")
     } catch {
       res.writeHead(up.statusCode || 502, { "content-type": "application/octet-stream", "cache-control": cacheControl });
     }
+    up.once("error", (error) => {
+      if (!res.destroyed) res.destroy(error);
+    });
     up.pipe(res);
   });
+  const abortUpstream = () => {
+    if (!res.writableFinished) r.destroy();
+  };
+  res.once("close", abortUpstream);
+  r.once("close", () => res.off("close", abortUpstream));
   r.on("error", (e) => {
+    if (res.destroyed) return;
+    if (res.headersSent) {
+      res.destroy(e);
+      return;
+    }
     res.writeHead(502, { "content-type": "application/json; charset=utf-8" });
     res.end(JSON.stringify({ code: -1, msg: "proxy error: " + e.message }));
   });
@@ -1603,18 +1619,32 @@ async function handleUpdateCheck(res) {
 }
 var FILE_DIR_FILE = join2(homedir(), ".yhchat-filedir");
 function defaultFileDir() {
-  return join2(DATA_DIR, "file");
+  return process.env.YH_DOWNLOADS_DIR || join2(homedir(), "Downloads");
 }
 function resolveFileDir() {
   if (process.env.YH_FILE_DIR) return process.env.YH_FILE_DIR;
   try {
     const custom = readFileSync2(FILE_DIR_FILE, "utf8").trim();
-    if (custom) return custom;
+    if (isAbsolute(custom)) return custom;
   } catch {
   }
   return defaultFileDir();
 }
 var FILE_DIR = resolveFileDir();
+function downloadSettingsPath() {
+  return join2(DATA_DIR, "download-settings.json");
+}
+function resolveDownloadMode() {
+  try {
+    if (JSON.parse(readFileSync2(downloadSettingsPath(), "utf8")).mode === "ask") return "ask";
+  } catch {
+  }
+  return "direct";
+}
+var downloadMode = resolveDownloadMode();
+function fileDirectorySettings() {
+  return { dir: FILE_DIR, custom: FILE_DIR !== defaultFileDir(), default: defaultFileDir(), mode: downloadMode };
+}
 try {
   mkdirSync(FILE_DIR, { recursive: true });
 } catch {
@@ -1622,22 +1652,35 @@ try {
 async function handleFileDir(req, res) {
   if (req.method === "GET") {
     res.writeHead(200, JSON_HDR);
-    res.end(JSON.stringify({ dir: FILE_DIR, custom: existsSync2(FILE_DIR_FILE), default: defaultFileDir() }));
+    res.end(JSON.stringify(fileDirectorySettings()));
     return;
   }
   if (req.method === "PUT" || req.method === "POST") {
     try {
       const body = JSON.parse(await readBody2(req));
-      const dir = String(body.dir || "").trim();
-      if (!dir || dir.length > 260) {
-        res.writeHead(400, JSON_HDR).end(JSON.stringify({ ok: false, msg: "\u76EE\u5F55\u8DEF\u5F84\u4E0D\u5408\u6CD5" }));
+      if (Object.hasOwn(body, "mode")) {
+        const { mode } = body;
+        if (mode !== "ask" && mode !== "direct" || Object.hasOwn(body, "dir") || Object.hasOwn(body, "reset")) {
+          res.writeHead(400, JSON_HDR).end(JSON.stringify({ ok: false, msg: "\u4E0B\u8F7D\u4F4D\u7F6E\u9009\u9879\u4E0D\u5408\u6CD5" }));
+          return;
+        }
+        await mkdir(DATA_DIR, { recursive: true });
+        await writeFile(downloadSettingsPath(), JSON.stringify({ mode }), "utf8");
+        downloadMode = mode;
+        res.writeHead(200, JSON_HDR).end(JSON.stringify({ ok: true, ...fileDirectorySettings() }));
         return;
       }
-      mkdirSync(dir, { recursive: true });
-      await writeFile(FILE_DIR_FILE, dir, "utf8");
-      FILE_DIR = dir;
+      const dir = body.reset === true ? defaultFileDir() : String(body.dir || "").trim();
+      if (!isAbsolute(dir) || dir.length > 32767 || dir.includes("\0")) {
+        res.writeHead(400, JSON_HDR).end(JSON.stringify({ ok: false, msg: "\u8BF7\u8F93\u5165\u6709\u6548\u7684\u7EDD\u5BF9\u76EE\u5F55\u8DEF\u5F84" }));
+        return;
+      }
+      await mkdir(dir, { recursive: true });
+      if (body.reset === true) await rm(FILE_DIR_FILE, { force: true });
+      else await writeFile(FILE_DIR_FILE, dir, "utf8");
+      FILE_DIR = process.env.YH_FILE_DIR || dir;
       res.writeHead(200, JSON_HDR);
-      res.end(JSON.stringify({ ok: true, dir }));
+      res.end(JSON.stringify({ ok: true, ...fileDirectorySettings() }));
     } catch (e) {
       res.writeHead(500, JSON_HDR);
       res.end(JSON.stringify({ ok: false, msg: e.message }));
@@ -1680,10 +1723,18 @@ async function handleSaveImage(req, res, search) {
   const requested = new URLSearchParams(search).get("name") || "image_edited";
   const base = requested.split(/[\\/]/).pop().replace(/[<>:"|?*\x00-\x1f]/g, "_").replace(/\.[^.]*$/, "").slice(0, 120) || "image_edited";
   const extension = type === "image/png" ? ".png" : type === "image/gif" ? ".gif" : ".jpg";
-  mkdirSync(FILE_DIR, { recursive: true });
+  const controller = new AbortController();
+  res.once("close", () => controller.abort());
+  const directory = await downloadDirectory(controller.signal);
+  if (!directory) {
+    res.writeHead(200, JSON_HDR).end(JSON.stringify({ ok: true, cancelled: true }));
+    return;
+  }
+  await mkdir(directory, { recursive: true });
+  controller.signal.throwIfAborted();
   let dest = "";
   for (let attempt = 0; attempt < 20; attempt++) {
-    dest = join2(FILE_DIR, base + (attempt ? "-" + Date.now() + "-" + attempt : "") + extension);
+    dest = join2(directory, base + (attempt ? "-" + Date.now() + "-" + attempt : "") + extension);
     try {
       await writeFile(dest, data, { flag: "wx" });
       break;
@@ -1693,86 +1744,196 @@ async function handleSaveImage(req, res, search) {
   }
   res.writeHead(200, JSON_HDR).end(JSON.stringify({ ok: true, path: dest }));
 }
-async function handlePickDir(_req, res) {
+async function selectDirectory(initialDir = "", signal) {
+  const prompt = initialDir ? "\u9009\u62E9\u4E0B\u8F7D\u4FDD\u5B58\u4F4D\u7F6E" : "\u9009\u62E9\u76EE\u5F55";
   const run = (cmd, args) => new Promise((resolve) => {
     execFile(
       cmd,
       args,
-      { encoding: "utf8", timeout: 6e5, windowsHide: true },
-      (err, stdout) => err ? resolve({ ok: false, out: "", msg: err.message }) : resolve({ ok: true, out: String(stdout || "") })
+      {
+        encoding: "utf8",
+        timeout: 6e5,
+        windowsHide: true,
+        signal,
+        env: { ...process.env, YH_PICK_DIR_INITIAL: initialDir, YH_PICK_DIR_PROMPT: prompt }
+      },
+      (error, stdout) => resolve({ out: stdout.trim(), code: error ? error.code ?? "FAILED" : 0 })
     );
   });
-  let dir = "";
+  let result;
+  if (process.platform === "win32") {
+    const script = "[Console]::OutputEncoding=[System.Text.UTF8Encoding]::new($false);Add-Type -AssemblyName System.Windows.Forms;$f=New-Object System.Windows.Forms.FolderBrowserDialog;$f.Description=$env:YH_PICK_DIR_PROMPT;if($env:YH_PICK_DIR_INITIAL){$f.SelectedPath=$env:YH_PICK_DIR_INITIAL};if($f.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK){Write-Output $f.SelectedPath}";
+    result = await run("powershell.exe", ["-NoProfile", "-STA", "-Command", script]);
+  } else if (process.platform === "darwin") {
+    const script = 'on run argv\ntry\nif item 1 of argv is "" then\nreturn POSIX path of (choose folder with prompt (item 2 of argv))\nelse\nreturn POSIX path of (choose folder with prompt (item 2 of argv) default location (POSIX file (item 1 of argv)))\nend if\non error number -128\nreturn ""\nend try\nend run';
+    result = await run("osascript", ["-e", script, initialDir, prompt]);
+  } else {
+    const args = ["--file-selection", "--directory", "--title=" + prompt];
+    if (initialDir) args.push("--filename=" + initialDir.replace(/\/$/, "") + "/");
+    result = await run("zenity", args);
+    signal?.throwIfAborted();
+    if (result.code !== 0 && result.code !== 1) result = await run("kdialog", ["--getexistingdirectory", initialDir, "--title", prompt]);
+    if (result.code === 1) return null;
+  }
+  signal?.throwIfAborted();
+  if (result.code !== 0 || result.out && !isAbsolute(result.out)) throw new Error("\u65E0\u6CD5\u6253\u5F00\u4FDD\u5B58\u4F4D\u7F6E\u9009\u62E9\u7A97\u53E3");
+  return result.out || null;
+}
+async function handlePickDir(_req, res) {
+  const controller = new AbortController();
+  res.once("close", () => controller.abort());
   try {
-    if (process.platform === "win32") {
-      const ps = "Add-Type -AssemblyName System.Windows.Forms;$f=New-Object System.Windows.Forms.FolderBrowserDialog;$f.Description='\u9009\u62E9\u76EE\u5F55';if($f.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK){Write-Output $f.SelectedPath}";
-      const r = await run("powershell.exe", ["-NoProfile", "-STA", "-Command", ps]);
-      dir = r.ok ? r.out.trim().split(/\r?\n/).filter(Boolean).pop() || "" : "";
-    } else if (process.platform === "darwin") {
-      const r = await run("osascript", ["-e", 'POSIX path of (choose folder with prompt "\u9009\u62E9\u76EE\u5F55")']);
-      dir = r.ok ? r.out.trim().replace(/\/$/, "") : "";
-    } else {
-      const z = await run("zenity", ["--file-selection", "--directory", "--title=\u9009\u62E9\u76EE\u5F55"]);
-      if (z.ok) dir = z.out.trim();
-      else {
-        const k = await run("kdialog", ["--getexistingdirectory"]);
-        dir = k.ok ? k.out.trim() : "";
-      }
-    }
-    res.writeHead(200, JSON_HDR).end(JSON.stringify({ ok: true, dir }));
-  } catch (e) {
-    res.writeHead(200, JSON_HDR).end(JSON.stringify({ ok: true, dir: "", note: e?.message || "" }));
+    const dir = await selectDirectory("", controller.signal);
+    res.writeHead(200, JSON_HDR).end(JSON.stringify({ ok: true, dir: dir || "" }));
+  } catch (error) {
+    if (!res.destroyed) res.writeHead(200, JSON_HDR).end(JSON.stringify({ ok: true, dir: "", note: error.message }));
   }
 }
+function downloadDirectory(signal) {
+  return downloadMode === "ask" ? selectDirectory(FILE_DIR, signal) : FILE_DIR;
+}
 var localDownloads = /* @__PURE__ */ new Map();
-async function handleLocalOpen(req, res, search) {
-  if (req.method !== "GET") {
-    res.writeHead(405, JSON_HDR).end(JSON.stringify({ ok: false, msg: "use GET with ?url=&name=" }));
+function localDownloadTarget(input2, requestHost) {
+  const base = `http://127.0.0.1:${PORT}`;
+  const url = new URL(input2, base);
+  if (!["http:", "https:"].includes(url.protocol) || url.username || url.password) return "";
+  if (RES_HOST_RE.test(url.host)) return base + "/res/" + url.host + url.pathname + url.search;
+  const sameHost = url.origin === base || url.host === requestHost;
+  if (sameHost && /^\/(?:res|webdav)\//.test(url.pathname)) return base + url.pathname + url.search;
+  return "";
+}
+function localFileName(input2) {
+  let name = input2.replace(/[\\/:*?"<>|\x00-\x1f]/g, "_").trim().replace(/[. ]+$/, "").slice(0, 140).replace(/[. ]+$/, "") || "file";
+  if (/^(con|prn|aux|nul|com[1-9¹²³]|lpt[1-9¹²³])(?:\.|$)/i.test(name)) name = "_" + name;
+  return name;
+}
+async function storeDownload(target, directory, name, signal, progress) {
+  const cacheKey = directory + "\n" + target + "\n" + name;
+  const saved = localDownloads.get(cacheKey);
+  if (saved && existsSync2(saved)) return saved;
+  await mkdir(directory, { recursive: true });
+  const scratch = await mkdtemp(join2(directory, ".yh-download-"));
+  const part = join2(scratch, "data.part");
+  try {
+    const source = await new Promise((resolve, reject) => {
+      const request = http.get(target, { signal }, resolve);
+      request.on("error", reject);
+      request.setTimeout(3e4, () => request.destroy(new Error("\u6587\u4EF6\u4E0B\u8F7D\u8D85\u65F6")));
+    });
+    if (source.statusCode !== 200) {
+      source.destroy();
+      throw new Error("\u4E0B\u8F7D\u5931\u8D25 HTTP " + source.statusCode);
+    }
+    const total = Number(source.headers["content-length"]) || 0;
+    let received = 0;
+    let last = Date.now();
+    progress?.(received, total);
+    const meter = new Transform({
+      transform(chunk, _encoding, done) {
+        received += chunk.length;
+        const now = Date.now();
+        if (now - last >= 150) {
+          last = now;
+          progress?.(received, total);
+        }
+        done(null, chunk);
+      }
+    });
+    await pipeline(source, meter, createWriteStream(part), { signal });
+    if (total && received !== total) throw new Error("\u6587\u4EF6\u4E0B\u8F7D\u4E0D\u5B8C\u6574");
+    progress?.(received, total);
+    const extension = extname(name);
+    const base = name.slice(0, name.length - extension.length);
+    for (let attempt = 0; attempt < 100; attempt++) {
+      signal.throwIfAborted();
+      const dest = join2(directory, attempt ? `${base} (${attempt})${extension}` : name);
+      try {
+        try {
+          await link(part, dest);
+        } catch (error) {
+          if (!["EPERM", "ENOTSUP", "EXDEV", "EOPNOTSUPP", "ENOSYS"].includes(error.code)) throw error;
+          await copyFile(part, dest, constants.COPYFILE_EXCL);
+        }
+        localDownloads.set(cacheKey, dest);
+        if (localDownloads.size > 200) {
+          const oldest = localDownloads.keys().next().value;
+          if (oldest !== void 0) localDownloads.delete(oldest);
+        }
+        return dest;
+      } catch (error) {
+        if (error.code !== "EEXIST") throw error;
+      }
+    }
+    throw new Error("\u540C\u540D\u6587\u4EF6\u8FC7\u591A");
+  } finally {
+    await rm(scratch, { recursive: true, force: true }).catch(() => {
+    });
+  }
+}
+async function handleLocalDownload(req, res, search) {
+  if (req.method !== "POST") {
+    res.writeHead(405, JSON_HDR).end(JSON.stringify({ msg: "\u9700\u8981 POST \u8BF7\u6C42" }));
     return;
   }
-  const q0 = new URLSearchParams(search || "");
+  if (!req.headers.token || req.headers.origin && new URL(req.headers.origin).host !== req.headers.host) {
+    res.writeHead(403, JSON_HDR).end(JSON.stringify({ msg: "\u4EC5\u5141\u8BB8\u5BA2\u6237\u7AEF\u53D1\u8D77\u4E0B\u8F7D" }));
+    return;
+  }
+  const q = new URLSearchParams(search);
+  const target = localDownloadTarget(q.get("url") || "", req.headers.host);
+  if (!target) {
+    res.writeHead(403, JSON_HDR).end(JSON.stringify({ msg: "\u6587\u4EF6\u5730\u5740\u4E0D\u53D7\u652F\u6301" }));
+    return;
+  }
+  const controller = new AbortController();
+  res.once("close", () => controller.abort());
+  res.writeHead(200, { ...JSON_HDR, "content-type": "application/x-ndjson; charset=utf-8" });
+  const report = (data) => {
+    if (!res.destroyed) res.write(JSON.stringify(data) + "\n");
+  };
   try {
-    const url = String(q0.get("url") || "");
-    const name = String(q0.get("name") || "").replace(/[\\/:*?"<>|]/g, "_").slice(0, 120) || "file";
-    const u = new URL(url, "http://localhost");
-    const allowed = u.pathname.startsWith("/res/") || RES_HOST_RE.test(u.hostname) || u.hostname === "localhost" || u.hostname === "127.0.0.1";
-    if (!allowed) {
-      res.writeHead(403, JSON_HDR).end(JSON.stringify({ ok: false, msg: "url not allowed" }));
+    if (downloadMode === "ask") report({ choosing: true });
+    const directory = await downloadDirectory(controller.signal);
+    if (!directory) report({ ok: true, cancelled: true });
+    else {
+      const path = await storeDownload(
+        target,
+        directory,
+        localFileName(q.get("name") || ""),
+        controller.signal,
+        (received, total) => {
+          if (!res.writableNeedDrain) report({ received, total });
+        }
+      );
+      report({ ok: true, path });
+    }
+  } catch (error) {
+    report({ ok: false, msg: error.message });
+  }
+  res.end();
+}
+async function handleLocalOpen(req, res, search) {
+  const query = new URLSearchParams(search);
+  const controller = new AbortController();
+  res.once("close", () => controller.abort());
+  try {
+    const target = localDownloadTarget(query.get("url") || "", req.headers.host);
+    if (!target) {
+      res.writeHead(403, JSON_HDR).end(JSON.stringify({ ok: false, msg: "\u6587\u4EF6\u5730\u5740\u4E0D\u53D7\u652F\u6301" }));
       return;
     }
-    const directory = FILE_DIR, cacheKey = directory + "\n" + url;
-    mkdirSync(directory, { recursive: true });
-    let dest = localDownloads.get(cacheKey) || "";
-    if (!dest || !existsSync2(dest)) {
-      const target = u.hostname === "localhost" || u.hostname === "127.0.0.1" ? `http://127.0.0.1:${PORT}${u.pathname}${u.search}` : url;
-      const data = await new Promise((resolve, reject) => {
-        const mod = target.startsWith("https") ? https4 : http;
-        const download = mod.get(target, { headers: { referer: RES_REFERER } }, (up) => {
-          if ((up.statusCode || 0) < 200 || (up.statusCode || 0) >= 300) {
-            up.resume();
-            reject(new Error("\u4E0B\u8F7D\u5931\u8D25 HTTP " + up.statusCode));
-            return;
-          }
-          const chunks = [];
-          up.on("data", (c) => chunks.push(c));
-          up.on("end", () => resolve(Buffer.concat(chunks)));
-          up.on("error", reject);
-        }).on("error", reject);
-        download.setTimeout(3e4, () => download.destroy(new Error("\u6587\u4EF6\u4E0B\u8F7D\u8D85\u65F6")));
-      });
-      const extension = extname(name), base = name.slice(0, name.length - extension.length);
-      for (let attempt = 0; attempt < 20; attempt++) {
-        dest = join2(directory, attempt ? `${base}-${Date.now()}-${attempt}${extension}` : name);
-        try {
-          await writeFile(dest, data, { flag: "wx" });
-          break;
-        } catch (error) {
-          if (error.code !== "EEXIST" || attempt === 19) throw error;
-        }
+    const name = localFileName(query.get("name") || "");
+    const keySuffix = "\n" + target + "\n" + name;
+    let dest = [...localDownloads].reverse().find(([key, path]) => key.endsWith(keySuffix) && existsSync2(path))?.[1];
+    if (!dest) {
+      const directory = await downloadDirectory(controller.signal);
+      if (!directory) {
+        res.writeHead(200, JSON_HDR).end(JSON.stringify({ ok: true, cancelled: true }));
+        return;
       }
-      localDownloads.set(cacheKey, dest);
-      if (localDownloads.size > 200) localDownloads.delete(localDownloads.keys().next().value);
+      dest = await storeDownload(target, directory, name, controller.signal);
     }
+    if (res.destroyed) return;
     if (process.platform === "win32") {
       await new Promise((resolve, reject) => {
         const explorer = spawn("explorer.exe", ["/select," + dest], { detached: true, stdio: "ignore" });
@@ -1783,7 +1944,7 @@ async function handleLocalOpen(req, res, search) {
         });
       });
     } else {
-      await new Promise((resolve, reject) => execFile(process.platform === "darwin" ? "open" : "xdg-open", [directory], { timeout: 1e4 }, (error) => error ? reject(error) : resolve()));
+      await new Promise((resolve, reject) => execFile(process.platform === "darwin" ? "open" : "xdg-open", [dirname(dest)], { timeout: 1e4 }, (error) => error ? reject(error) : resolve()));
     }
     res.writeHead(200, JSON_HDR).end(JSON.stringify({ ok: true, path: dest }));
   } catch (e) {
@@ -1864,6 +2025,13 @@ function serverApp(req, res) {
   if (pathname === "/update-check" && req.method === "GET") {
     handleUpdateCheck(res).catch((e) => {
       res.writeHead(502, JSON_HDR).end(JSON.stringify({ ok: false, msg: e.message }));
+    });
+    return;
+  }
+  if (pathname === "/local-download") {
+    void handleLocalDownload(req, res, search).catch((e) => {
+      if (!res.headersSent) res.writeHead(400, JSON_HDR);
+      res.end(JSON.stringify({ ok: false, msg: e.message }));
     });
     return;
   }

@@ -1,4 +1,5 @@
 import { mediaMetadata } from '../core/media'
+import { getChatRecordingStream } from '../core/media-devices'
 /**
  * stickers 插件 —— 表情收藏面板 + 语音发送
  *
@@ -198,7 +199,7 @@ export const stickersPlugin = {
       if (!mediaReady('audio')) return
       try {
         // 显式申请权限（手机上是这一步弹系统授权框）
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false })
+        const stream = await getChatRecordingStream(false)
         chunks = []
         recorder = new MediaRecorder(stream)
         recorder.ondataavailable = (ev) => { if (ev.data.size) chunks.push(ev.data) }
@@ -290,7 +291,7 @@ export const stickersPlugin = {
       if (state.recordingVideo) return recordVideoStop()
       if (!mediaReady('video')) return
       try {
-        const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true })
+        const stream = await getChatRecordingStream(true)
         videoChunks = []
         videoRecorder = new MediaRecorder(stream)
         videoRecorder.ondataavailable = (ev) => { if (ev.data.size) videoChunks.push(ev.data) }

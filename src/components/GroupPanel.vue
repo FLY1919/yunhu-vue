@@ -7,12 +7,15 @@
  * 成员右键菜单（QQ 式，只保留有后端的项）：发消息 / @ TA / 查看资料 / 添加好友 / 禁言TA。
  * （戳一戳/举报云湖无接口，按「无后端即砍」不做。）
  */
-import { inject, ref, computed, onMounted, watch } from 'vue'
+import { inject, ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import QRCode from 'qrcode'
 import { resUrl } from '../core/res'
 import { fallbackAvatar } from '../core/util'
 import { renderRich } from '../core/render'
 import Icon from '../console/components/Icon.vue'
+import GroupPolicySettings from './GroupPolicySettings.vue'
+import './group-panel.css'
+import { useGroupPanelFocus } from '../core/group-panel-focus'
 
 const ctx = inject<any>('ctx')
 const g = ctx.group
@@ -20,40 +23,32 @@ const chat = ctx.chat
 const auth = ctx.auth
 
 const isOpen = computed(() => g.state.panelOpen)
+const settingsDialog = ref<HTMLElement | null>(null)
+useGroupPanelFocus(settingsDialog, () => isOpen.value, () => g.close(), false)
 const cur = computed(() => chat.state.current)
 const isGroup = computed(() => cur.value?.type === 2)
 const info = computed(() => g.state.info)
 const members = computed(() => (g.state.members || []).slice(0, 14))
+const settingsTab = ref('personal')
+const settingsTabs = computed(() => [
+  { id:'personal',name:'个人偏好' }, { id:'notifications',name:'消息通知' },
+  ...(isGroup.value && g.roleOf(String(auth.state.user?.id || '')) ? [{ id:'management',name:'群管理' }] : []),
+  { id:'more',name:'更多' },
+])
+watch(() => cur.value?.id, () => { settingsTab.value = 'personal'; qrView.value = null; invOpen.value = false; cardOpen.value = false; closeMM() })
 
 /* 我的本群昵称 / 群聊备注 */
 const nick = ref('')
 const remark = ref('')
 const busy = ref(false)
-
-/* 群消息设置（消息类型限制，/v1/group/msg-type-limit） */
-const MSG_TYPES = [
-  { v: 1, n: '文本' }, { v: 2, n: '图片' }, { v: 3, n: 'Markdown' },
-  { v: 4, n: '文件' }, { v: 7, n: '表情' }, { v: 10, n: '视频' }, { v: 11, n: '语音' },
-]
-const limit = ref<number[]>([])
-watch([isOpen, info], () => {
-  const raw = String(info.value?.limitedMsgType || '')
-  limit.value = raw ? raw.split(',').map(Number).filter(Boolean) : []
+let nickVersion = 0
+watch(() => cur.value?.id, () => { nickVersion++; busy.value = false }, { flush:'sync' })
+let nickSource = ''
+watch(() => info.value?.myGroupNickname, value => {
+  if (nick.value === nickSource) nick.value = value || ''
+  nickSource = value || ''
 })
-function toggleLimit(v: number) {
-  const i = limit.value.indexOf(v)
-  if (i >= 0) limit.value.splice(i, 1)
-  else limit.value.push(v)
-}
-async function saveLimit() {
-  if (busy.value || !cur.value) return
-  busy.value = true
-  try {
-    await ctx.api.setMsgTypeLimit(cur.value.id, limit.value.join(','))
-    ctx.ui?.toast?.('群消息设置已保存', 'success')
-  } catch (e: any) { ctx.ui?.toast?.('保存失败：' + e.message, 'error') }
-  finally { busy.value = false }
-}
+
 watch([isOpen, cur], async () => {
   if (!isOpen.value || !cur.value) return
   nick.value = info.value?.myGroupNickname || ''
@@ -63,12 +58,17 @@ watch([isOpen, cur], async () => {
 
 async function saveNick() {
   if (busy.value || !cur.value) return
+  const gid = cur.value.id, value = nick.value
+  const version = ++nickVersion
   busy.value = true
   try {
-    await ctx.api.setMyGroupNickname(cur.value.id, nick.value)
+    await ctx.api.setMyGroupNickname(gid, value)
+    if (cur.value?.id !== gid || version !== nickVersion) return
+    nickSource = value
+    if (info.value) info.value.myGroupNickname = value
     ctx.ui?.toast?.('昵称已保存', 'success')
   } catch (e: any) { ctx.ui?.toast?.('保存失败：' + e.message, 'error') }
-  finally { busy.value = false }
+  finally { if (version === nickVersion) busy.value = false }
 }
 function saveRemark() {
   if (!cur.value) return
@@ -84,10 +84,7 @@ const muted = computed(() => !!cur.value && chat.isMuted(cur.value.id))
 function togglePin() { if (cur.value) chat.togglePin(cur.value.id) }
 async function toggleMute() {
   if (!cur.value) return
-  const next = !muted.value
-  chat.toggleMute(cur.value.id)
-  // 云端同步（失败不阻塞本地）
-  try { await ctx.api?.noNotify?.(cur.value.id, next) } catch { /* 本地已生效 */ }
+  await chat.toggleMute(cur.value.id)
 }
 
 /* 群看板（/v1/bot/board 内容）：默认 3 行，超长给展开提示 */
@@ -102,7 +99,7 @@ const boardLong = computed(() => (g.state.board?.content || '').length > 90)
 const isOwner = computed(() => {
   const me = ctx.auth?.state?.user?.id
   const info = g.state.info
-  return !!me && (info?.owner === me || info?.createBy === me)
+  return !!me && String(info?.owner || info?.createBy || '') === String(me)
 })
 
 /* 群消息设置下拉：0 提醒 / 1 不提醒 / 2 屏蔽（映射到免打扰 + 本地隐藏） */
@@ -200,18 +197,16 @@ function cardHtml(): string {
   const av = info.value?.avatar
     ? (/^https?:/.test(info.value.avatar) ? info.value.avatar : `https://chat-img.jwznb.com/${String(info.value.avatar).replace(/^\/+/, '')}`)
     : ''
-  // 官方群卡片样板（用户 2026-10-24 提供真实 HTML 逐字对照）：
-  //   yunhu://chat-add 深链 a > table > 44px 圆角方头像 td + 群名(15px/600) + 「点击查看会话信息」(12px/0.65)
-  //   data-yh-id/type 是深链双保险：万一渲染管线剥掉 href，点击委托仍能凭 data 属性弹确认框
+  // 保留官方客户端可识别的群聊深链，头像和文案与板块分享对齐。
   return '<a href="yunhu://chat-add?id=' + encodeURIComponent(c.id) + '&type=group" data-yh-id="' + esc(c.id) + '" data-yh-type="group" style="display:block;text-decoration:none;color:inherit;-webkit-tap-highlight-color:transparent;border:none;outline:none;">'
     + '<table cellpadding="0" cellspacing="0" border="0" style="max-width:280px;border-collapse:collapse;border:none;"><tr>'
     + (av
-      ? '<td style="width:44px;padding:0;vertical-align:middle;border:none;"><div style="width:44px;height:44px;border-radius:10px;overflow:hidden;border:none;outline:none;">'
-        + '<img src="' + esc(av) + '" width="44" height="44" style="display:block;width:44px;height:44px;min-width:44px;min-height:44px;max-width:44px;max-height:44px;border-radius:10px;object-fit:cover;border:0;outline:none;padding:0;margin:0;" alt=""></div></td>'
+      ? '<td style="width:36px;padding:0;vertical-align:middle;border:none;">'
+        + '<img src="' + esc(av) + '" width="36" height="36" style="display:block;width:36px;height:36px;border-radius:5px;object-fit:cover;border:0;" alt=""></td>'
       : '')
     + '<td style="padding:0 0 0 10px;vertical-align:middle;border:none;">'
     + '<div style="font-size:15px;font-weight:600;line-height:20px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + esc(c.name) + '</div>'
-    + '<div style="font-size:12px;line-height:16px;margin-top:2px;opacity:0.65;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">点击查看会话信息</div>'
+    + '<div style="font-size:12px;line-height:16px;margin-top:2px;opacity:0.65;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">邀请加入该群聊</div>'
     + '</td></tr></table></a>'
 }
 async function sendCard() {
@@ -316,13 +311,16 @@ function openMemberMenu(m: any, e: MouseEvent) {
   mm.value = { open: true, x: Math.min(e.clientX, window.innerWidth - 170), y: Math.min(e.clientY, window.innerHeight - 240), m }
 }
 function closeMM() { mm.value.open = false }
+const dismissMemberMenu = () => closeMM()
+let memberMenuTimer: ReturnType<typeof setTimeout>
 watch(() => mm.value.open, (v) => {
-  const off = () => closeMM()
-  if (v) setTimeout(() => document.addEventListener('click', off), 0)
-  else document.removeEventListener('click', off)
+  clearTimeout(memberMenuTimer)
+  if (v) memberMenuTimer = setTimeout(() => document.addEventListener('click', dismissMemberMenu), 0)
+  else document.removeEventListener('click', dismissMemberMenu)
 })
+onUnmounted(() => { clearTimeout(memberMenuTimer); document.removeEventListener('click', dismissMemberMenu) })
 function mmSend() { const m = mm.value.m; closeMM(); if (m) chat.open({ id: m.id, type: 1, name: m.name, avatar: m.avatar }) }
-function mmAt() { const m = mm.value.m; closeMM(); if (m) ctx.emit('composer/append', `@${m.name} `) }
+function mmAt() { const m = mm.value.m; closeMM(); if (m) ctx.emit('composer/mention', { id: m.id, name: m.name }) }
 function mmProfile() { const m = mm.value.m; closeMM(); if (m) g.openProfile(m) }
 /** 宫格成员点击 = 查看资料（与右键菜单同义，QQ 式） */
 function mmProfile2(m: any) { g.openProfile(m) }
@@ -361,135 +359,39 @@ onMounted(() => { if (isOpen.value && isGroup.value) g.loadMembers() })
 
 <template>
   <!-- QQ 式右侧固定面板：不遮罩、不弹窗，直接贴右展开 -->
-  <aside v-if="isOpen" class="gp">
+  <Transition name="group-settings-slide">
+  <aside v-if="isOpen" ref="settingsDialog" tabindex="-1" class="gp" aria-label="会话设置面板" @keydown.esc="g.close()">
     <header>
       <b>{{ isGroup ? '群聊设置' : '会话设置' }}</b>
       <span class="grow"></span>
       <button class="gp-x" title="收起" @click="g.close()">×</button>
     </header>
 
-    <div class="gp-body">
-      <!-- ============ 群聊 ============ -->
-      <template v-if="isGroup">
-        <!-- 群卡片 -->
-        <div class="gp-card">
-          <img :src="info?.avatar ? resUrl(info.avatar) : fallbackAvatar(cur?.name)" alt=""
-               @error="(e: any) => (e.target.src = fallbackAvatar(cur?.name))" />
-          <div class="gp-card-main">
-            <b>{{ info?.name || cur?.name }}</b>
-            <span class="dim small">{{ info?.headcount || '—' }} 人 · {{ cur?.id }}</span>
-          </div>
-          <button class="ghost small" title="复制群号与群名（分享）" @click="shareGroup">
-            <Icon name="forward" :size="13" /> 分享
-          </button>
-        </div>
-
-        <!-- 群聊成员宫格 -->
-        <div class="gp-sec">
-          <span>群聊成员</span>
-          <button class="gp-link" @click="g.setDockTab('members')">查看{{ info?.headcount || '' }}名成员 ›</button>
-        </div>
-        <div class="gp-grid">
-          <button v-for="m in members" :key="m.id" class="gp-cell" :title="m.name + (m.level >= 100 ? '（群主）' : m.level >= 2 ? '（管理员）' : '')"
-                  @click="mmProfile2(m)" @contextmenu.prevent="openMemberMenu(m, $event)">
-            <span class="gp-cell-wrap">
-              <img :src="m.avatar ? resUrl(m.avatar) : fallbackAvatar(m.name)" alt=""
-                   @error="(e: any) => (e.target.src = fallbackAvatar(m.name))" />
-              <!-- 身份角标：群主/管理员（成员数据 level 字段，dump 证实 f3=100/2） -->
-              <em v-if="m.level >= 100" class="gp-role owner">群主</em>
-              <em v-else-if="m.level >= 2" class="gp-role admin">管理</em>
-            </span>
-            <span>{{ (m.name || '').slice(0, 4) }}</span>
-          </button>
-          <button class="gp-cell add" title="邀请好友入群" @click="openInvite">
-            <Icon name="plus" :size="18" /><span>邀请</span>
-          </button>
-        </div>
-
-        <!-- 群看板（原「群公告」位改显示看板内容；群简介只在群主编辑区出现，不重复） -->
-        <div class="gp-sec"><span>群看板</span>
-          <span class="gp-link-group">
-            <button v-if="boardLong" class="gp-link" @click="boardOpen = !boardOpen">
-              {{ boardOpen ? '收起' : '展开' }}
-            </button>
-            <button v-if="boardHtml" class="gp-link" title="在完整界面查看看板" @click="g.setDockTab('board')">全屏 ›</button>
-          </span>
-        </div>
-        <div ref="boardBox" class="gp-notice rich" :class="{ open: boardOpen }"
-             v-html="boardHtml || '<span class=\'dim\'>暂无看板</span>'"></div>
-        <p class="gp-board-note dim">看板由群机器人发布，客户端不支持群主直接编辑。</p>
-
-        <!-- 我的本群昵称 -->
-        <div class="gp-sec"><span>我的本群昵称</span></div>
-        <div class="gp-row">
-          <input v-model="nick" placeholder="留空则用账号昵称" />
-          <button class="ghost small" :disabled="busy" @click="saveNick">保存</button>
-        </div>
-
-        <!-- 群聊备注（本地） -->
-        <div class="gp-sec"><span>群聊备注</span></div>
-        <div class="gp-row">
-          <input v-model="remark" placeholder="填写备注（本地）" />
-          <button class="ghost small" @click="saveRemark">保存</button>
-        </div>
-
-        <!-- 开关 -->
-        <label class="gp-switch"><span>设为置顶</span>
-          <button class="sw" :class="{ on: pinned }" @click="togglePin"><i></i></button>
-        </label>
-        <label class="gp-switch"><span>消息免打扰</span>
-          <button class="sw" :class="{ on: muted }" @click="toggleMute"><i></i></button>
-        </label>
-
-        <!-- 群主：消息类型限制（/v1/group/msg-type-limit） -->
-        <template v-if="isOwner">
-          <div class="gp-sec"><span>允许发送的消息类型（群主）</span></div>
-          <div class="gp-chips">
-            <button v-for="t in MSG_TYPES" :key="t.v" class="ghost small"
-                    :class="{ on: limit.includes(t.v) }" @click="toggleLimit(t.v)">{{ t.n }}</button>
-            <button class="ghost small" :disabled="busy" @click="saveLimit">保存</button>
-          </div>
+    <nav class="settings-tabs" role="tablist" aria-label="群设置分类">
+      <button v-for="tab in settingsTabs" :key="tab.id" role="tab" :aria-selected="settingsTab === tab.id" :aria-controls="'settings-'+tab.id" @click="settingsTab = tab.id">{{ tab.name }}</button>
+    </nav>
+    <div class="gp-body group-ui">
+      <div class="settings-identity"><img :src="(info?.avatar || cur?.avatar) ? resUrl(info?.avatar || cur?.avatar) : fallbackAvatar(cur?.name)" alt="" @error="(e:any) => e.target.src = fallbackAvatar(cur?.name)" /><div><b>{{ info?.name || cur?.name }}</b><span class="group-caption">{{ isGroup ? '群聊' : cur?.type === 3 ? '机器人' : '用户' }} · {{ cur?.id }}</span></div><button v-if="isGroup" class="ghost small" title="分享群聊" @click="shareGroup"><Icon name="forward" :size="15" /></button></div>
+      <div v-if="isGroup" class="settings-shortcuts"><button @click="g.setDockTab('members')"><Icon name="user" :size="16" /> 成员</button><button @click="g.setDockTab('info')"><Icon name="page" :size="16" /> 群资料</button><button @click="openInvite"><Icon name="plus" :size="16" /> 邀请</button></div>
+      <Transition name="group-content" mode="out-in">
+      <section :key="settingsTab" :id="'settings-'+settingsTab" role="tabpanel" class="settings-content">
+        <template v-if="settingsTab === 'personal'">
+          <section v-if="isGroup" class="group-card"><div class="group-section-head"><h3>我在本群的资料</h3></div><form @submit.prevent="saveNick"><label class="group-field">我的本群昵称<input v-model="nick" aria-label="我的本群昵称" placeholder="留空则使用账号昵称" :disabled="busy" /></label><div class="group-actions"><button class="group-primary" :disabled="busy">{{ busy ? '保存中…' : '保存昵称' }}</button></div></form></section>
+          <section v-if="isGroup" class="group-card"><h3>群聊备注</h3><p class="group-caption setting-note">只在本机显示，便于辨认群聊。</p><form @submit.prevent="saveRemark"><label class="group-field"><input v-model="remark" aria-label="群聊备注" placeholder="填写本地备注" /></label><div class="group-actions"><button class="ghost small">保存备注</button></div></form></section>
+          <section class="group-card"><div class="group-setting-row"><div><b id="setting-pin">设为置顶</b><p class="group-caption">将会话保留在列表的置顶区域。</p></div><button class="group-switch" role="switch" :aria-checked="pinned" aria-labelledby="setting-pin" @click="togglePin"><i /></button></div></section>
+          <div v-if="!isGroup" class="group-card"><div class="group-actions"><button class="ghost small" @click="g.openProfile(cur)">查看资料</button><button class="ghost small" @click="ctx.social?.apply?.(cur.id, 1, '')">添加好友</button><button v-if="isFriend" class="ghost small danger" @click="delFriend">删除好友</button></div></div>
         </template>
-
-        <!-- 群消息设置（QQ 截图同款下拉：接收并提醒/接收但不提醒/屏蔽） -->
-        <div class="gp-sec"><span>群消息设置</span></div>
-        <select class="gp-select" :value="notifyMode" @change="setNotifyMode(Number(($event.target as any).value))">
-          <option :value="0">接收消息并提醒</option>
-          <option :value="1">接收消息但不提醒</option>
-          <option :value="2">屏蔽群消息</option>
-        </select>
-
-        <!-- 删除聊天记录：云端无删记录端点，此处清本地缓存（消息 state + 会话快照），隐私向实质功能 -->
-        <button class="gp-clear" @click="clearLocalHistory">删除聊天记录（本地缓存）</button>
-        <!-- 退出群聊：官方 /v1/friend/delete-friend chatType=2；群主禁用（需先转让/解散） -->
-        <button class="gp-clear" :disabled="isOwner" @click="leaveGroup">
-          {{ isOwner ? '群主不能退群（需先转让/解散）' : '退出群聊' }}
-        </button>
-
-      </template>
-
-      <!-- ============ 私聊 ============ -->
-      <template v-else>
-        <div class="gp-card">
-          <img :src="cur?.avatar ? resUrl(cur.avatar) : fallbackAvatar(cur?.name)" alt=""
-               @error="(e: any) => (e.target.src = fallbackAvatar(cur?.name))" />
-          <div class="gp-card-main">
-            <b>{{ cur?.name }}</b>
-            <span class="dim small">{{ cur?.type === 3 ? '机器人' : '用户' }} · {{ cur?.id }}</span>
-          </div>
-        </div>
-        <label class="gp-switch"><span>设为置顶</span>
-          <button class="sw" :class="{ on: pinned }" @click="togglePin"><i></i></button>
-        </label>
-        <label class="gp-switch"><span>消息免打扰</span>
-          <button class="sw" :class="{ on: muted }" @click="toggleMute"><i></i></button>
-        </label>
-        <div class="gp-row mt">
-          <button class="ghost small" @click="g.openProfile(cur)">查看资料</button>
-          <button class="ghost small" @click="ctx.social?.apply?.(cur.id, 1, '')">添加好友</button>
-          <button v-if="isFriend" class="ghost small danger" @click="delFriend">删除好友</button>
-        </div>
-      </template>
+        <template v-else-if="settingsTab === 'notifications'">
+          <section class="group-card"><div class="group-section-head"><h3>消息通知</h3></div><div class="group-setting-row"><div><b id="setting-mute">消息免打扰</b><p class="group-caption">继续接收消息，不弹出通知提醒。</p></div><button class="group-switch" role="switch" :aria-checked="muted" aria-labelledby="setting-mute" @click="toggleMute"><i /></button></div><label v-if="isGroup" class="group-field setting-note">消息接收方式<select class="gp-select" :value="notifyMode" @change="setNotifyMode(Number(($event.target as HTMLSelectElement).value))"><option :value="0">接收消息并提醒</option><option :value="1">接收消息但不提醒</option><option :value="2">屏蔽群消息（本地隐藏会话）</option></select></label></section>
+        </template>
+        <GroupPolicySettings v-else-if="settingsTab === 'management'" />
+        <template v-else>
+          <section v-if="isGroup" class="group-card"><div class="group-section-head"><h3>群聊成员</h3><button class="gp-link" @click="g.setDockTab('members')">查看全部 {{ info?.headcount || '' }} 人</button></div><div class="gp-grid"><button v-for="m in members" :key="m.id" class="gp-cell" :title="m.name" @click="mmProfile2(m)" @contextmenu.prevent="openMemberMenu(m,$event)"><span class="gp-cell-wrap"><img :src="m.avatar ? resUrl(m.avatar) : fallbackAvatar(m.name)" alt="" @error="(e:any) => e.target.src = fallbackAvatar(m.name)" /><em v-if="m.level >= 100" class="gp-role owner">群主</em><em v-else-if="m.level >= 2" class="gp-role admin">管理</em></span><span>{{ m.name }}</span></button><button class="gp-cell add" @click="openInvite"><Icon name="plus" :size="18" /><span>邀请</span></button></div></section>
+          <section v-if="isGroup" class="group-card"><div class="group-section-head"><h3>群看板</h3><div><button v-if="boardLong" class="gp-link" @click="boardOpen = !boardOpen">{{ boardOpen ? '收起' : '展开' }}</button><button v-if="boardHtml" class="gp-link" @click="g.setDockTab('board')">完整查看</button></div></div><div ref="boardBox" class="gp-notice rich" :class="{ open: boardOpen }" v-html="boardHtml || '<span class=dim>暂无看板</span>'" /></section>
+          <section class="group-card settings-danger"><h3>会话操作</h3><button class="settings-danger-action" @click="clearLocalHistory">清除本地聊天缓存 <Icon name="chevronRight" :size="14" /></button><p class="group-caption">仅清除本机缓存，云端聊天记录仍保留。</p><button v-if="isGroup" class="settings-danger-action" :disabled="isOwner" @click="leaveGroup">{{ isOwner ? '群主需先转让或解散群聊' : '退出群聊' }}<Icon name="chevronRight" :size="14" /></button></section>
+        </template>
+      </section>
+      </Transition>
     </div>
 
     <!-- 成员右键菜单（QQ 式，只含有后端的项） -->
@@ -576,24 +478,36 @@ onMounted(() => { if (isOpen.value && isGroup.value) g.loadMembers() })
         <button class="mm-item" @click="mmAt"><Icon name="quote" :size="14" /> @ TA</button>
         <button class="mm-item" @click="mmProfile"><Icon name="user" :size="14" /> 查看资料</button>
         <button class="mm-item" @click="mmFriend"><Icon name="contacts" :size="14" /> 添加好友</button>
-        <button v-if="isGroup" class="mm-item" @click="mmGag"><Icon name="bellOff" :size="14" /> {{ mm.m?.isGag ? '解除禁言' : '禁言 1 小时' }}</button>
+        <button v-if="isGroup && g.roleOf(String(auth.state.user?.id || ''))" class="mm-item" @click="mmGag"><Icon name="bellOff" :size="14" /> {{ mm.m?.isGag ? '解除禁言' : '禁言 1 小时' }}</button>
       </div>
     </Teleport>
   </aside>
+  </Transition>
 </template>
 
 <style scoped>
+.gp.group-settings-slide-enter-active, .gp.group-settings-slide-leave-active { transition: transform 220ms cubic-bezier(.23,1,.32,1), opacity 180ms ease-out; }
+.gp.group-settings-slide-enter-from, .gp.group-settings-slide-leave-to { transform: translateX(24px); opacity: 0; }
+.gp.group-settings-slide-leave-active { pointer-events: none; interactivity: inert; }
 /* 右侧固定面板：贴右、全高、不遮罩（QQ 式）。宽度用固定 px，避免 vw 在异常视口退化 */
 .gp {
-  position: fixed; right: 0; top: 0; bottom: 28px; width: 340px;
+  position: fixed; right: 0; top: 0; bottom: 28px; width: min(420px, 100vw);
   z-index: 66; background: var(--card); border-left: 1px solid var(--line);
   display: flex; flex-direction: column; box-shadow: -8px 0 30px rgba(0, 0, 0, .25);
 }
 @media (max-width: 900px) { .gp { width: 86vw; } }
-.gp > header { display: flex; align-items: center; gap: 8px; padding: 12px 14px; border-bottom: 1px solid var(--line); }
+.gp > header { display: flex; align-items: center; gap: 8px; padding: 20px; border-bottom: 1px solid var(--line); }
 .gp > header .grow { flex: 1; }
 .gp-x { background: transparent; color: var(--fg2); font-size: 20px; padding: 0 8px; line-height: 1; }
-.gp-body { flex: 1; overflow: auto; padding: 14px; display: flex; flex-direction: column; gap: 4px; }
+.gp-body { flex: 1; min-height: 0; overflow: auto; padding: 20px; display: flex; flex-direction: column; gap: 0; background:var(--bg); overscroll-behavior:contain; }
+.settings-tabs { display:flex; padding:8px 12px; gap:4px; border-bottom:1px solid var(--line); }
+.settings-tabs button { flex:1; min-width:0; background:transparent; color:var(--fg2); border-radius:8px; font-size:12px; padding:8px 4px; }
+.settings-tabs button[aria-selected=true] { color:var(--fg); background:var(--card2); }
+.settings-identity { display:flex; align-items:center; gap:12px; margin:2px 0 18px; }.settings-identity>img { width:48px; height:48px; border-radius:14px; object-fit:cover; background:var(--card2); }.settings-identity>div { flex:1; min-width:0; }.settings-identity b { display:block; font-size:15px; font-weight:600; overflow-wrap:anywhere; }.settings-identity span { display:block; }.settings-identity button { display:grid; place-items:center; padding:7px; }
+.settings-shortcuts { display:flex; gap:8px; margin-bottom:20px; }.settings-shortcuts button { flex:1; display:flex; align-items:center; justify-content:center; gap:6px; background:var(--card); color:var(--fg); border:1px solid var(--line); font-size:12px; padding:9px 5px; border-radius:10px; }
+.setting-note { margin:7px 0 16px !important; }.settings-content { min-width:0; }.settings-danger-action { display:flex; align-items:center; justify-content:space-between; gap:8px; width:100%; text-align:left; padding:13px 0; background:transparent; color:var(--err); font-size:13px; margin-top:6px; }.settings-danger h3 { margin-bottom:3px; }.settings-danger-action:disabled { color:var(--fg2); opacity:1; }
+@media(max-width:600px) { .gp { width:min(420px,100vw) !important; }.gp-body { padding:16px; }.gp>header { padding:16px; } }
+@media(prefers-reduced-motion:reduce) { .gp.group-settings-slide-enter-active,.gp.group-settings-slide-leave-active { transition:opacity 80ms linear; }.gp.group-settings-slide-enter-from,.gp.group-settings-slide-leave-to { transform:none; } }
 .gp-card { display: flex; gap: 10px; align-items: center; margin-bottom: 10px; }
 .gp-card img { width: 44px; height: 44px; border-radius: 10px; object-fit: cover; background: var(--card2); }
 .gp-card-main { min-width: 0; }

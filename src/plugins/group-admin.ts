@@ -3,7 +3,7 @@
  * ------------------------------------------------------------------
  * 依赖 api、chat、ui
  */
-import { reactive, watch } from 'vue'
+import { computed, reactive, watch } from 'vue'
 import type { Context } from '../core/context'
 import GroupPanel from '../components/GroupPanel.vue'
 import ProfilePanel from '../components/ProfilePanel.vue'
@@ -35,6 +35,7 @@ export const groupAdminPlugin = {
       members: [] as any[],
       membersTotal: 0,
       membersLoading: false,
+      membersError: '',
       memberKeyword: '',
       page: 1,
       /* 群信息 */
@@ -72,6 +73,8 @@ export const groupAdminPlugin = {
       scanning: false,
       boardOwner: null as any,   // 看板所属机器人
       bots: [] as any[],         // 群内全部机器人（/v1/group/bot-list）
+      botsLoading: false,
+      botsError: '',
       boardBots: [] as any[],    // **只含有看板的**机器人（从扫描结果反推，见 refreshBoardBots）
       boardBotId: '',            // 当前查看哪个机器人的看板（空=会话默认看板）
       /* 群标签 */
@@ -105,39 +108,80 @@ export const groupAdminPlugin = {
       return cur.id
     }
 
+    let groupView = 0
+    let membersRequest = 0
+    let botsRequest = 0
+    let infoRequest: Promise<any> | undefined
+    const adminIds = computed(() => new Set<string>(state.info?.admins?.map(String)))
+    const memberRoles = computed(() => new Map<string, string>(state.members.map(m => [String(m.id), m.role])))
+
+    function roleOf(userId: string): 'owner' | 'admin' | null {
+      if (!userId || !isGroup()) return null
+      const id = String(userId)
+      const owner = String(state.info?.owner || '')
+      if (id === owner) return 'owner'
+      if (adminIds.value.has(id)) return 'admin'
+      if (owner && adminIds.value.size) return null
+      // Some group-info responses omit roles. Reuse member data already loaded for this group.
+      const role = memberRoles.value.get(id)
+      if (!owner && role === '群主') return 'owner'
+      return !adminIds.value.size && role === '管理员' ? 'admin' : null
+    }
+
     async function loadMembers(append = false) {
       const gid = requireGroup(); if (!gid) return
+      if (append && state.membersLoading) return
+      const view = groupView
+      const request = ++membersRequest
+      const page = append ? state.page + 1 : 1
+      const keyword = state.memberKeyword.trim()
       state.membersLoading = true
+      state.membersError = ''
       try {
-        if (!append) state.page = 1
         const { list, total } = await api.listMembers(gid, {
-          size: 50, page: state.page, keywords: state.memberKeyword,
+          size: 50, page, keywords: keyword,
         })
-        state.members = append ? [...state.members, ...list] : list
+        if (view !== groupView || request !== membersRequest) return
+        state.page = page
+        state.members = [...new Map((append ? [...state.members, ...list] : list).map(m => [String(m.id), m])).values()]
         state.membersTotal = total
       } catch (e: any) {
-        ui.toast('成员列表加载失败：' + e.message, 'error')
-      } finally { state.membersLoading = false }
+        if (view === groupView && request === membersRequest) state.membersError = e.message || '加载失败，请重试'
+      } finally { if (view === groupView && request === membersRequest) state.membersLoading = false }
     }
 
     async function loadMoreMembers() {
-      state.page += 1
       await loadMembers(true)
     }
 
-    async function loadInfo() {
+    async function loadInfo(silent = false) {
       const gid = requireGroup(); if (!gid) return
+      const view = groupView
       state.infoLoading = true
-      try { state.info = await api.groupInfo(gid) }
-      catch (e: any) { ui.toast('群信息加载失败：' + e.message, 'error') }
-      finally { state.infoLoading = false }
+      const request = infoRequest ??= Promise.resolve().then(() => api.groupInfo(gid, silent ? { timeout: 8000 } : undefined))
+      try {
+        const info = await request
+        if (infoRequest === request && (!info.id || String(info.id) === String(gid))) state.info = info
+      } catch (e: any) {
+        if (!silent && view === groupView) ui.toast('群信息加载失败：' + e.message, 'error')
+      } finally {
+        if (infoRequest === request) {
+          infoRequest = undefined
+          state.infoLoading = false
+        }
+      }
     }
 
     /** 群内机器人列表：每个机器人可以对应一个看板 */
     async function loadBots() {
       const cur = chat.state.current
       if (!cur || cur.type !== 2) { state.bots = []; return }
-      try { state.bots = await api.listBots(cur.id) } catch { state.bots = [] }
+      const view = groupView
+      const request = ++botsRequest
+      state.botsLoading = true; state.botsError = ''
+      try { const bots = await api.listBots(cur.id); if (view === groupView && request === botsRequest) state.bots = bots }
+      catch (e: any) { if (view === groupView && request === botsRequest) state.botsError = e.message || '机器人列表加载失败' }
+      finally { if (view === groupView && request === botsRequest) state.botsLoading = false }
     }
 
     /**
@@ -188,22 +232,29 @@ export const groupAdminPlugin = {
 
     async function kick(m: any) {
       const gid = requireGroup(); if (!gid) return
+      const view = groupView
       if (!(await ui.confirm('踢出成员', `确定把「${m.name}」踢出本群？`, { danger: true }))) return
+      if (view !== groupView) return false
       try {
         await api.kickMember(gid, m.id)
+        if (view !== groupView) return false
         ui.toast(`已踢出 ${m.name}`, 'success')
         state.members = state.members.filter((x: any) => x.id !== m.id)
         state.membersTotal = Math.max(0, state.membersTotal - 1)
+        return true
       } catch (e: any) { ui.toast('踢出失败：' + e.message, 'error') }
     }
 
     async function gag(m: any, seconds: number) {
       const gid = requireGroup(); if (!gid) return
+      const view = groupView
       try {
         await api.gagMember(gid, m.id, seconds)
+        if (view !== groupView) return false
         ui.toast(seconds === 0 ? `已解除 ${m.name} 的禁言` : `已禁言 ${m.name}（${GAG_OPTIONS.find(o => o.value === seconds)?.label}）`, 'success')
         m.isGag = seconds !== 0
         m.gagTs = seconds > 0 ? Date.now() + seconds * 1000 : 0
+        return true
       } catch (e: any) { ui.toast('禁言失败：' + e.message, 'error') }
     }
 
@@ -223,11 +274,14 @@ export const groupAdminPlugin = {
     }
 
     /** 打开群设置抽屉（原来的 toggle('members') 入口现在指这里） */
-    function open() { state.panelOpen = true }
+    function open() {
+      state.panelOpen = true; state.dockOpen = false
+      if (isGroup()) { void loadInfo(); if (!state.members.length) void loadMembers() }
+    }
     function close() { state.panelOpen = false; state.open = false; state.tagMemberFor = null }
     function toggle() {
-      state.panelOpen = !state.panelOpen
-      if (state.panelOpen) { loadInfo(); if (!state.members.length) loadMembers() }
+      if (state.panelOpen) close()
+      else open()
     }
 
     /* ---------------- 挂载盘：页内浏览 ----------------
@@ -293,7 +347,13 @@ export const groupAdminPlugin = {
       return state.friendIds.includes(String(userId))
     }
     ctx.on('auth/login', () => { friendVersion++; state.friendIds = []; state.friendsLoaded = false; void loadFriends() })
-    ctx.on('auth/logout', () => { friendVersion++; state.friendIds = []; state.friendsLoaded = false; state.profileUser = null })
+    ctx.on('auth/logout', () => {
+      friendVersion++
+      state.friendIds = []
+      state.friendsLoaded = false
+      state.profileUser = null
+      resetGroupInfo()
+    })
 
     /* ---------------- 群文件（群网盘） ---------------- */
 
@@ -502,11 +562,23 @@ export const groupAdminPlugin = {
       } finally { state.scanning = false }
     }
 
-    /* 切换会话时重置 */
-    const stopGroupWatch = watch(() => `${chat.state.current?.type}:${chat.state.current?.id}`, () => {
+    function resetGroupInfo() {
+      groupView++
+      membersRequest++
+      botsRequest++
+      infoRequest = undefined
       state.members = []
       state.membersTotal = 0
+      state.membersLoading = false
+      state.membersError = ''; state.memberKeyword = ''; state.page = 1
+      state.bots = []; state.botsLoading = false; state.botsError = ''
       state.info = null
+      state.infoLoading = false
+    }
+
+    /* 切换会话时重置 */
+    const stopGroupWatch = watch(() => `${chat.state.current?.type}:${chat.state.current?.id}`, () => {
+      resetGroupInfo()
       state.board = null
       state.results = []
       state.searchWord = ''
@@ -514,15 +586,19 @@ export const groupAdminPlugin = {
       if (state.panelOpen) open()
       state.tags = []; state.tagsLoading = false; state.tagsEnd = false; state.tagPage = 1; state.tagSearch = ''
       state.tagMap = {}; state.tagMapGroup = ''; state.tagMapLoading = false
-      if (chat.state.current?.type === 2) loadTagMap()
+      if (isGroup()) {
+        loadTagMap()
+        if (!state.panelOpen) void loadInfo(true)
+        if (state.dockOpen && state.dockTab === 'members') { void loadMembers(); void loadBots() }
+      }
       loadFriends()
     }, { flush: 'sync', immediate: true })
-    ctx.effect(() => stopGroupWatch)
+    ctx.effect(() => () => { stopGroupWatch(); resetGroupInfo() })
 
     const group = {
       state, GAG_OPTIONS, isGroup, locateHighlight,
       open, close, toggle,
-      loadMembers, loadMoreMembers, loadInfo, loadBoard, loadBots, kick, gag, doSearch, scanAllBoards,
+      loadMembers, loadMoreMembers, loadInfo, roleOf, loadBoard, loadBots, kick, gag, doSearch, scanAllBoards,
       loadTags, loadMoreTags, searchTags, createTag, removeTag, openTagMember, saveMemberTags, loadTagMap, tagsOf,
       loadFriends, isFriend, loadDisk, openFolder, backFolder, createFolder, locateFile,
       openMount, closeMount, mountEnter, mountUp, reloadMount, loadMount,
@@ -535,9 +611,10 @@ export const groupAdminPlugin = {
       toggleBoardDock() { state.dockOpen = !state.dockOpen; if (state.dockOpen && !state.board) { loadBots(); loadBoard() } },
       setDockTab(t: 'board' | 'members' | 'tags' | 'search' | 'disk' | 'info' | 'all') {
         state.dockTab = t
+        state.panelOpen = false
         state.dockOpen = true
         if (t === 'board' && !state.board) { loadBots(); loadBoard() }
-        if (t === 'members' && !state.members.length) { loadInfo(); loadMembers() }
+        if (t === 'members') { loadInfo(); if (!state.members.length) loadMembers(); loadBots() }
         if (t === 'tags' && !state.tags.length) loadTags()
         if (t === 'tags') loadTagMap()
         if (t === 'disk') loadDisk()

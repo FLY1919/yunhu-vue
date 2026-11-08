@@ -24,9 +24,9 @@ export function notificationAvatar(src?: string): Promise<string | undefined> {
 }
 
 /** Windows 通知桥接。订阅完成才允许显示；初始化失败可在下一次测试/消息时重试。 */
-export function createNativeNotifications(activate: (id: string) => void, fail: (id: string, error: string) => void) {
+export function createNativeNotifications(activate: (id: string) => void, fail: (id: string, error: string) => void, enabled = true) {
   const tauri = (window as any).__TAURI__
-  const available = !!(tauri?.core?.invoke && tauri?.event?.listen)
+  const available = enabled && !!(tauri?.core?.invoke && tauri?.event?.listen)
   let supported = available
   let disposed = false
   let initialized = false

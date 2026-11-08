@@ -13,12 +13,15 @@ mod notifications;
 mod desktop_endpoint;
 mod userbot_security;
 mod ai_panel;
+mod community_editor;
+mod chat_window;
 mod privacy;
 
 use std::net::TcpStream;
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
-use std::sync::Mutex;
+use std::sync::{Mutex, atomic::{AtomicBool, Ordering}};
+static APP_EXITING: AtomicBool = AtomicBool::new(false);
 use std::time::{Duration, Instant};
 #[cfg(windows)]
 use std::os::windows::process::CommandExt as _;
@@ -61,7 +64,54 @@ fn sidecar_slot() -> &'static Mutex<Option<Child>> {
 }
 
 /// 资源目录全局副本：restart_sidecar 命令（错误页「重试」按钮）要用
+static DOWNLOADS_DIR: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
 static RES_DIR: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+
+/// Revert the selected device permission to WebView2's native prompt behavior.
+#[tauri::command]
+async fn reset_media_permission(window: tauri::WebviewWindow, device: String) -> Result<(), String> {
+    let origin = format!("http://127.0.0.1:{}", app_port());
+    if window.label() != "main"
+        || window.url().map_err(|e| e.to_string())?.origin().ascii_serialization() != origin
+    {
+        return Err("设备授权来源无效".into());
+    }
+    #[cfg(windows)]
+    {
+        use webview2_com::Microsoft::Web::WebView2::Win32::{
+            ICoreWebView2_13, ICoreWebView2Profile4, COREWEBVIEW2_PERMISSION_KIND_CAMERA,
+            COREWEBVIEW2_PERMISSION_KIND_MICROPHONE, COREWEBVIEW2_PERMISSION_STATE_DEFAULT,
+        };
+        use webview2_com::SetPermissionStateCompletedHandler;
+        use windows_core::{HSTRING, Interface};
+
+        let kind = match device.as_str() {
+            "camera" => COREWEBVIEW2_PERMISSION_KIND_CAMERA,
+            "microphone" => COREWEBVIEW2_PERMISSION_KIND_MICROPHONE,
+            _ => return Err("设备类型无效".into()),
+        };
+        let (sender, mut receiver) = tauri::async_runtime::channel(1);
+        window.with_webview(move |webview| unsafe {
+            let completion = sender.clone();
+            let handler = SetPermissionStateCompletedHandler::create(Box::new(move |result| {
+                let _ = completion.try_send(result.map_err(|e| e.to_string()));
+                Ok(())
+            }));
+            let result = (|| {
+                let core = webview.controller().CoreWebView2()?.cast::<ICoreWebView2_13>()?;
+                let profile = core.Profile()?.cast::<ICoreWebView2Profile4>()?;
+                profile.SetPermissionState(kind, &HSTRING::from(origin), COREWEBVIEW2_PERMISSION_STATE_DEFAULT, &handler)
+            })();
+            if let Err(error) = result { let _ = sender.try_send(Err(error.to_string())); }
+        }).map_err(|e| e.to_string())?;
+        receiver.recv().await.ok_or_else(|| "无法重置设备授权".to_string())?
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = device;
+        Err("当前系统不支持重置设备授权".into())
+    }
+}
 
 /// 仅允许网页链接，直接传参数给系统打开程序，不经过 shell 解释 URL。
 #[tauri::command]
@@ -129,6 +179,7 @@ fn kill_sidecar() {
 ///    首行额外写一条壳侧启动记录（node/bundle/YH_ROOT 实际路径），路径类崩溃可直接对账。
 fn spawn_sidecar(res: &std::path::Path) -> bool {
     let Ok(mut slot) = sidecar_slot().lock() else { return false };
+    if APP_EXITING.load(Ordering::SeqCst) { return false; }
     if let Some(child) = slot.as_mut() {
         if matches!(child.try_wait(), Ok(None)) { return true; }
     }
@@ -158,6 +209,7 @@ fn spawn_sidecar(res: &std::path::Path) -> bool {
             .arg("--optimize-for-size").arg("--max-semi-space-size=4")
             .arg(&bundle)
             .env("YH_ROOT", res)
+            .env("YH_DOWNLOADS_DIR", DOWNLOADS_DIR.get().map(|path| path.as_os_str()).unwrap_or_default())
             .env("PORT", app_port().to_string())
             .env("HOST", "127.0.0.1")
             .env("HTTPS_PORT", "0")
@@ -180,6 +232,7 @@ fn spawn_sidecar(res: &std::path::Path) -> bool {
             .arg("--optimize-for-size").arg("--max-semi-space-size=4")
             .arg(&bundle)
             .env("YH_ROOT", res)
+            .env("YH_DOWNLOADS_DIR", DOWNLOADS_DIR.get().map(|path| path.as_os_str()).unwrap_or_default())
             .env("PORT", app_port().to_string())
             .env("HOST", "127.0.0.1")
             .env("HTTPS_PORT", "0")
@@ -279,6 +332,7 @@ fn spawn_sidecar_monitor(app: AppHandle, res: PathBuf) {
         let mut respawn_fail = 0u32;
         loop {
             std::thread::sleep(Duration::from_secs(2));
+            if APP_EXITING.load(Ordering::SeqCst) { return; }
             let need_respawn = match sidecar_slot().lock() {
                 Ok(mut guard) => {
                     let st = guard.as_mut().map(|c| c.try_wait()); // 借用在此结束
@@ -323,7 +377,9 @@ fn main() {
         // 外链（消息/文章里的 http(s) 链接）交系统默认浏览器：
         // WebView2 对 target=_blank 的新窗口导航默认拦截，表现为「点网址没反应」
         .plugin(tauri_plugin_opener::init())
-        .invoke_handler(tauri::generate_handler![restart_sidecar, open_external_url, privacy::set_privacy,
+        .invoke_handler(tauri::generate_handler![restart_sidecar, open_external_url, reset_media_permission, privacy::set_privacy,
+            community_editor::open_community_editor, community_editor::close_community_editor,
+            chat_window::open_chat_window, chat_window::close_chat_windows, chat_window::close_current_chat_window,
             ai_panel::open_ai_panel, ai_panel::close_ai_panel, ai_panel::ai_panel_action,
             userbot_security::secure_read, userbot_security::secure_write, userbot_security::secure_delete,
             userbot_security::ai_bridge_token,
@@ -355,6 +411,7 @@ fn main() {
                         .unwrap_or_else(|_| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")))
                 });
             let _ = RES_DIR.set(res.clone());
+            if let Ok(downloads) = handle.path().download_dir() { let _ = DOWNLOADS_DIR.set(downloads); }
             let node = res.join("node.exe");
             let bundle = res.join("server-bundle.mjs");
             let resources_ok = node.exists() && bundle.exists();
@@ -396,6 +453,7 @@ fn main() {
                     } else {
                         "云湖牢大版（服务启动中…）"
                     };
+                    let popup_owner = inner.clone();
                     let builder = WebviewWindowBuilder::new(
                         &inner,
                         "main",
@@ -404,6 +462,34 @@ fn main() {
                     .on_navigation(|url| {
                         url.as_str() == "about:blank" || (url.scheme() == "http"
                             && url.host_str() == Some("127.0.0.1") && url.port_or_known_default() == Some(app_port()))
+                    })
+                    .on_new_window(move |url, features| {
+                        use tauri::webview::NewWindowResponse;
+                        if url.scheme() != "http" || url.host_str() != Some("127.0.0.1")
+                            || url.port_or_known_default() != Some(app_port()) || url.path() != "/call-window.html" {
+                            return NewWindowResponse::Allow;
+                        }
+                        if APP_EXITING.load(Ordering::SeqCst) || popup_owner.get_webview_window("call-float").is_some()
+                            || privacy::NOTIFICATION_GATE.lock().map_or(true, |locked| *locked) {
+                            return NewWindowResponse::Deny;
+                        }
+                        let Ok(blank) = "about:blank".parse::<Url>() else { return NewWindowResponse::Deny; };
+                        match WebviewWindowBuilder::new(&popup_owner, "call-float", WebviewUrl::External(blank))
+                            .window_features(features)
+                            .title("云湖牢大版 · 通话")
+                            .min_inner_size(340.0, 260.0)
+                            .always_on_top(true)
+                            .content_protected(privacy::capture_enabled())
+                            .on_navigation(|next| next.as_str() == "about:blank" || (next.scheme() == "http"
+                                && next.host_str() == Some("127.0.0.1") && next.port_or_known_default() == Some(app_port())
+                                && next.path() == "/call-window.html"))
+                            .build() {
+                            Ok(window) => NewWindowResponse::Create { window },
+                            Err(error) => {
+                                eprintln!("[tauri] 无法打开通话浮窗: {error}");
+                                NewWindowResponse::Deny
+                            }
+                        }
                     })
                     .title(title)
                     .zoom_hotkeys_enabled(true)
@@ -456,6 +542,7 @@ fn main() {
                 // 菜单项点击：「退出」先杀 sidecar，再退出应用
                 .on_menu_event(|app, event| match event.id().as_ref() {
                     "quit" => {
+                        APP_EXITING.store(true, Ordering::SeqCst);
                         notifications::clear();
                         kill_sidecar();
                         app.exit(0);
@@ -500,13 +587,20 @@ fn main() {
                 }
             }
             if let tauri::WindowEvent::Destroyed = event {
+                APP_EXITING.store(true, Ordering::SeqCst);
+                if let Some(panel) = window.get_webview_window("community-editor") { let _ = panel.close(); }
                 if let Some(panel) = window.get_webview_window("ai-reply") { let _ = panel.close(); }
+                if let Some(panel) = window.get_webview_window("call-float") { let _ = panel.close(); }
+                chat_window::close_all(window.app_handle());
                 notifications::clear();
                 // 主窗口关闭 = 清理 sidecar（kill_sidecar 幂等，托盘退出路径已 take 过则为空操作）
                 kill_sidecar();
             }
         })
         .run(tauri::generate_context!());
+
+    APP_EXITING.store(true, Ordering::SeqCst);
+    kill_sidecar();
 
     // 原来这里是 .expect("error while running tauri application")，
     // panic=abort 下会直接 abort。改成打印后以非零码干净退出。

@@ -24,6 +24,17 @@ document.addEventListener('click', (e) => {
 }, true)
 
 ;(async () => {
+  if (new URLSearchParams(location.search).has('chat-window')) {
+    const { startDetachedChat } = await import('./core/start-detached-chat')
+    await startDetachedChat(location.hash.slice(1))
+    return
+  }
+  const editorId = new URLSearchParams(location.search).get('community-editor')
+  if (editorId) {
+    const { default: FloatingCommunityEditor } = await import('./components/FloatingCommunityEditor.vue')
+    createApp(FloatingCommunityEditor, { sessionId: editorId }).mount('#app')
+    return
+  }
   const sessionId = new URLSearchParams(location.search).get('ai-panel')
   if (sessionId) {
     // A detached view never bootstraps auth, WebSocket, user Bots or the account vault.
@@ -31,13 +42,14 @@ document.addEventListener('click', (e) => {
     createApp(FloatingAiPanel, { sessionId }).mount('#app')
     return
   }
-  const [{ default: App }, { ctx, bootstrap }, { installAiPanelHost }] = await Promise.all([import('./App.vue'), import('./app'), import('./core/ai-panel')])
+  const [{ default: App }, { ctx, bootstrap }, { installAiPanelHost }, { installChatWindowHost }] = await Promise.all([import('./App.vue'), import('./app'), import('./core/ai-panel'), import('./core/chat-window')])
   const app = createApp(App)
   app.provide('ctx', ctx)
   app.config.errorHandler = (err: any) => ctx.logger?.error('vue error:', err?.message || String(err))
   try {
     await bootstrap()
     installAiPanelHost(ctx)
+    installChatWindowHost(ctx)
   } catch (e: any) {
     console.error('[bootstrap]', e)
     showCrash(e)

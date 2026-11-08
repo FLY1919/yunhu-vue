@@ -14,7 +14,7 @@ watch(() => ctx.chat?.state.current, () => { drawer.value = false })
 <template>
   <div class="chat-page" :class="{ 'drawer-open': drawer, 'gp-open': ctx?.group?.state?.panelOpen }">
     <aside class="chat-side">
-      <Sidebar />
+      <Sidebar @open="drawer = false" />
     </aside>
     <!-- 聊天背景：charbg 插件按「会话专属 > 全局」给背景图 -->
     <div class="chat-main" :style="ctx?.charbg?.bgStyleOf?.(ctx?.chat?.state?.current?.id)">

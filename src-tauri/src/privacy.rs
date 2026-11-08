@@ -9,11 +9,11 @@ pub fn set_privacy(app: AppHandle, window: WebviewWindow, locked: bool, capture:
     if window.label() != "main" { return Err("安全设置来源无效".into()); }
     let mut gate = NOTIFICATION_GATE.lock().map_err(|_| "通知锁定状态不可用")?;
     *gate = locked;
-    if locked { crate::notifications::clear(); }
+    if locked { crate::notifications::clear(); crate::chat_window::close_all(&app); }
     CAPTURE.store(capture, Ordering::SeqCst);
     for (_, win) in app.webview_windows() {
         win.set_content_protected(capture).map_err(|e| e.to_string())?;
-        if locked && win.label() == "ai-reply" { let _ = win.hide(); }
+        if locked && (win.label() == "ai-reply" || win.label() == "community-editor") { let _ = win.hide(); }
     }
     Ok(())
 }

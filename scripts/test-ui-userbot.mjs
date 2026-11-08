@@ -80,7 +80,7 @@ try {
   await page.getByText('这是一条测试草稿', { exact: true }).waitFor()
   await page.getByRole('button', { name: '填入输入框', exact: true }).click()
   assert.match(await page.locator('.composer textarea').inputValue(), /这是一条测试草稿/)
-  assert.equal(await page.getByRole('button', { name: 'Markdown', exact: true }).evaluate(e => e.classList.contains('on')), true)
+  assert.match(await page.getByRole('button',{name:'消息格式'}).textContent(), /Markdown/i)
   assert.equal(requests.length, 1); assert.equal(requests[0].payload.model, 'mock-model')
   assert.match(requests[0].payload.messages[0].content, /阿澈/)
   assert.deepEqual(errors, [])
@@ -183,7 +183,12 @@ try {
   assert.deepEqual(await page.evaluate(() => window.__qa.actionCalls[0]), ['normal', 'other', 600])
   await page.waitForFunction(() => !window.__qa.ctx.userbot.state.busy['2:normal'])
   await approval.uncheck()
-  await page.evaluate(() => window.__qa.proposeManagement('review-off'))
+  assert.equal(await page.evaluate(() => {
+    const ub = window.__qa.ctx.userbot
+    ub.state.config.conversations['2:normal'].mergeSeconds = 3
+    window.__qa.proposeManagement('review-off')
+    return ub.state.busy['2:normal'] && !ub.state.queued['2:normal']
+  }), true)
   await resolveManagement()
   await page.waitForFunction(() => window.__qa.actionCalls.length === 2)
   assert.equal(await modal.count(), 0)
@@ -192,7 +197,7 @@ try {
   await page.getByRole('button', { name: '检查本群管理权限', exact: true }).click()
   await page.getByText('本群管理权限：管理员', { exact: true }).waitFor()
   assert.deepEqual(errors, [])
-  console.log('PASS: searchable per-Bot action permissions, default confirmation, concrete review dialog, cancel/approve and explicit review opt-out')
+  console.log('PASS: searchable per-Bot action permissions, cancel/approve, and immediate start when review is disabled despite a 3s merge setting')
   // One-off directions are separate from the actual chat input and persistent prompts.
   holdResponses = false
   await page.evaluate(() => {
@@ -201,7 +206,8 @@ try {
     ctx.console.goto('/')
   })
   await page.getByRole('button', { name: '用户 Bot / AI', exact: true }).click()
-  await page.getByLabel('AI 工作模式').selectOption('conversation')
+  await page.getByRole('button',{name:'AI 工作模式'}).click()
+  await page.getByRole('option',{name:'对话模式',exact:true}).click()
   await page.getByRole('button', { name: '快捷指令', exact: true }).click()
   const quick = page.getByRole('dialog', { name: 'AI 快捷指令' })
   await quick.getByRole('button', { name: '简短一点', exact: true }).click()

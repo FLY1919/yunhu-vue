@@ -23,6 +23,7 @@ await build({
     export { fixResourceUrls } from './src/core/res.ts';
     export { openExternalUrl } from './src/core/links.ts';
     export { rankSearchResults } from './src/core/search.ts';
+    export { formatFileSize } from './src/core/util.ts';
     export { groupTagStyle, messageGroupTags } from './src/core/group-tag.ts';
     export { groupAdminPlugin } from './src/plugins/group-admin.ts';
     export { decodePush } from './src/plugins/ws.ts';
@@ -44,7 +45,18 @@ await build({
     })
   } }],
 })
-const { chatPlugin, apiPlugin, pb, uiPlugin, themePlugin, PRESETS, themePalette, contrast, messagePreview, messageQuote, linkify, fixResourceUrls, openExternalUrl, rankSearchResults, groupTagStyle, messageGroupTags, groupAdminPlugin, decodePush, renderElements, parseElements, createRecallCache, Sidebar, Composer, StickerPanel, ChatView } = await import(pathToFileURL(bundle))
+const { chatPlugin, apiPlugin, pb, uiPlugin, themePlugin, PRESETS, themePalette, contrast, messagePreview, messageQuote, linkify, fixResourceUrls, openExternalUrl, rankSearchResults, groupTagStyle, messageGroupTags, groupAdminPlugin, decodePush, renderElements, parseElements, createRecallCache, formatFileSize, Sidebar, Composer, StickerPanel, ChatView } = await import(pathToFileURL(bundle))
+
+test('file size labels scale from bytes to terabytes and keep the correct boundary unit', () => {
+  assert.equal(formatFileSize(1023), '1023 B')
+  assert.equal(formatFileSize('1024'), '1 KB')
+  assert.equal(formatFileSize(1024 ** 2 - 1), '1023.99 KB')
+  assert.equal(formatFileSize(1.5 * 1024 ** 2), '1.5 MB')
+  assert.equal(formatFileSize(1024 ** 3), '1 GB')
+  assert.equal(formatFileSize(1024 ** 4), '1 TB')
+  assert.equal(formatFileSize(''), '')
+  assert.equal(formatFileSize(-1), '')
+})
 
 class MemoryStorage {
   data = new Map()
@@ -199,9 +211,8 @@ try {
     } finally { globalThis.fetch = previousFetch }
   })
   await test('located messages keep their highlight on target clicks, clear on outside click/Escape, and release listeners', async () => {
-    const h = harness(), previousElement = globalThis.Element, previousCSS = globalThis.CSS
+    const h = harness(), previousElement = globalThis.Element
     globalThis.Element = class { closest() { return this.located ? this : null } }
-    globalThis.CSS = { escape: value => value }
     const app = renderer.createApp({ ...ChatView, render: () => null })
     app.provide('ctx', h.ctx)
     app.mount({})
@@ -212,7 +223,7 @@ try {
     try {
       await h.chat.open(channel('a'))
       h.chat.state.messages = [message('target')]
-      p.box = { querySelector: () => row }
+      p.vHistoryRow.mounted({ firstElementChild: row, scrollIntoView() {} }, { value: 'target' })
       h.chat.state.locateId = 'target'; await turn()
       assert.equal(classes.has('flash'), true)
       p.dismissLocate({ target })
@@ -230,12 +241,13 @@ try {
       assert.equal(h.chat.state.locateId, 'after-unmount')
     } finally {
       if (!app._instance?.isUnmounted) app.unmount()
-      h.dispose(); globalThis.Element = previousElement; globalThis.CSS = previousCSS
+      h.dispose(); globalThis.Element = previousElement
     }
   })
   await test('text and media replies use SendMsgRequest field 8; received history still reads field 9', async () => {
     const previousFetch = globalThis.fetch, sent = [], ctx = { set(key, value) { this[key] = value } }
     apiPlugin.apply(ctx, { base: '/api' })
+    ctx.api.verifyUploadedImage = async () => {}; ctx.api.confirmImageMessage = async () => true
     const target = '0123456789abcdef0123456789abcdef'
     globalThis.fetch = async (url, init) => {
       if (url.endsWith('/send-message')) {
@@ -311,6 +323,60 @@ try {
       assert.equal(h.chat.filtered()[0].id, 'read-new')
     } finally { h.dispose() }
   })
+  await test('new activity can overtake the last opened conversation, duplicates and edits cannot', async () => {
+    const h = harness()
+    const event = (id, mid, ts) => ({ id:mid, channel:channel(id), user:{ id:'other', name:'Other' }, timestamp:ts, raw:message(mid,ts) })
+    try {
+      h.chat.state.conversations = ['pin','a','b','c'].map(id => ({ ...channel(id), ts:1, unread:0 }))
+      await h.chat.togglePin('pin')
+      await h.chat.open(channel('a'))
+      h.ctx.emit('message-created', event('b','b1',2))
+      assert.deepEqual(h.chat.filtered().map(c => c.id), ['pin','b','a','c'])
+      assert.deepEqual(h.chat.sections(h.chat.filtered()).active.map(c => c.id), ['b','a'])
+      await h.chat.open(channel('c'))
+      h.ctx.emit('message-created', event('b','b1',2))
+      h.ctx.emit('message-updated', event('b','b1',3))
+      assert.equal(h.chat.filtered()[1].id,'c')
+      h.chat.close()
+      assert.equal(h.chat.filtered()[1].id,'c')
+      h.ctx.emit('message-created', event('a','a1',4))
+      assert.equal(h.chat.filtered()[1].id,'a')
+    } finally { h.dispose() }
+  })
+  await test('polling advances activity once and pinned folding persists without hiding search results', async () => {
+    let rows = ['pin','a','b'].map(id => ({ ...channel(id), ts:1, unread:0, pinned:id === 'pin' }))
+    const store = new MemoryStorage(), h = harness({ conversations:async () => rows.map(c => ({ ...c })) },store)
+    try {
+      await h.chat.loadConversations(); await h.chat.open(channel('a'))
+      rows = rows.map(c => c.id === 'b' ? { ...c,ts:2,unread:1 } : c)
+      await h.chat.loadConversations()
+      assert.deepEqual(h.chat.filtered().map(c => c.id),['pin','b','a'])
+      await h.chat.open(channel('a')); await h.chat.loadConversations()
+      assert.equal(h.chat.filtered()[1].id,'a')
+      h.chat.togglePinnedCollapse(); assert.equal(h.chat.groups.pinnedCollapsed,true)
+      h.chat.state.keyword='pin'
+      assert.equal(h.chat.sections(h.chat.filtered()).ungrouped[0].id,'pin')
+      const reload = harness({},store)
+      try { assert.equal(reload.chat.groups.pinnedCollapsed,true) } finally { reload.dispose() }
+    } finally { h.dispose() }
+  })
+  await test('group edits preserve unrelated flags in protobuf and cleanup uses the documented field', async () => {
+    const previousFetch = globalThis.fetch, calls = [], ctx = { set(k,v) { this[k]=v } }
+    apiPlugin.apply(ctx, { base:'/api' })
+    ctx.api.groupInfo = async () => ({ name:'Old',introduction:'Intro',avatar:'group.png',joinFree:true,readHistory:true,isPrivate:true,hideMembers:true,category:'技术',categoryId:22 })
+    globalThis.fetch = async (url,init) => { calls.push([url,init.body]); return new Response(JSON.stringify({ code:1 })) }
+    try {
+      await ctx.api.editGroup('g',{ name:'New' })
+      const body=pb.decode(calls[0][1])
+      assert.equal(pb.str(body,2),'g'); assert.equal(pb.str(body,3),'New'); assert.equal(pb.str(body,4),'Intro')
+      for (const f of [6,7,10,11]) assert.equal(pb.num(body,f),1)
+      assert.equal(pb.num(body,9),22)
+      await ctx.api.editAutoDeleteMessage('g',365)
+      assert.deepEqual(JSON.parse(calls[1][1]),{ groupId:'g',autoDeleteMessage:365 })
+      await ctx.api.setGroupDiskUpload('g',true)
+      assert.deepEqual(JSON.parse(calls[2][1]),{ groupId:'g',stopMemberUploadGroupFile:1 })
+    } finally { globalThis.fetch=previousFetch }
+  })
   await test('the active grouped conversation is shown below pins even when its group is collapsed, with no duplication', async () => {
     const h = harness()
     try {
@@ -354,14 +420,16 @@ try {
       assert.equal(host.events.size, 2)
     } finally { h.dispose(); await host.flush(); host.restore() }
   })
-  await test('Tauri commands have generated permissions and the detached AI window cannot access account secrets', async () => {
-    const [buildRs, mainRs, notifications, links, capability, panelCapability] = await Promise.all([
+  await test('Tauri commands have generated permissions and detached windows cannot access account secrets', async () => {
+    const [buildRs, mainRs, notifications, links, capability, panelCapability, chatCapability] = await Promise.all([
       'src-tauri/build.rs', 'src-tauri/src/main.rs', 'src/core/notifications.ts', 'src/core/links.ts',
       'src-tauri/capabilities/default.json',
       'src-tauri/capabilities/ai-panel.json',
+      'src-tauri/capabilities/chat-window.json',
     ].map(path => readFile(join(root, path), 'utf8')))
     const cap = JSON.parse(capability)
     const panelCap = JSON.parse(panelCapability)
+    const chatCap = JSON.parse(chatCapability)
     const commandList = buildRs.match(/AppManifest::new\(\)\.commands\(&\[([\s\S]*?)\]/)?.[1] || ''
     const manifest = [...commandList.matchAll(/"([a-z_]+)"/g)].map(m => m[1])
     const registered = (mainRs.match(/generate_handler!\[([\s\S]*?)\]/)?.[1] || '')
@@ -371,11 +439,13 @@ try {
     assert.ok(invokes.includes('native_notifications_supported'))
     for (const command of new Set([...invokes, ...registered])) {
       assert.ok(manifest.includes(command), `missing app manifest command ${command}`)
-      const scoped = command === 'ai_panel_action' ? panelCap : cap
+      const scoped = command === 'ai_panel_action' ? panelCap : command === 'close_current_chat_window' ? chatCap : cap
       assert.ok(scoped.permissions.includes('allow-' + command.replaceAll('_', '-')), `missing capability ${command}`)
     }
     assert.deepEqual(cap.windows, ['main'])
     assert.deepEqual(cap.remote.urls, ['http://127.0.0.1:*/*'])
+    assert.deepEqual(chatCap.windows, ['chat-window-*'])
+    assert.deepEqual(chatCap.permissions, ['allow-close-current-chat-window', 'allow-open-external-url', 'opener:default'])
     assert.deepEqual(panelCap.windows, ['ai-reply'])
     assert.deepEqual(panelCap.permissions, ['core:default', 'allow-ai-panel-action'])
     assert.match(mainRs, /on_navigation/)
@@ -700,6 +770,39 @@ try {
       assert.equal(h.chat.state.loadingMsgs, false)
     } finally { h.dispose() }
   })
+  await test('rapid A/B/C/A switches cancel superseded reads and only the last selection updates the view', async () => {
+    const reads = [], history = deferred()
+    let historySignal
+    const h = harness({
+      messages: (id, type, _count, options) => {
+        const read = { id, type, signal: options.signal, ...deferred() }
+        reads.push(read)
+        return read.promise
+      },
+      messagesBefore: (_id, _type, _cursor, _count, options) => { historySignal = options.signal; return history.promise },
+    })
+    try {
+      const first = h.chat.open(channel('a'))
+      reads[0].resolve([message('a-cache')])
+      await first
+      const older = h.chat.loadMore()
+      const second = h.chat.open(channel('b'))
+      const third = h.chat.open(channel('c'))
+      const final = h.chat.open(channel('a'))
+      assert.equal(historySignal.aborted, true)
+      assert.equal(reads[1].signal.aborted, true)
+      assert.equal(reads[2].signal.aborted, true)
+      assert.equal(reads[3].signal.aborted, false)
+      assert.deepEqual(h.chat.state.messages.map(m => m.id), ['a-cache'])
+      reads[3].resolve([message('a-latest', 300)])
+      await final
+      reads[1].resolve([message('b-late')]); reads[2].resolve([message('c-late')]); history.resolve([message('a-old-history')])
+      await Promise.all([second, third, older])
+      assert.equal(h.chat.state.current.id, 'a')
+      assert.deepEqual(h.chat.state.messages.map(m => m.id), ['a-cache', 'a-latest'])
+      assert.equal(h.chat.state.loadingMsgs, false)
+    } finally { h.dispose() }
+  })
   await test('late history/search replies cannot contaminate a new conversation', async () => {
     const history = deferred(), search = deferred()
     const h = harness({ messages: async (id) => [message(id)], messagesBefore: () => history.promise, searchChat: () => search.promise })
@@ -812,16 +915,20 @@ try {
       assert.equal(sent, 0); assert.equal(h.chat.drafts.get(channel('a')).pending.length, 1)
     } finally { h.dispose() }
   })
-  await test('a caption failure retries the caption without uploading or sending the image twice', async () => {
-    const h = harness(); await h.chat.open(channel('a')); let media = 0, uploads = 0, captions = 0
+  await test('a main draft failure keeps the text without uploading or sending the image twice', async () => {
+    const h = harness(); await h.chat.open(channel('a')); let media = 0, uploads = 0, sends = 0
     h.api.uploadAndUrl = async () => { uploads++; return { url: 'image-key' } }
     h.chat.sendMedia = async () => { media++ }
-    h.chat.send = async () => { if (++captions === 1) throw new Error('network') }
+    h.chat.send = async () => { if (++sends === 1) throw new Error('network') }
     const c = mountComposer(h.ctx)
     try {
-      c.setup.stage(new File(['x'], 'a.png', { type: 'image/png' })); c.setup.pending[0].caption = 'caption'
-      await c.setup.submit(); assert.equal(media, 1); assert.equal(c.setup.pending.length, 1)
-      await c.setup.submit(); assert.equal(media, 1); assert.equal(uploads, 1); assert.equal(c.setup.pending.length, 0)
+      c.setup.stage(new File(['x'], 'a.png', { type: 'image/png' }))
+      c.setup.text = '图片说明写在聊天输入框'
+      await c.setup.submit()
+      assert.equal(media, 1); assert.equal(c.setup.pending.length, 0)
+      assert.equal(c.setup.text, '图片说明写在聊天输入框')
+      await c.setup.submit()
+      assert.equal(media, 1); assert.equal(uploads, 1); assert.equal(sends, 2); assert.equal(c.setup.text, '')
     } finally { c.unmount(); h.dispose() }
   })
   await test('send timeout is not automatically retried as another media message', async () => {
@@ -1048,6 +1155,27 @@ try {
       assert.equal(second.ctx.ui.state.toasts.length, 1)
       assert.equal(host.shown().length, 1)
     } finally { if (second) second.dispose(); else h.dispose(); await host.flush(); host.restore() }
+  })
+  await test('focused Windows Toast preference persists, while test notifications and background messages still work', async () => {
+    const host = nativeHost(), storage = new MemoryStorage(), h = harness({}, storage)
+    document.hasFocus = () => true
+    try {
+      await host.flush()
+      h.ctx.ui.setSystemToastInFocus(false)
+      assert.equal(storage.getItem('yh.notification.systemInFocus'), 'false')
+      assert.equal(h.ctx.ui.toast('foreground', 'message'), 0)
+      h.ctx.ui.testNotification()
+      await host.flush()
+      assert.equal(host.shown().length, 1)
+      const blur = new Event('yh-window-focused')
+      Object.defineProperty(blur, 'detail', { value: false })
+      window.dispatchEvent(blur)
+      h.ctx.ui.toast('background', 'message')
+      await host.flush()
+      assert.equal(host.shown().length, 2)
+      h.ctx.ui.setNotificationMode('in-app')
+      assert.ok(h.ctx.ui.toast('in-app still shows', 'message') > 0)
+    } finally { delete document.hasFocus; h.dispose(); await host.flush(); host.restore() }
   })
   await test('native errors fall back to a clickable in-app message without an unhandled rejection', async () => {
     const host = nativeHost({ show: async () => { throw new Error('Windows notifications disabled') } })
@@ -1392,6 +1520,31 @@ try {
       assert.equal(h.ctx.ui.state.toasts[0].key, 'chat:1:peer')
     } finally { h.dispose() }
   })
+  await test('distant quote retries a target-only request and uses the recovered sequence for context', async () => {
+    const calls=[]
+    const h=harness({messages:async()=>[message('latest',900)],messagesAround:async(_id,_type,mid,count,seq)=>{
+      calls.push([count,seq]);return count===1?[{...message(mid,10),seq:41}]:[message('latest',900)]
+    }})
+    try {await h.chat.open(channel('a'));await h.chat.locate(channel('a'),'distant');assert.ok(h.chat.state.messages.some(m=>m.id==='distant'));assert.equal(h.chat.state.locateId,'distant');assert.deepEqual(calls,[[30,0],[1,0],[30,41]]);assert.equal(h.chat.state.locatingId,null)} finally {h.dispose()}
+  })
+  await test('resolved quote previews retain their original message if loading its neighbors fails', async () => {
+    const h=harness({messagesAround:async(_id,_type,mid,count,seq)=>{if(count!==1)throw Error('context unavailable');return [{...message(mid,5),seq:12}]}})
+    try {await h.chat.open(channel('a'));assert.equal((await h.chat.getQuote('old')).preview,'old');await h.chat.locate(channel('a'),'old');assert.equal(h.chat.state.locateId,'old');assert.ok(h.chat.state.messages.some(m=>m.id==='old'))} finally {h.dispose()}
+  })
+  await test('distant quote history fallback advances real cursors without losing the current conversation', async () => {
+    const cursors=[]
+    const h=harness({messages:async()=>[{...message('reference',300),quoteId:'ancient'}],messagesAround:async()=>[],messagesBefore:async(_id,_type,cursor)=>{cursors.push(cursor);return cursor==='reference'?[message('middle',200)]:[message('ancient',1)]}})
+    try {await h.chat.open(channel('a'));await h.chat.locate(channel('a'),'ancient');assert.deepEqual(cursors,['reference','middle']);assert.equal(h.chat.state.current.id,'a');assert.equal(h.chat.state.locateId,'ancient');assert.ok(h.chat.state.messages.some(m=>m.id==='reference'))} finally {h.dispose()}
+  })
+  await test('pending quote navigation coalesces repeated clicks and cancellation discards late results', async () => {
+    const d=deferred();let calls=0
+    const h=harness({messagesAround:async()=>{calls++;return d.promise}})
+    try {await h.chat.open(channel('a'));const p=h.chat.locate(channel('a'),'old');assert.equal(h.chat.state.locatingId,'old');await h.chat.locate(channel('a'),'old');assert.equal(calls,1);h.chat.cancelLocate();d.resolve([message('old')]);await p;assert.equal(h.chat.state.locatingId,null);assert.equal(h.chat.state.locateId,null)} finally {h.dispose()}
+  })
+  await test('repeated history pages terminate and a missing page is never reported as deleted', async () => {
+    let calls=0;const h=harness({messages:async()=>[message('visible')],messagesAround:async()=>[],messagesBefore:async()=>{calls++;return [message('visible')]}})
+    try {await h.chat.open(channel('a'));await h.chat.locate(channel('a'),'missing');assert.equal(calls,1);assert.equal(h.chat.state.messages[0].id,'visible');assert.ok(h.ctx.ui.state.toasts.some(t=>/暂未返回/.test(t.text)));assert.ok(h.ctx.ui.state.toasts.every(t=>!/已删除/.test(t.text)))} finally {h.dispose()}
+  })
   await test('failed target lookup leaves current messages, reply and conversation intact', async () => {
     const h = harness({ messages: async () => [message('visible')], messagesAround: async () => [] })
     try {
@@ -1533,6 +1686,26 @@ try {
       assert.deepEqual(h.ctx.group.tagsOf('member').map(t => t.tag), ['b'])
       await h.chat.open(channel('private', 1))
       assert.deepEqual(h.ctx.group.tagsOf('member'), [])
+    } finally { h.dispose() }
+  })
+  await test('member searches ignore stale responses and failed pagination can retry the same page', async () => {
+    const first=deferred(), second=deferred(), requests=[]
+    const h=harness({ listTags:async()=>[],groupInfo:async()=>({ id:'g',owner:'me' }),addressBook:async()=>({ users:[] }),
+      listMembers:(_gid,p)=>{ requests.push(p.page); return requests.length === 1 ? first.promise : second.promise } })
+    groupAdminPlugin.apply(h.ctx)
+    try {
+      await h.chat.open(channel('g'))
+      h.ctx.group.state.memberKeyword='older'; const older=h.ctx.group.loadMembers()
+      h.ctx.group.state.memberKeyword='newer'; const newer=h.ctx.group.loadMembers()
+      second.resolve({ list:[{ id:'newer' }],total:3 }); await newer
+      first.resolve({ list:[{ id:'older' }],total:3 }); await older
+      assert.deepEqual(h.ctx.group.state.members.map(m=>m.id),['newer'])
+      h.api.listMembers=async(_gid,p)=>{ requests.push(p.page); throw new Error('temporary') }
+      await h.ctx.group.loadMoreMembers(); assert.equal(h.ctx.group.state.page,1)
+      h.api.listMembers=async(_gid,p)=>{ requests.push(p.page); return { list:[{ id:'newer' },{ id:'next' }],total:3 } }
+      await h.ctx.group.loadMoreMembers()
+      assert.deepEqual(requests,[1,1,2,2]); assert.equal(h.ctx.group.state.page,2)
+      assert.deepEqual(h.ctx.group.state.members.map(m=>m.id),['newer','next'])
     } finally { h.dispose() }
   })
   await test('a stale polling response cannot erase a newer live edit or blank its content', async () => {

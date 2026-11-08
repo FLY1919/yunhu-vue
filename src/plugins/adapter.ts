@@ -53,8 +53,9 @@ export const adapterPlugin = {
         async (channel: Channel, elements: Element[], options: any = {}) => {
           const { contentType, content } = Satori.render(elements)
           if (options.quoteText) content.quote_msg_text = options.quoteText
+          if (channel.type === 2 && options.mentioned_id?.length) content.mentioned_id = options.mentioned_id
           return api.send(channel.id, channel.type, contentType, content, {
-            quoteId: options.quoteId,
+            quoteId: options.quoteId, msgId: options.msgId, retry: options.retry,
           })
         },
         async (channel: Channel, msgId: string) => { await api.recall(channel.id, channel.type, msgId) },

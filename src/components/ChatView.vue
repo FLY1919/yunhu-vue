@@ -9,7 +9,7 @@
  * ⚠️ 消息菜单的定位交给 MessageMenu 自己算（优先弹在消息上方并夹回视口），
  *    这里只传锚点矩形，不要自己算 left/top，算错过一次（菜单跑到屏幕外）。
  */
-import { inject, ref, onUnmounted, nextTick, watch, computed, reactive } from 'vue'
+import { inject, ref, onUnmounted, nextTick, watch, computed, reactive, type ObjectDirective } from 'vue'
 import { CHAT_TYPE_LABEL } from '../core/util'
 import { showMessage } from '../core/recall-display'
 import MessageItem from './MessageItem.vue'
@@ -17,10 +17,12 @@ import MessageMenu from './MessageMenu.vue'
 import SelectionBar from './SelectionBar.vue'
 import Composer from './Composer.vue'
 import BoardDock from './BoardDock.vue'
+import GroupVoiceRooms from './GroupVoiceRooms.vue'
 import Icon from '../console/components/Icon.vue'
 
 const ctx = inject<any>('ctx')
 const chat = ctx.chat
+const props = defineProps<{ detached?: boolean }>()
 const box = ref<HTMLElement | null>(null)
 const emit = defineEmits<{ (e: 'toggle-sidebar'): void }>()
 
@@ -39,6 +41,82 @@ const flow = computed(() => {
   }
   return out
 })
+
+// Long histories keep light placeholders and mount message bodies around the viewport.
+const virtualHistory = computed(() => typeof IntersectionObserver === 'function' && flow.value.length > 55)
+const historyRows = new Map<string, HTMLElement>()
+const nearbyRows = reactive(new Set<string>())
+const openRows = reactive(new Set<string>())
+const playingRows = reactive(new Set<string>())
+const rowHeights = new Map<string, number>()
+let rowObserver: IntersectionObserver | undefined
+const vHistoryRow: ObjectDirective<HTMLElement, string> = {
+  mounted(el, { value: id }) {
+    historyRows.set(id, el)
+    rowObserver?.observe(el)
+  },
+  beforeUnmount(el, { value: id }) {
+    rowObserver?.unobserve(el)
+    if (historyRows.get(id) !== el) return
+    historyRows.delete(id)
+    nearbyRows.delete(id)
+    openRows.delete(id)
+    playingRows.delete(id)
+    rowHeights.delete(id)
+  },
+}
+function rememberRowHeight(id: string) {
+  const row = historyRows.get(id)
+  if (row?.firstElementChild) rowHeights.set(id, row.getBoundingClientRect().height)
+}
+function keepHistoryRow(id: string, active: boolean) {
+  if (active) openRows.add(id)
+  else if (openRows.has(id)) { rememberRowHeight(id); openRows.delete(id) }
+}
+function onPlayback(e: Event, id: string) {
+  const row = e.currentTarget as HTMLElement
+  if (Array.from(row.querySelectorAll('audio, video')).some(media => !(media as HTMLMediaElement).paused)) playingRows.add(id)
+  else if (playingRows.has(id)) { rememberRowHeight(id); playingRows.delete(id) }
+}
+function renderHistoryRow(id: string) {
+  return !virtualHistory.value || nearbyRows.has(id) || openRows.has(id)
+    || playingRows.has(id) || chat.state.locateId === id
+}
+const HISTORY_OVERSCAN = 560
+watch(virtualHistory, enabled => {
+  const viewport = box.value?.getBoundingClientRect()
+  if (!enabled || !viewport) return
+  for (const [id, row] of historyRows) {
+    const rect = row.getBoundingClientRect()
+    if (row.firstElementChild) rowHeights.set(id, rect.height)
+    if (rect.bottom >= viewport.top - HISTORY_OVERSCAN && rect.top <= viewport.bottom + HISTORY_OVERSCAN) nearbyRows.add(id)
+  }
+})
+watch([box, virtualHistory], ([element, enabled]) => {
+  rowObserver?.disconnect()
+  rowObserver = undefined
+  if (!element || !enabled) return
+  const observer = new IntersectionObserver(entries => {
+    if (rowObserver !== observer || box.value !== element) return
+    let changed = false
+    for (const entry of entries) {
+      const row = entry.target as HTMLElement
+      const id = row.dataset.historyId!
+      if (historyRows.get(id) !== row) continue
+      if (entry.isIntersecting) {
+        if (!nearbyRows.has(id)) { nearbyRows.add(id); changed = true }
+      } else if (nearbyRows.delete(id)) {
+        if (row.firstElementChild) rowHeights.set(id, entry.boundingClientRect.height)
+        changed = true
+      }
+    }
+    if (!changed) return
+    if (locateAnchor) void nextTick(alignLocatedRow)
+    else if (chat.atBottom?.() && !loadingTop && !chat.state.jumpedAway) toBottom()
+  }, { root: element, rootMargin: HISTORY_OVERSCAN + 'px 0px' })
+  rowObserver = observer
+  for (const row of historyRows.values()) observer.observe(row)
+}, { flush: 'post' })
 
 /* ---- 右键菜单状态 ---- */
 /** 右上角「⋮」菜单 */
@@ -67,17 +145,21 @@ function pick(what: 'board' | 'members' | 'tags' | 'search' | 'info' | 'disk' | 
 }
 function closeMore() { moreOpen.value = false }
 
-const menu = reactive({ open: false, x: 0, y: 0, msg: null as any, items: [] as any[], anchor: null as any })
+const menu = reactive({ open: false, x: 0, y: 0, msg: null as any, items: [] as any[], image: undefined as string | undefined, anchor: null as any })
 
 /**
  * 打开消息菜单。
  * anchor 是消息（或右键点）的矩形，交给 MessageMenu 决定弹在上方还是下方、
  * 以及怎么夹回视口里 —— 避免直接在左侧弹出被切掉。
  */
-function openMenu(p: { msg: any; x: number; y: number; anchor?: any }) {
+function openMenu(p: { msg: any; x: number; y: number; anchor?: any; avatar?: boolean; image?: string }) {
   menu.msg = p.msg; menu.x = p.x; menu.y = p.y
   menu.anchor = p.anchor || null
-  menu.items = chat.menuOf('message', { msg: p.msg })
+  menu.image = p.image
+  menu.items = chat.menuOf('message', { msg: p.msg, image: p.image })
+  if (p.avatar && cur.value?.type === 2 && p.msg.senderId && !p.msg.right && p.msg.senderType !== 3) {
+    menu.items.unshift({ id: 'avatar.mention', label: '@他' })
+  }
   menu.open = true
 }
 function closeMenu() { menu.open = false }
@@ -87,7 +169,11 @@ async function pickMenu(item: any) {
   //    导致所有消息菜单动作（撤回/引用/转发/编辑/复制）全都拿着空 msg 去执行 → 全废。
   const msg = menu.msg
   closeMenu()
-  try { await chat.run(item.id, { msg, chat: chat.state.current, ids: chat.state.selected.slice() }) }
+  if (item.id === 'avatar.mention') {
+    ctx.emit('composer/mention', { id: msg.senderId, name: msg.sender })
+    return
+  }
+  try { await chat.run(item.id, { msg, image: menu.image, chat: chat.state.current, ids: chat.state.selected.slice() }) }
   catch (e: any) { ctx.ui?.toast('操作失败：' + e.message, 'error') }
 }
 
@@ -95,27 +181,63 @@ async function pickMenu(item: any) {
 function jumpTo(mid: string) {
   if (cur.value && mid) chat.locate(cur.value, mid)
 }
+let locateAnchor: string | undefined
+const settlingLocate = ref(false)
+let settleTimer: ReturnType<typeof setTimeout> | undefined
+function clearLocateAnchor() {
+  clearTimeout(settleTimer)
+  locateAnchor = undefined
+  settlingLocate.value = false
+}
+let historyScrollArmed = true
+function alignLocatedRow() {
+  if (!locateAnchor || chat.state.locateId !== locateAnchor) return
+  const viewport = box.value
+  const row = historyRows.get(locateAnchor)
+  if (!viewport || !row?.firstElementChild) return
+  const rect = row.getBoundingClientRect()
+  const offset = rect.top - viewport.getBoundingClientRect().top - (viewport.clientHeight - rect.height) / 2
+  if (Math.abs(offset) >= 1) viewport.scrollTop += offset
+}
+function armHistoryScroll() {
+  clearLocateAnchor()
+  historyScrollArmed = true
+}
+function onHistoryWheel(event: WheelEvent) {
+  armHistoryScroll()
+  if (event.deltaY < 0 && box.value && box.value.scrollTop < 40) onScroll()
+}
 function seekLocated(mid: string) {
+  scrollIntent++
   clearFlash()
+  clearLocateAnchor()
+  historyScrollArmed = false
   const current = chat.state.current
   const request = ++jumpRequest
   const seek = (tries = 12) => {
     if (unmounted || request !== jumpRequest || chat.state.current !== current || chat.state.locateId !== mid) return
-    const el = box.value?.querySelector(`[data-mid="${CSS.escape(mid)}"]`) as HTMLElement | null
+    const row = historyRows.get(mid)
+    const el = row?.firstElementChild as HTMLElement | undefined
     if (el) {
-      el.scrollIntoView({ block: 'center', behavior: 'auto' })
+      locateAnchor = mid
+      settlingLocate.value = true
+      settleTimer = setTimeout(clearLocateAnchor, 450)
+      alignLocatedRow()
+      if (typeof requestAnimationFrame === 'function') requestAnimationFrame(alignLocatedRow)
       el.classList.add('flash')
       flashed = el
       flashTimer = setTimeout(clearFlash, 2000)
       return
     }
     if (tries > 0) setTimeout(() => seek(tries - 1), 80)
-    else ctx.ui?.toast?.('没能定位到这条消息（可能已删除或过旧）', 'warn')
+    else ctx.ui?.toast?.('消息已加载，但列表尚未完成定位，请再次点击引用', 'warn')
   }
   nextTick(() => seek())
 }
 
 function toBottom() {
+  if (chat.state.jumpedAway) return
+  armHistoryScroll()
   const current = chat.state.current
   // A sent message supersedes a pending history-page position restoration.
   scrollIntent++
@@ -138,35 +260,56 @@ async function backLatest() {
 }
 
 /** 滚动时上报「是否贴底」：新消息/轮询刷新只在贴底时自动滚，翻历史不被打断 */
-let loadingTop = false
+let loadingTop: { element: HTMLElement; current: any; intent: number } | undefined
 let scrollIntent = 0
-const showJump = ref(false)   // 离开底部时显示「回最新」箭头
+const showJump = ref(false)
 function onScroll() {
   const el = box.value
-  if (!el) return
-  // 打开会话时 DOM 会先显示缓存/加载占位；其滚动事件不能触发历史分页或覆盖贴底意图。
-  if (chat.state.loadingMsgs && !chat.state.jumpedAway) return
-  const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 40
-  ctx.chat?.setAtBottom?.(atBottom)
+  if (!el || (chat.state.loadingMsgs && !chat.state.jumpedAway)) return
+  const atBottom = !chat.state.jumpedAway && el.scrollHeight - el.scrollTop - el.clientHeight < 40
+  chat.setAtBottom?.(atBottom)
   showJump.value = !atBottom
-  // 历史消息自动加载：滚到顶部即拉上一页（QQ 式，不再需要点按钮），并保持阅读位置
-  if (el.scrollTop < 40 && chat.state.hasMore && !chat.state.loadingMore && !loadingTop) {
-    loadingTop = true
-    const current = chat.state.current
-    const prevH = el.scrollHeight
-    const topBefore = el.scrollTop
-    const intent = scrollIntent
-    Promise.resolve(chat.loadMore()).finally(() => {
-      nextTick(() => {
-        if (!unmounted && chat.state.current === current && box.value === el) {
-          if (intent === scrollIntent) el.scrollTop = el.scrollHeight - prevH + topBefore
-          else if (chat.atBottom?.() && !chat.state.jumpedAway) toBottom()
-        }
-        loadingTop = false
-      })
-    })
-  }
+  if (!historyScrollArmed || chat.state.locatingId || el.scrollTop >= 40 || !chat.state.hasMore || chat.state.loadingMore || loadingTop) return
+  const request = { element: el, current: chat.state.current, intent: scrollIntent }
+  loadingTop = request
+  void Promise.resolve(chat.loadMore()).finally(() => {
+    if (loadingTop !== request) return
+    loadingTop = undefined
+    if (request.intent !== scrollIntent && chat.atBottom?.() && !chat.state.jumpedAway) toBottom()
+  })
 }
+
+function firstVisibleRow(element: HTMLElement) {
+  const top = element.getBoundingClientRect().top
+  const rows = element.children
+  let low = 0, high = rows.length
+  while (low < high) {
+    const mid = Math.floor((low + high) / 2)
+    if (rows[mid].getBoundingClientRect().bottom <= top) low = mid + 1
+    else high = mid
+  }
+  return rows[low]
+}
+
+// Snapshot immediately before the prepend so scrolling during the request still works.
+watch(flow, (rows, previous) => {
+  const request = loadingTop
+  if (!request || request.current !== chat.state.current || request.intent !== scrollIntent) return
+  const first = previous[0]
+  if (!first || !rows.length) return
+  const keyOfRow = (row: typeof first) => row.t === 'div' ? row.id : row.msg.id
+  if (keyOfRow(first) === keyOfRow(rows[0])) return
+  const { element } = request
+  const anchor = firstVisibleRow(element)
+  if (!anchor) return
+  const before = anchor.getBoundingClientRect().top
+  nextTick(() => {
+    if (unmounted || request.intent !== scrollIntent || request.current !== chat.state.current
+      || box.value !== element || !element.contains(anchor)) return
+    // The browser may already have anchored the scroll. Only compensate the remaining drift.
+    element.scrollTop += anchor.getBoundingClientRect().top - before
+  })
+}, { flush: 'pre' })
 
 /** 时间分隔胶囊文案：今天/昨天/日期 + 时分 */
 function fmtDiv(ts: number) {
@@ -188,11 +331,13 @@ watch(box, (element) => {
   sizeObserver?.disconnect()
   if (element && typeof ResizeObserver !== 'undefined') {
     sizeObserver = new ResizeObserver(() => {
-      if (chat.atBottom?.() && !chat.state.jumpedAway && !loadingTop) toBottom()
+      if (locateAnchor) alignLocatedRow()
+      else if (chat.atBottom?.() && !chat.state.jumpedAway && !loadingTop) toBottom()
     })
     sizeObserver.observe(element)
   }
 }, { flush: 'post' })
+watch(cur, armHistoryScroll, { flush: 'sync' })
 const offLocate = ctx.on('chat/locate', seekLocated)
 let unmounted = false
 let jumpRequest = 0
@@ -206,6 +351,7 @@ function clearFlash() {
 function dismissLocate(event?: Event) {
   if (event?.target instanceof Element && event.target.closest('.row.locate')) return
   jumpRequest++
+  clearLocateAnchor()
   chat.state.locateId = null
   clearFlash()
 }
@@ -219,20 +365,23 @@ document.addEventListener('keydown', onEscape)
 onUnmounted(() => {
   unmounted = true
   sizeObserver?.disconnect()
+  rowObserver?.disconnect()
+  rowObserver = undefined
   off()
   offLocate()
   clearFlash()
+  clearLocateAnchor()
   document.removeEventListener('click', dismissLocate, { capture: true })
   document.removeEventListener('click', offDoc)
   document.removeEventListener('keydown', onEscape)
 })
-watch(cur, () => { jumpRequest++; clearFlash(); closeMore(); closeMenu(); showJump.value = false; toBottom() })
+watch(cur, () => { loadingTop = undefined; jumpRequest++; clearFlash(); closeMore(); closeMenu(); showJump.value = false; toBottom() })
 watch(() => chat.state.locateId, (mid) => { if (mid) seekLocated(mid) }, { immediate: true, flush: 'post' })
 </script>
 
 <template>
   <header class="chat-header">
-    <button class="ghost small only-mobile" title="会话列表" @click="emit('toggle-sidebar')">
+    <button v-if="!props.detached" class="ghost small only-mobile" title="会话列表" @click="emit('toggle-sidebar')">
       <Icon name="menu" :size="17" />
     </button>
     <div class="head-main">
@@ -241,7 +390,7 @@ watch(() => chat.state.locateId, (mid) => { if (mid) seekLocated(mid) }, { immed
         <span class="s" v-if="cur">{{ CHAT_TYPE_LABEL[cur.type] }} · {{ cur.id }}</span>
       </div>
     </div>
-    <div class="head-side" v-if="ctx.ws && ctx.ws.state.status !== 'online'">
+    <div class="head-side" v-if="!props.detached && ctx.ws && ctx.ws.state.status !== 'online'">
       <!-- 重连中只给一个小黄点 + 悬浮提示，不再占按钮位刷屏（点击可手动重连） -->
       <span class="dot wait" :title="'连接状态：' + ctx.ws.state.status + '（点击重连）'"
             style="cursor:pointer" @click="ctx.ws.reconnect()"></span>
@@ -250,8 +399,6 @@ watch(() => chat.state.locateId, (mid) => { if (mid) seekLocated(mid) }, { immed
     <button v-if="chat.state.jumpedAway" class="ghost small back-latest" @click="backLatest">
       <Icon name="down" :size="13" /> 回到最新
     </button>
-
-    <!-- 云湖公开接口没有通话/投屏端点 —— 按「无后端即砍」原则不放占位按钮 -->
 
     <!-- 插件插槽：其他插件可以往这里塞自己的组件 -->
     <component v-for="(sl, i) in ctx.chat?.slotsOf?.('chat-header-extra') || []" :key="'h' + i"
@@ -278,7 +425,9 @@ watch(() => chat.state.locateId, (mid) => { if (mid) seekLocated(mid) }, { immed
     </div>
   </header>
 
+  <GroupVoiceRooms v-if="!props.detached && cur?.type === 2 && ctx.calls?.state.enabled && ctx.api?.groupVoiceRooms" :group-id="String(cur.id)" />
   <SelectionBar v-if="cur" />
+  <div v-if="cur && chat.state.locatingId" class="locate-status" role="status">正在定位引用消息{{ chat.state.locatePages ? ' · 已查找 ' + chat.state.locatePages + ' 页历史' : '…' }} <button class="ghost small" @click="chat.cancelLocate()">取消定位</button></div>
 
   <div v-if="!cur" class="empty">
     <div>
@@ -288,19 +437,26 @@ watch(() => chat.state.locateId, (mid) => { if (mid) seekLocated(mid) }, { immed
     </div>
   </div>
 
-  <div v-else ref="box" class="messages" @click="closeMenu(); closeMore()" @scroll="onScroll">
-    <!-- 往上翻后右下角出现「回最新」箭头（QQ 式） -->
+  <div v-else :key="cur.type + ':' + cur.id" class="message-viewport">
+    <div ref="box" class="messages" :class="{ 'locating-history': settlingLocate }" @wheel.passive="onHistoryWheel" @pointerdown="armHistoryScroll" @keydown="armHistoryScroll" @click="closeMenu(); closeMore()" @scroll.passive="onScroll">
+      <template v-for="f in flow" :key="f.t === 'div' ? f.id : f.msg.id">
+        <div v-if="f.t === 'div'" class="sys time-div"><span>{{ fmtDiv(f.ts) }}</span></div>
+        <div v-else v-history-row="f.msg.id" class="history-row" :data-history-id="f.msg.id"
+             :style="renderHistoryRow(f.msg.id) ? undefined : { height: (rowHeights.get(f.msg.id) ?? 64) + 'px' }"
+             @play.capture="onPlayback($event, f.msg.id)" @pause.capture="onPlayback($event, f.msg.id)"
+             @ended.capture="onPlayback($event, f.msg.id)">
+          <MessageItem v-if="renderHistoryRow(f.msg.id)" :msg="f.msg"
+                       @menu="openMenu" @quote-jump="jumpTo" @keep-mounted="keepHistoryRow(f.msg.id, $event)" />
+        </div>
+      </template>
+      <div v-if="chat.state.loadingMsgs" class="sys">加载中…</div>
+    </div>
+    <div v-if="chat.state.hasMore && chat.state.loadingMore" class="load-more" role="status">
+      <span class="sys">加载历史中…</span>
+    </div>
     <button v-if="showJump" class="jump-latest" title="回到最新" @click="chat.state.jumpedAway ? backLatest() : toBottom()">
       <Icon name="down" :size="16" />
     </button>
-    <div v-if="chat.state.hasMore && chat.state.loadingMore" class="load-more">
-      <span class="sys">加载历史中…</span>
-    </div>
-    <template v-for="f in flow" :key="f.t === 'div' ? f.id : f.msg.id">
-      <div v-if="f.t === 'div'" class="sys time-div"><span>{{ fmtDiv(f.ts) }}</span></div>
-      <MessageItem v-else :msg="f.msg" @menu="openMenu" @quote-jump="jumpTo" />
-    </template>
-    <div v-if="chat.state.loadingMsgs" class="sys">加载中…</div>
   </div>
 
   <BoardDock v-if="cur" />
@@ -308,7 +464,7 @@ watch(() => chat.state.locateId, (mid) => { if (mid) seekLocated(mid) }, { immed
   <component v-for="(sl, i) in ctx.chat?.slotsOf?.('chat-before-composer') || []" :key="'bc' + i"
              :is="sl.component" v-bind="sl.props || {}" />
 
-  <Composer v-if="cur" :key="cur.type + ':' + cur.id" />
+  <Composer v-if="cur" :key="cur.type + ':' + cur.id" :detached="props.detached" />
 
   <component v-for="(sl, i) in ctx.chat?.slotsOf?.('global') || []" :key="'g' + i"
              :is="sl.component" v-bind="sl.props || {}" />
@@ -318,12 +474,18 @@ watch(() => chat.state.locateId, (mid) => { if (mid) seekLocated(mid) }, { immed
 </template>
 
 <style scoped>
+.locate-status { padding:8px 16px; font-size:12px; color:var(--fg); background:var(--card); border-bottom:1px solid var(--line); animation:locate-in .18s ease-out; }
+@keyframes locate-in { from { opacity:0; } to { opacity:1; } }
 .head-main { flex: 1; min-width: 0; }
 .head-main .t { display: flex; align-items: baseline; gap: 8px; min-width: 0; flex-wrap: nowrap; }
 .head-main .t .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .head-main .t .s { flex: 0 0 auto; white-space: nowrap; }
 .head-side { display: flex; align-items: center; gap: 7px; font-size: 12px; color: var(--fg2); }
-.load-more { display: flex; justify-content: center; padding-bottom: 6px; }
+.message-viewport { display: flex; flex: 1; min-height: 0; position: relative; }
+.messages.locating-history { overflow-anchor:none; }
+.history-row { display: flex; flex-direction: column; flex: 0 0 auto; min-width: 0; }
+.load-more { position: absolute; inset: 8px 0 auto; display: flex; justify-content: center; pointer-events: none; }
+.message-viewport .jump-latest { position: absolute; inset: auto 18px 12px auto; }
 .more-wrap { position: relative; }
 .more-btn {
   font-size: 17px; line-height: 1; padding: 0; width: 30px; height: 30px;

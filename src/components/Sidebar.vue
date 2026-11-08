@@ -13,6 +13,7 @@ import { inject, computed, ref, reactive, watch, onUnmounted } from 'vue'
 import { fallbackAvatar } from '../core/util.js'
 import { resUrl } from '../core/res.js'
 import { rankSearchResults } from '../core/search'
+import { openChatWindow, supportsChatWindows } from '../core/chat-window'
 import Icon from '../console/components/Icon.vue'
 import ConversationItem from './ConversationItem.vue'
 import CreateGroupForm from './CreateGroupForm.vue'
@@ -22,7 +23,66 @@ const auth = ctx.auth
 const chat = ctx.chat
 
 const list = computed(() => chat.filtered())
-function open(c: any) { chat.open(c) }
+const emit = defineEmits<{ (e: 'open'): void }>()
+function open(c: any) {
+  if (performance.now() < suppressOpenUntil) return
+  emit('open')
+  chat.open(c)
+}
+
+const nativeWindows = supportsChatWindows()
+const dragDrop = ref<HTMLElement>()
+const detaching = ref(false), overDetach = ref(false)
+let stopDetach: (() => void) | undefined
+let suppressOpenUntil = -Infinity
+function startConversationDrag(conversation: any, start: PointerEvent) {
+  if (!nativeWindows || start.button !== 0 || start.pointerType === 'touch') return
+  stopDetach?.()
+  const row = start.currentTarget as HTMLElement
+  const pointer = start.pointerId
+  const inTarget = (event: PointerEvent) => {
+    const area = dragDrop.value?.getBoundingClientRect()
+    return !!area && event.clientX >= area.left && event.clientX <= area.right
+      && event.clientY >= area.top && event.clientY <= area.bottom
+  }
+  const move = (event: PointerEvent) => {
+    if (event.pointerId !== pointer) return
+    if (!detaching.value) {
+      if (Math.hypot(event.clientX - start.clientX, event.clientY - start.clientY) < 10) return
+      detaching.value = true
+      row.setPointerCapture(pointer)
+      closeMenu()
+    }
+    overDetach.value = inTarget(event)
+  }
+  const stop = () => {
+    if (detaching.value) suppressOpenUntil = performance.now() + 180
+    detaching.value = overDetach.value = false
+    if (row.hasPointerCapture(pointer)) row.releasePointerCapture(pointer)
+    window.removeEventListener('pointermove', move)
+    window.removeEventListener('pointerup', end)
+    window.removeEventListener('pointercancel', cancel)
+    window.removeEventListener('blur', stop)
+    window.removeEventListener('keydown', escape)
+    stopDetach = undefined
+  }
+  const end = (event: PointerEvent) => {
+    if (event.pointerId !== pointer) return
+    const outside = event.clientX < 0 || event.clientY < 0 || event.clientX >= innerWidth || event.clientY >= innerHeight
+    const dropped = detaching.value && (outside || inTarget(event))
+    stop()
+    if (dropped) void openChatWindow(ctx, conversation)
+  }
+  const cancel = (event: PointerEvent) => { if (event.pointerId === pointer) stop() }
+  const escape = (event: KeyboardEvent) => { if (event.key === 'Escape') stop() }
+  stopDetach = stop
+  window.addEventListener('pointermove', move)
+  window.addEventListener('pointerup', end)
+  window.addEventListener('pointercancel', cancel)
+  window.addEventListener('blur', stop)
+  window.addEventListener('keydown', escape)
+}
+onUnmounted(() => stopDetach?.())
 
 /* ---- 全局搜索（Enter 触发 /v1/search/home-search：人/群/机器人混合结果） ---- */
 const GS_TYPE: Record<number, string> = { 1: '用户', 2: '群聊', 3: '机器人' }
@@ -50,8 +110,8 @@ async function globalSearch() {
 function gsPick(r: any) {
   gsRequest++
   gsResults.value = []
-  if (r.type === 2) chat.open({ id: r.id, type: 2, name: r.name, avatar: r.avatar })
-  else if (r.type === 3) chat.open({ id: r.id, type: 3, name: r.name, avatar: r.avatar })
+  if (r.type === 2) open({ id: r.id, type: 2, name: r.name, avatar: r.avatar })
+  else if (r.type === 3) open({ id: r.id, type: 3, name: r.name, avatar: r.avatar })
   else ctx.group?.openProfile?.(r)   // 用户 → 资料面板
 }
 
@@ -70,7 +130,7 @@ const menuGroupInput = ref('')
 function openMenu(c: any, e: MouseEvent) {
   menu.conv = c
   menu.x = Math.min(e.clientX, window.innerWidth - 180)
-  menu.y = Math.min(e.clientY, window.innerHeight - 320)
+  menu.y = Math.min(e.clientY, Math.max(8, window.innerHeight - 360))
   menu.open = true
 }
 function closeMenu() { menu.open = false; menuGroupInput.value = '' }
@@ -235,10 +295,21 @@ async function dlgOk() {
     </div>
 
     <ul id="conversation-list" class="convs">
-      <ConversationItem v-for="c in sections.pinned" :key="'pin:' + c.type + ':' + c.id" :c="c"
-                        @open="open" @menu="openMenu" />
+      <li v-if="sections.pinned.length" class="pinned-section">
+        <button class="pinned-toggle" :aria-expanded="!chat.groups.pinnedCollapsed" aria-controls="pinned-conversations"
+                :aria-label="chat.groups.pinnedCollapsed ? '展开置顶会话' : '折叠置顶会话'" @click="chat.togglePinnedCollapse()">
+          <Icon name="chevronDown" :size="16" :class="{ folded: chat.groups.pinnedCollapsed }" />
+          <span>{{ chat.groups.pinnedCollapsed ? sections.pinned.length + ' 个置顶会话' : '折叠置顶会话' }}</span>
+          <span v-if="chat.groups.pinnedCollapsed && sections.pinned.some((c: any) => c.unread > 0)" class="pinned-unread">有未读</span>
+        </button>
+        <div class="pinned-fold" :class="{ folded: chat.groups.pinnedCollapsed }" :inert="chat.groups.pinnedCollapsed">
+          <ul id="pinned-conversations">
+            <ConversationItem v-for="c in sections.pinned" :key="'pin:' + c.type + ':' + c.id" :c="c" @open="open" @menu="openMenu" @drag="startConversationDrag" />
+          </ul>
+        </div>
+      </li>
       <ConversationItem v-for="c in sections.active" :key="'active:' + c.type + ':' + c.id" :c="c"
-                        @open="open" @menu="openMenu" />
+                        @open="open" @menu="openMenu" @drag="startConversationDrag" />
       <template v-for="g in sections.groups" :key="g.id">
         <li class="grp-head" @click="chat.toggleCollapse(g.id)">
           <span class="tri">{{ chat.isCollapsed(g.id) ? '▸' : '▾' }}</span>{{ g.name }}
@@ -247,15 +318,21 @@ async function dlgOk() {
           <button class="ghost tiny" title="删除分组" @click.stop="chat.removeGroup(g.id)">×</button>
         </li>
         <template v-if="!chat.isCollapsed(g.id)">
-          <ConversationItem v-for="c in g.items" :key="c.type + ':' + c.id" :c="c" @open="open" @menu="openMenu" />
+          <ConversationItem v-for="c in g.items" :key="c.type + ':' + c.id" :c="c" @open="open" @menu="openMenu" @drag="startConversationDrag" />
         </template>
       </template>
 
-      <ConversationItem v-for="c in sections.ungrouped" :key="c.type + ':' + c.id" :c="c" @open="open" @menu="openMenu" />
+      <ConversationItem v-for="c in sections.ungrouped" :key="c.type + ':' + c.id" :c="c" @open="open" @menu="openMenu" @drag="startConversationDrag" />
       <li v-if="!visibleCount" class="hint">
         {{ chat.state.loadingConvs ? '加载中…' : searching ? '没有匹配的会话' : chat.groups.pinMode === 'tabs' && pinTab === 'pinned' ? '暂无置顶对话' : '暂无会话' }}
       </li>
     </ul>
+
+    <Transition name="detach-drop">
+      <div v-if="detaching" ref="dragDrop" class="conversation-detach-drop" :class="{ over: overDetach }">
+        <Icon name="expand" :size="16" />拖到这里打开独立窗口
+      </div>
+    </Transition>
 
     <!-- 插槽：chat-sidebar-bottom -->
     <component v-for="(sl, i) in ctx.chat?.slotsOf?.('chat-sidebar-bottom') || []" :key="'sb' + i"
@@ -264,6 +341,7 @@ async function dlgOk() {
     <!-- 右键菜单：置顶 / 免打扰 / 移动到分组 / 删除（建分组在侧栏「＋」里） -->
     <Teleport to="body">
       <div v-if="menu.open" class="ctx-menu" :style="{ left: menu.x + 'px', top: menu.y + 'px' }" @click.stop>
+        <button v-if="nativeWindows" class="rm-item" @click="openChatWindow(ctx, menu.conv); closeMenu()"><Icon name="expand" :size="14" />在独立窗口打开</button>
         <button class="rm-item" @click="togglePin">
           <Icon name="pinUp" :size="14" /> {{ chat.isPinned(menu.conv?.id) ? '取消置顶' : '置顶' }}
         </button>
@@ -281,6 +359,25 @@ async function dlgOk() {
 </template>
 
 <style scoped>
+.conversation-detach-drop { position:absolute; z-index:5; inset:auto 8px 8px; display:flex; align-items:center; justify-content:center; gap:6px; min-height:42px; padding:4px 6px; border:1px dashed var(--link,var(--acc)); border-radius:10px; background:var(--card); color:var(--fg); font-size:12px; pointer-events:none; }
+.conversation-detach-drop.over { background:var(--acc-soft); }
+.detach-drop-enter-active,.detach-drop-leave-active { transition:opacity 140ms,transform 140ms cubic-bezier(.23,1,.32,1); }
+.detach-drop-enter-from,.detach-drop-leave-to { opacity:0; transform:translateY(4px); }
+@media(prefers-reduced-motion:reduce) { .detach-drop-enter-active,.detach-drop-leave-active { transition:none; } }
+.convs > .pinned-section { display: block; padding: 0; margin: 0; border-radius: 0; background: transparent; }
+.pinned-toggle { width: 100%; display: flex; align-items: center; gap: 9px; padding: 10px 16px; background: var(--card); color: var(--fg2); text-align: left; font-size: 12px; border-radius: 0; }
+.pinned-toggle:hover { background: var(--card2); color: var(--fg); }
+.pinned-toggle :deep(svg) { transition: transform 200ms cubic-bezier(.23, 1, .32, 1); }
+.pinned-toggle :deep(svg.folded) { transform: rotate(-180deg); }
+.pinned-unread { margin-left: auto; font-size: 11px; color: var(--fg); }
+.pinned-fold { display: grid; grid-template-rows: 1fr; transition: grid-template-rows 200ms cubic-bezier(.23, 1, .32, 1); }
+.pinned-fold.folded { grid-template-rows: 0fr; }
+.pinned-fold > ul { min-height: 0; overflow: hidden; list-style: none; margin: 0; padding: 0; opacity: 1; transform: translateY(0); transition: opacity 160ms ease-out, transform 200ms cubic-bezier(.23, 1, .32, 1); }
+.pinned-fold.folded > ul { opacity: 0; transform: translateY(-8px); }
+@media (prefers-reduced-motion: reduce) {
+  .pinned-fold, .pinned-toggle :deep(svg) { transition: none; }
+  .pinned-fold > ul { transition: opacity 80ms linear; transform: none !important; }
+}
 .pin-tabs { display: flex; gap: 4px; padding: 4px 10px 8px; }
 .pin-tabs button { flex: 1; padding: 6px 4px; font-size: 12px; color: var(--fg2); background: transparent; border-bottom: 2px solid transparent; border-radius: 6px 6px 0 0; }
 .pin-tabs button:hover { color: var(--fg); background: var(--card2); }
