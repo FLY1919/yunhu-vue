@@ -1,0 +1,202 @@
+name: 构建 Tauri 桌面版并发布 Release
+
+on:
+  push:
+    branches: [desktop]
+    paths:
+      - 'src/**'
+      - 'server.ts'
+      - 'sticker-directory.ts'
+      - 'webdav.ts'
+      - 'satori.ts'
+      - 'satori-ws.ts'
+      - 'src-tauri/**'
+      - 'scripts/build-server-bundle.mjs'
+      - 'scripts/verify-windows-assets.mjs'
+      - 'scripts/windows-runtime.json'
+      - 'scripts/test-windows-assets.mjs'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.github/workflows/build-tauri.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: tauri-build
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 安装 Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.23.4
+          cache: npm
+
+      - name: 安装 Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust 缓存
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: 安装前端依赖
+        run: npm ci --no-audit --no-fund
+
+      - name: 类型与功能回归检查
+        run: |
+          npm run typecheck
+          npm run test:chat
+          npm run test:settings
+          npm run test:features
+
+      - name: 构建前端 + server bundle
+        run: |
+          npm run build
+          node scripts/build-server-bundle.mjs
+
+      - name: 准备 sidecar 资源（node.exe + dist）
+        shell: bash
+        run: |
+          set -e
+          mkdir -p src-tauri/resources/dist
+          cp dist/index.html src-tauri/resources/dist/
+          cp -r dist/assets src-tauri/resources/dist/assets
+          # node.exe 从 runner 自带 node 复制（版本与 setup-node 一致）
+          NODE_EXE=$(which node.exe || where node | head -1)
+          cp "$NODE_EXE" src-tauri/resources/node.exe
+          node scripts/verify-windows-assets.mjs --runtime-only src-tauri/resources
+          npm run test:windows-assets
+          ls -la src-tauri/resources/
+
+      - name: 构建 Tauri（NSIS）
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          projectPath: src-tauri
+          args: --bundles nsis
+
+      - name: 制作便携版（zip release 目录）
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $ver = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          $rel = 'src-tauri/target/release'
+          # 产物命名按发布规范：软件名-版本-平台.扩展名，不带构建框架后缀
+          $stage = "portable/yunhulaoda-$ver-windows-x64-portable"
+          New-Item -ItemType Directory -Force -Path $stage | Out-Null
+          Get-ChildItem $rel -File | Where-Object { $_.Extension -in '.exe','.dll' } | Copy-Item -Destination $stage
+          # 资源目录布局兼容：release 根 或 release/resources
+          if (Test-Path "$rel/resources") { Copy-Item -Recurse "$rel/resources" "$stage/resources" }
+          foreach ($f in @('node.exe','server-bundle.mjs')) {
+            if (Test-Path "$rel/$f") { Copy-Item "$rel/$f" "$stage/" }
+          }
+          if (Test-Path "$rel/dist") { Copy-Item -Recurse "$rel/dist" "$stage/dist" }
+          Compress-Archive -Path "$stage/*" -DestinationPath "portable/yunhulaoda-$ver-windows-x64-portable.zip" -Force
+          Get-ChildItem portable/
+
+      - name: 上传产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: yunhulaoda-tauri-windows
+          path: |
+            src-tauri/target/release/bundle/nsis/*.exe
+            portable/*.zip
+          retention-days: 30
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出代码（gh release 需要 git 上下文）
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 下载产物
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: 按发布规范重命名
+        run: |
+          set -e
+          VER=$(node -p "require('./package.json').version")
+          mkdir -p out
+          # download-artifact 的 merge-multiple 会保留 LCA 相对目录结构，
+          # 产物可能在 artifacts/src-tauri/... 或 artifacts/portable/... 下 —— 递归找
+          EXE=$(find artifacts -type f -name '*.exe' | head -1 || true)
+          ZIP=$(find artifacts -type f -name '*-portable.zip' | head -1 || true)
+          echo "found exe: $EXE"
+          echo "found zip: $ZIP"
+          # 统一命名：软件名-版本-平台.扩展名
+          [ -n "$EXE" ] && cp "$EXE" "out/yunhulaoda-$VER-windows-x64-setup.exe"
+          [ -n "$ZIP" ] && cp "$ZIP" "out/yunhulaoda-$VER-windows-x64-portable.zip"
+          ls -la out/
+          [ -n "$EXE" ] || { echo "::error::no exe in artifacts"; exit 1; }
+          [ -n "$ZIP" ] || { echo "::error::no portable zip in artifacts"; exit 1; }
+
+      - name: 从 CHANGELOG.md 抽取更新日志（跳版本发布时累积）
+        run: |
+          set -e
+          VER=$(node -p "require('./package.json').version")
+          # 上一个 Release 的 tag：决定抽取范围。逐版发布时=上一版（抽单段），
+          # 跳版本累积发布时=更早的 tag（抽中间全部版本段，功能更新不丢失）
+          PREV=$(git tag --sort=-v:refname | grep -vx "v$VER" | head -1 || true)
+          echo "current=v$VER prev=${PREV:-<none>}"
+          if [ -n "$PREV" ]; then
+            awk -v cur="## v$VER" -v prev="## $PREV" '
+              { sub(/\r$/, "") }
+              $0 == cur { f=1 }
+              f && $0 == prev { exit }
+              f { print }
+            ' CHANGELOG.md > notes.md
+          else
+            awk -v cur="## v$VER" '
+              { sub(/\r$/, "") }
+              $0 == cur { f=1 }
+              f { print }
+            ' CHANGELOG.md > notes.md
+          fi
+          if [ ! -s notes.md ]; then
+            echo "本版更新日志见仓库 CHANGELOG.md 的 v$VER 段落。" > notes.md
+            echo "::warning::CHANGELOG.md 中未抽到 v$VER 段落，已用指针说明兜底"
+          fi
+          # 标题 + 累积说明（多于一个版本段即累积发布）+ 维护者署名
+          N=$(grep -c '^## v' notes.md || true)
+          { echo "# 云湖牢大版 v$VER"; echo
+            if [ "$N" -gt 1 ]; then
+              echo "> 本版为**累积发布**：自上一个 Release（${PREV:-无}）以来的全部版本更新均列于下方。各版完整技术说明见仓库 \`RELEASE_NOTES_1.0.*.md\`。"
+              echo
+            fi
+            cat notes.md
+            printf '\n---\n\n本版本由社区维护者 [@DontFPCKMe](https://github.com/DontFPCKMe)（云湖用户名 @TunRat）维护交付，感谢他的长期投入。\n'
+          } > notes-final.md
+          mv notes-final.md notes.md
+          echo "--- Release notes 预览（前 12 行，共 $(wc -l < notes.md) 行 / $(grep -c '^## v' notes.md) 个版本段）---"
+          head -12 notes.md
+
+      - name: 发布到 Release（存在则覆盖上传，不删不重建）
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -e
+          VER=$(node -p "require('./package.json').version")
+          TAG="v$VER"
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            gh release create "$TAG" out/* --title "云湖牢大版 v$VER" --notes-file notes.md
+          else
+            gh release upload "$TAG" out/* --clobber
+            gh release edit "$TAG" --title "云湖牢大版 v$VER" --notes-file notes.md
+          fi
+          echo "Release 页面：https://github.com/${{ github.repository }}/releases/tag/$TAG"

@@ -40,20 +40,35 @@ export const socialPlugin = {
       requests: [] as any[],
       loading: false,
       loaded: false,
+      creation: { pending: false, error: '' },
     })
+    let generation = 0
+    let creating: AbortController | undefined
+    ctx.on('auth/logout', () => {
+      generation++
+      creating?.abort(); creating = undefined
+      state.creation.pending = false; state.creation.error = ''
+      state.book = { users: [], groups: [], bots: [] }; state.requests = []; state.loading = false; state.loaded = false
+    })
+    ctx.effect?.(() => () => { generation++; creating?.abort(); creating = undefined })
 
     async function loadBook() {
+      if (api.token === '' && !(ctx as any).auth?.state?.user?.id) return
+      const version = generation
       state.loading = true
       try {
-        state.book = await api.addressBook()
+        const book = await api.addressBook()
+        if (version === generation) { state.book = book; state.loaded = true }
       } catch (e: any) {
-        ui.toast('通讯录加载失败：' + e.message, 'error')
-      } finally { state.loading = false; state.loaded = true }
+        if (version === generation) ui.toast('通讯录加载失败：' + e.message, 'error')
+      } finally { if (version === generation) state.loading = false }
     }
 
     async function loadRequests() {
-      try { state.requests = await api.friendRequests({ size: 30, page: 1 }) }
-      catch { state.requests = [] }
+      if (api.token === '' && !(ctx as any).auth?.state?.user?.id) return
+      const version = generation
+      try { const requests = await api.friendRequests({ size: 30, page: 1 }); if (version === generation) state.requests = requests }
+      catch { if (version === generation) state.requests = [] }
     }
 
     /** 发申请：chatType 1-用户 2-群聊 3-机器人 */
@@ -62,7 +77,7 @@ export const socialPlugin = {
       try {
         await api.applyFriend(targetId, chatType, message)
         ui.toast('申请已发送', 'success')
-      } catch (e: any) { ui.toast('发送失败：' + e.message, 'error') }
+      } catch (e: any) { ui.toast('发送失败：' + e.message, 'error'); throw e }
     }
 
     async function handleRequest(kind: 'agree' | 'ignore' | 'delete', id: number) {
@@ -74,17 +89,46 @@ export const socialPlugin = {
       } catch (e: any) { ui.toast('操作失败：' + e.message, 'error') }
     }
 
-    async function createGroup(name: string, introduction = '') {
+    function cancelCreateGroup() { creating?.abort() }
+
+    async function createGroup(name: string, introduction = '', avatarUrl?: string) {
+      if (state.creation.pending) return null
+      state.creation.error = ''
+      const version = generation
+      const controller = new AbortController()
+      creating = controller
+      state.creation.pending = true
       try {
-        const id: string = await api.createGroup(name, introduction)
-        ui.toast(id ? `群聊已创建（ID ${id}）` : '群聊已创建', 'success')
-        ctx.emit('chat/refresh' as any)
-        await loadBook()
-      } catch (e: any) { ui.toast('创建失败：' + e.message, 'error') }
+        name = name.trim(); introduction = introduction.trim()
+        const avatar = (avatarUrl ?? ctx.get('auth')?.state?.user?.avatar ?? '').trim()
+        if (!name) throw new Error('群名称不能为空')
+        if (!avatar) throw new Error('请填写群头像地址，或先设置个人头像')
+        const id: string = await api.createGroup(name, introduction, avatar, { signal: controller.signal, timeout: 15000 })
+        if (version !== generation || controller.signal.aborted) return null
+        if (!id) throw new Error('缺少群 ID，请先刷新群列表确认，避免重复创建')
+        // Commit the confirmed result immediately; background refresh must never hold the form open.
+        if (!state.book.groups.some((g: any) => String(g.id) === id)) state.book.groups.unshift({ id, name, avatar, introduction })
+        ui.toast(`群聊已创建（ID ${id}）`, 'success')
+        void loadBook()
+        void Promise.resolve().then(() => {
+          if (version === generation) return (ctx as any).chat?.loadConversations?.(true)
+        }).catch(() => { /* chat 插件负责刷新失败提示；建群已经成功 */ })
+        return id
+      } catch (e: any) {
+        if (version !== generation) return null
+        const uncertain = controller.signal.aborted || ['AbortError', 'TimeoutError', 'TypeError'].includes(e?.name)
+        state.creation.error = uncertain
+          ? '已停止等待，建群结果尚未确认。请先刷新群列表检查，避免重复创建。'
+          : (e?.message || '创建群聊失败')
+        ui.toast(state.creation.error, uncertain ? 'warn' : 'error')
+        return null
+      } finally {
+        if (creating === controller) { creating = undefined; state.creation.pending = false }
+      }
     }
 
     ctx.set('social', {
-      state, loadBook, loadRequests, apply, handleRequest, createGroup,
+      state, loadBook, loadRequests, apply, handleRequest, createGroup, cancelCreateGroup,
       /** 通讯录分类 → 云湖 chatType */
       chatTypeOf(tab: 'users' | 'groups' | 'bots') { return tab === 'groups' ? 2 : tab === 'bots' ? 3 : 1 },
       users: () => state.book.users || [],
@@ -94,6 +138,7 @@ export const socialPlugin = {
 
     loadBook()
     loadRequests()
+    ctx.on('auth/login', () => { generation++; state.loaded = false; loadBook(); loadRequests() })
     ctx.setTimeout(loadRequests, 4000)
 
     ctx.logger?.info('social 插件已加载（通讯录 / 添加 / 创建群聊）')

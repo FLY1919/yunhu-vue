@@ -26,7 +26,7 @@ export interface Config {
 
 /** 配置构型：控制台据此生成表单 */
 export const quickReplyConfig: Schema<Config> = Schema.object({
-  enabled: Schema.boolean().default(true).description('是否启用快捷回复按钮条'),
+  enabled: Schema.boolean().default(false).description('是否启用快捷回复按钮条'),
   items: Schema.array(Schema.string())
     .default(['收到 ✅', '稍等一下', '好的', '哈哈哈哈', '（溜了）'])
     .description('默认快捷回复（用户新增的存在浏览器本地数据库，不写回配置文件）'),
@@ -52,7 +52,7 @@ export const quickReplyPlugin = {
       : ['收到 ✅', '稍等一下', '好的', '哈哈哈哈', '（溜了）']
 
     const state = reactive({
-      enabled: config?.enabled ?? true,
+      enabled: config?.enabled ?? false,
       /** 本地新增（IndexedDB） */
       custom: [] as string[],
       /** 本地隐藏的默认项 */

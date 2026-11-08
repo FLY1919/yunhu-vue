@@ -45,6 +45,7 @@ export const botConsolePlugin = {
     })
 
     async function load() {
+      if (api.token === '' && !(ctx as any).auth?.state?.user?.id) return
       state.loading = true
       try {
         const r = await api.myBots()
@@ -76,10 +77,10 @@ export const botConsolePlugin = {
     }
 
     async function resetToken(botId: string) {
-      if (!window.confirm('重置 Token 会让旧 Token 立刻失效，确定？')) return
+      if (!(await (ctx as any).ui?.confirm?.('重置 Token', '重置 Token 会让旧 Token 立刻失效，确定？', { danger: true }))) return
       try {
         const t = await api.resetBotToken(botId)
-        if (t) window.prompt('新 Token（已复制到提示框）：', t)
+        if (t) navigator.clipboard.writeText(t).then(() => ui.toast('新 Token 已复制到剪贴板', 'success')).catch(() => ui.toast('新 Token：' + t, 'info'))
         ui.toast('Token 已重置', 'success')
         await load()
       } catch (e: any) { ui.toast('重置失败：' + e.message, 'error') }
@@ -95,6 +96,7 @@ export const botConsolePlugin = {
 
     ctx.set('botconsole', { state, load, create, edit, resetToken, loadInstructions })
 
+    ctx.on('auth/login', () => { load() })
     load()
     ctx.logger?.info('botconsole 插件已加载（机器人控制台）')
 

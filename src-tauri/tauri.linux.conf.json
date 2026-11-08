@@ -1,0 +1,9 @@
+{
+  "bundle": {
+    "resources": {
+      "resources/dist": "dist/",
+      "resources/node": "node",
+      "resources/server-bundle.mjs": "server-bundle.mjs"
+    }
+  }
+}

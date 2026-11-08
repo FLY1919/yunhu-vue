@@ -113,7 +113,7 @@ function ensureDefaults() {
           <template v-else>
             <input :value="it ?? ''" @input="{ const a = [...(val || [])]; a[i] = ($event.target as HTMLInputElement).value; val = a }" />
           </template>
-          <button class="sf-x" @click="removeItem(i)">×</button>
+          <button class="sf-x" @click="removeItem(Number(i))">×</button>
         </div>
         <button class="sf-add" @click="addItem">+ 添加一项</button>
       </div>

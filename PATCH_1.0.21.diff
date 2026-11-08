@@ -1,0 +1,459 @@
+--- a/src/console/pages/CommunityPage.vue
++++ b/src/console/pages/CommunityPage.vue
+@@ -11,6 +11,13 @@
+ const TABS = [{ key: 2, label: '热门' }, { key: 1, label: '关注' }, { key: 3, label: '我的' }, { key: 4, label: '全部' }]
+ const search = ref(''), postSearch = ref(''), creating = ref(false), newName = ref('')
+ const dialog = ref<HTMLDialogElement>(), articleBody = ref<HTMLElement>()
++const focusReading = ref(true), showLibrary = ref(false), showBoardTools = ref(false)
++const reading = computed(() => !!s.postDetail)
++const libraryCollapsed = computed(() => reading.value && focusReading.value && !showLibrary.value)
++function toggleLibrary() {
++  if (!focusReading.value) { focusReading.value = true; showLibrary.value = false }
++  else showLibrary.value = !showLibrary.value
++}
+ const dialogType = computed(() => creating.value ? 'create' : s.editing ? 'edit' : s.groupsOf ? 'groups' : '')
+ const dialogTitle = computed(() => ({ create: '创建板块', edit: '管理板块', groups: '关联群聊' }[dialogType.value] || ''))
+ const busy = computed(() => s.creating || s.saving || s.managing || s.binding || s.uploading)
+@@ -60,13 +67,17 @@
+   else if (!type && dialog.value?.open) dialog.value.close()
+ })
+ watch(() => s.viewing?.id, () => { postSearch.value = '' })
++watch(() => s.postDetail?.id, () => {
++  focusReading.value = true; showLibrary.value = false; showBoardTools.value = false
++})
++watch(articleBody, body => { if (body) fixResourceUrls(body) })
+ watch(articleHtml, async () => { await nextTick(); fixResourceUrls(articleBody.value) })
+ onMounted(() => { void cm.load(s.listType || 2); void cm.mine(); void cm.loadFollows() })
+ onBeforeUnmount(() => { creating.value = false; s.editing = null; cm.closeGroups() })
+ </script>
+ 
+ <template>
+-  <KLayout class="community-page" ns="community" title="板块" desc="发现值得读的内容，找到同好。">
++  <KLayout class="community-page" :class="{ 'reading-article': reading, 'focus-reading': reading && focusReading }" ns="community" title="板块" desc="发现值得读的内容，找到同好。">
+     <template #actions>
+       <button class="create-button" @click="openCreate"><Icon name="plus" :size="16" />创建板块</button>
+     </template>
+@@ -81,12 +92,14 @@
+       </div>
+     </div>
+ 
+-    <div class="community-workspace" :class="{ 'has-selection': s.viewing }">
++    <div class="community-workspace" :class="{ 'has-selection': s.viewing, 'library-collapsed': libraryCollapsed }">
+       <aside class="board-library" aria-label="板块列表" :aria-busy="s.loading">
++        <Transition name="status-fade"><div v-if="s.loading" class="reader-loading" role="status" aria-label="正在加载板块"><span></span></div></Transition>
+         <div class="section-label"><span>{{ TABS.find(t => t.key === s.listType)?.label }}板块</span><span>{{ s.list.length }} 个已加载</span></div>
+         <div class="board-list">
+           <p v-if="search" class="search-note">仅筛选已加载的板块</p>
+           <div v-if="s.loading && !s.list.length" class="empty-state" role="status"><Icon name="layers" :size="28" /><b>正在寻找好内容</b><span>板块加载中…</span></div>
++          <TransitionGroup name="board-list-motion" tag="div" class="board-rows">
+           <div v-for="b in boards" :key="b.id" class="board-row" :class="{ selected: Number(s.viewing?.id) === Number(b.id) }">
+             <button class="board-open" :aria-label="`进入板块 ${b.name}`" :aria-pressed="Number(s.viewing?.id) === Number(b.id)" @click="selectBoard(b)">
+               <CommunityAvatar :src="b.avatar" :name="b.name" />
+@@ -94,6 +107,7 @@
+             </button>
+             <button class="follow-quick icon-button" :class="{ followed: followed(b) }" :aria-label="`${followed(b) ? '取消关注' : '关注'} ${b.name}`" :aria-pressed="followed(b)" :disabled="followBusy(b)" :title="followed(b) ? '取消关注' : '关注板块'" @click="cm.toggleFollow(b)"><Icon :name="followed(b) ? 'check' : 'plus'" :size="16" /></button>
+           </div>
++          </TransitionGroup>
+           <div v-if="s.listError" class="error-state" role="alert"><b>板块加载失败</b><p>{{ s.listError }}</p><button class="secondary" :disabled="s.loading" @click="cm.load(s.listType, s.list.length > 0)">重试</button></div>
+           <div v-else-if="!boards.length && !s.loading" class="empty-state"><Icon name="layers" :size="28" /><b>{{ search ? '没有匹配的板块' : '这里还没有板块' }}</b><span>{{ search ? '换一个名称或 ID，或继续加载' : '试试热门分类，或创建自己的板块' }}</span><button v-if="search" class="secondary" @click="resetSearch">清除筛选</button></div>
+           <button v-if="s.hasMore" class="load-more secondary" :disabled="s.loading" @click="cm.load(s.listType, true)">{{ s.loading ? '加载中…' : '加载更多板块' }}</button>
+@@ -108,18 +122,26 @@
+         <template v-else>
+           <header class="reader-header">
+             <button class="mobile-back icon-button" aria-label="返回板块列表" @click="cm.exitBoard()"><Icon name="chevronLeft" :size="20" /></button>
++            <button v-if="reading" class="library-toggle icon-button" :aria-label="libraryCollapsed ? '展开板块列表' : '收起板块列表'" :title="libraryCollapsed ? '展开板块列表' : '收起板块列表'" :aria-expanded="!libraryCollapsed" @click="toggleLibrary"><Icon name="layers" :size="18" /></button>
+             <CommunityAvatar :src="s.viewing.avatar" :name="s.viewing.name" />
+             <div class="reader-title"><span class="eyebrow">板块 / {{ s.viewing.id }}</span><h3>{{ s.viewing.name }}</h3><div class="reader-stats"><span>{{ s.info?.postNum ?? '—' }} 篇文章</span><span>{{ s.info?.groupNum ?? '—' }} 个群聊</span></div></div>
++            <template v-if="reading">
++              <button class="icon-button" :aria-label="focusReading ? '退出专注阅读' : '专注阅读'" :title="focusReading ? '退出专注阅读' : '专注阅读'" :aria-pressed="focusReading" @click="focusReading = !focusReading; showLibrary = false"><Icon :name="focusReading ? 'collapse' : 'expand'" :size="18" /></button>
++              <button class="icon-button" aria-label="板块操作" title="板块操作" :aria-expanded="showBoardTools" @click="showBoardTools = !showBoardTools"><Icon name="sliders" :size="18" /></button>
++            </template>
+             <button class="icon-button reader-close" aria-label="关闭板块" title="关闭板块" @click="cm.exitBoard()"><Icon name="close" :size="18" /></button>
+           </header>
+-          <div class="reader-actions">
++          <Transition name="board-tools"><div v-show="!reading || showBoardTools" class="reader-actions">
+             <button class="follow-button" :class="{ 'secondary followed': followed(s.viewing) }" :disabled="followBusy(s.viewing)" :aria-pressed="followed(s.viewing)" @click="cm.toggleFollow(s.viewing)"><Icon :name="followed(s.viewing) ? 'check' : 'plus'" :size="15" />{{ followBusy(s.viewing) ? '处理中…' : followed(s.viewing) ? '已关注' : '关注板块' }}</button>
+             <button class="secondary" @click="cm.loadGroups(s.viewing)"><Icon name="contacts" :size="15" />关联群聊</button>
+             <button v-if="owns(s.viewing)" class="secondary" @click="editBoard(s.viewing)"><Icon name="sliders" :size="15" />管理</button>
+             <button class="icon-button reader-refresh" :disabled="s.loadingPosts || s.loadingDetail" aria-label="刷新文章" title="刷新文章" @click="s.postDetail ? cm.openPost(s.postDetail) : cm.enter(s.viewing)"><Icon name="refresh" :size="16" /></button>
+           </div>
++          </Transition>
++          <Transition name="status-fade"><div v-if="s.loadingPosts || s.loadingDetail" class="reader-loading" role="status" aria-label="正在加载文章"><span></span></div></Transition>
+           <div class="reader-scroll">
+-            <template v-if="s.postDetail">
++            <Transition name="reader-content" mode="out-in">
++            <div v-if="s.postDetail" :key="'article-' + s.postDetail.id">
+               <div class="article-navigation"><button class="text-button" @click="cm.backToPosts()"><Icon name="chevronLeft" :size="16" />文章列表</button><span>文章详情</span></div>
+               <article class="article-detail">
+                 <h1>{{ s.postDetail.title || '无标题文章' }}</h1>
+@@ -129,19 +151,22 @@
+                 <div ref="articleBody" class="article-prose" v-html="articleHtml"></div>
+                 <div class="article-footer">{{ s.postDetail.likeNum ?? 0 }} 赞<span>·</span>{{ s.postDetail.commentNum ?? 0 }} 评论</div>
+               </article>
+-            </template>
+-            <template v-else>
++            </div>
++            <div v-else :key="'posts-' + s.viewing.id">
+               <div class="posts-heading"><h4>文章<span>{{ s.posts.length }}</span></h4><label v-if="s.posts.length || postSearch" class="search-box post-search"><Icon name="search" :size="15" /><input v-model="postSearch" placeholder="筛选已加载文章" aria-label="筛选已加载文章" /></label></div>
+               <div v-if="s.loadingPosts && !s.posts.length" class="empty-state" role="status"><Icon name="page" :size="28" /><b>文章加载中…</b></div>
++              <TransitionGroup name="post-list-motion" tag="div" class="post-list">
+               <button v-for="p in posts" :key="p.id" class="post-card" @click="cm.openPost(p)">
+                 <span class="post-meta"><span>{{ p.senderName || p.senderId || '匿名作者' }}</span><time v-if="p.createTime">{{ fmtTime(p.createTime) }}</time></span>
+                 <strong>{{ p.title || '无标题文章' }}</strong><span v-if="p.content" class="post-excerpt">{{ preview(p) }}</span><span class="post-footer"><span>{{ p.likeNum ?? 0 }} 赞<span class="meta-dot">·</span>{{ p.commentNum ?? 0 }} 评论</span><span class="read-link">阅读全文 <Icon name="chevronRight" :size="14" /></span></span>
+               </button>
++              </TransitionGroup>
+               <div v-if="s.postsError" class="error-state" role="alert"><b>文章加载失败</b><p>{{ s.postsError }}</p><button class="secondary" :disabled="s.loadingPosts" @click="s.posts.length ? cm.loadMorePosts() : cm.enter(s.viewing)">重试文章列表</button></div>
+               <div v-else-if="!posts.length && !s.loadingPosts" class="empty-state"><Icon name="page" :size="28" /><b>{{ postSearch ? '没有匹配的文章' : '这个板块还没有文章' }}</b><span>{{ postSearch ? '试试其他标题或作者名' : '关注板块，之后再来看看吧' }}</span></div>
+               <button v-if="s.hasMorePosts" class="load-more secondary" :disabled="s.loadingPosts" @click="cm.loadMorePosts()">{{ s.loadingPosts ? '加载中…' : '加载更多文章' }}</button>
+               <p v-else-if="s.posts.length && !s.loadingPosts && !s.postsError" class="end-note">已显示全部文章</p>
+-            </template>
++            </div>
++            </Transition>
+           </div>
+         </template>
+       </section>
+@@ -199,7 +224,7 @@
+ .search-box .icon-button { width: 22px; height: 24px; }
+ .icon-button { width: 34px; height: 34px; padding: 0; background: transparent; border-radius: 10px; color: var(--fg2); }
+ .icon-button:hover { background: var(--card2); color: var(--fg); }
+-.community-workspace { flex: 1; min-height: 0; display: grid; grid-template-columns: 300px minmax(0, 1fr); gap: 18px; }
++.community-workspace { flex: 1; min-height: 0; display: grid; grid-template-columns: clamp(220px, 22cqw, 270px) minmax(0, 1fr); gap: 14px; }
+ .board-library, .board-reader { min-width: 0; min-height: 0; border: 1px solid var(--line); background: var(--card); border-radius: 18px; display: flex; flex-direction: column; overflow: hidden; }
+ .section-label { display: flex; justify-content: space-between; gap: 8px; padding: 17px 17px 12px; font-size: 12px; color: var(--fg2); }
+ .section-label > span:first-child { color: var(--fg); font-weight: 600; }
+@@ -256,7 +281,8 @@
+ .text-button { background: transparent; color: var(--fg2); padding: 4px 0; font-size: 12px; }
+ .text-button:hover { background: transparent; color: var(--acc); }
+ .article-detail h1 { font-size: 25px; line-height: 1.45; margin: 12px 0 14px; overflow-wrap: anywhere; }
+-.article-prose { font-size: 14px; line-height: 1.9; overflow-wrap: anywhere; padding: 20px 0; }
++.article-detail { width: 100%; max-width: 1000px; margin: 0 auto; }
++.article-prose { font-size: 16px; line-height: 1.85; overflow-wrap: anywhere; padding: 12px 0; }
+ .article-prose :deep(img), .article-prose :deep(video) { max-width: 100%; height: auto; border-radius: 10px; }
+ .article-prose :deep(pre) { max-width: 100%; overflow: auto; padding: 14px; background: var(--card2); border-radius: 10px; }
+ .article-prose :deep(table) { display: block; max-width: 100%; overflow: auto; }
+@@ -318,6 +344,55 @@
+   .community-page :deep(.k-title p) { font-size: 11px; max-width: 165px; }
+   .create-button { padding: 9px 11px; font-size: 12px; }
+ }
++/* 阅读时让正文占据整个工作区，仅保留一行板块导航。 */
++.reading-article .reader-header { flex-shrink: 0; padding: 10px 16px; gap: 10px; border-bottom: 1px solid var(--line); }
++.reading-article .reader-header > .community-avatar { width: 30px; height: 30px; border-radius: 9px; }
++.reading-article .reader-title h3 { font-size: 14px; margin: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
++.reading-article .reader-title .eyebrow, .reading-article .reader-stats { display: none; }
++.reading-article .reader-actions { padding: 10px 16px; }
++.reading-article .reader-scroll { padding: 0 clamp(16px, 3cqw, 40px) 24px; }
++.reading-article .article-navigation { padding: 10px 0; }
++.reading-article .article-detail h1 { margin: 8px 0 10px; }
++.community-page.focus-reading :deep(.k-header), .focus-reading .community-toolbar { max-height: 0; opacity: 0; padding-block: 0; border-width: 0; overflow: hidden; pointer-events: none; visibility: hidden; }
++.community-page.focus-reading :deep(.k-body) { padding: 12px; gap: 0; }
++.community-workspace.library-collapsed { grid-template-columns: 0px minmax(0, 1fr); gap: 0; }
++.library-collapsed .board-library { opacity: 0; visibility: hidden; transform: translateX(-10px); pointer-events: none; }
++@container (max-width: 740px) {
++  .community-workspace.library-collapsed { grid-template-columns: minmax(0, 1fr); }
++  .reading-article .library-toggle { display: none; }
++  .reading-article .reader-header { gap: 6px; padding: 8px; }
++  .reading-article .reader-header > .community-avatar { display: none; }
++  .community-page.focus-reading :deep(.k-body) { padding: 6px; }
++}
++/* 动画只覆盖当前列表与阅读区，不创建轮询或持续的后台动画。 */
++.community-page :deep(.k-header) { flex-shrink: 0; max-height: 120px; transition: max-height .22s ease, padding .22s ease, opacity .16s ease, visibility .22s; }
++.community-toolbar { flex-shrink: 0; max-height: 110px; transition: max-height .22s ease, opacity .16s ease, visibility .22s; }
++.community-page :deep(.k-body) { transition: padding .22s ease, gap .22s ease; }
++.community-workspace { transition: grid-template-columns .24s ease, gap .24s ease; }
++.board-library { transition: opacity .16s ease, transform .24s ease, visibility .24s; }
++.board-rows, .post-list { position: relative; }
++.board-list-motion-move, .post-list-motion-move { transition: transform .2s ease; }
++.board-list-motion-enter-active, .board-list-motion-leave-active,
++.post-list-motion-enter-active, .post-list-motion-leave-active { transition: opacity .16s ease, transform .2s ease; }
++.board-list-motion-enter-from, .board-list-motion-leave-to,
++.post-list-motion-enter-from, .post-list-motion-leave-to { opacity: 0; transform: translateY(6px); }
++.board-list-motion-leave-active, .post-list-motion-leave-active { position: absolute; left: 0; right: 0; pointer-events: none; }
++.reader-content-enter-active, .reader-content-leave-active { transition: opacity .12s ease, transform .12s ease; }
++.reader-content-enter-from { opacity: 0; transform: translateY(5px); }
++.reader-content-leave-to { opacity: 0; transform: translateY(-3px); }
++.board-tools-enter-active, .board-tools-leave-active { max-height: 160px; overflow: hidden; transition: max-height .2s ease, padding .2s ease, opacity .16s ease; }
++.board-tools-enter-from, .board-tools-leave-to { max-height: 0; padding-block: 0 !important; opacity: 0; }
++.board-library, .board-reader { position: relative; }
++.search-box { transition: border-color .16s ease, background-color .16s ease; }
++.reader-loading { position: absolute; top: 0; left: 0; right: 0; height: 2px; overflow: hidden; background: var(--acc-soft); pointer-events: none; z-index: 1; }
++.reader-loading span { display: block; width: 35%; height: 100%; background: var(--acc); animation: reader-progress 1.1s ease-in-out infinite; }
++.status-fade-enter-active, .status-fade-leave-active { transition: opacity .15s ease; }
++.status-fade-enter-from, .status-fade-leave-to { opacity: 0; }
++@keyframes reader-progress { from { transform: translateX(-110%); } to { transform: translateX(390%); } }
++@media (prefers-reduced-motion: reduce) {
++  .community-page :deep(*), .community-page :deep(*::before), .community-page :deep(*::after) { transition-duration: .001ms !important; animation-duration: .001ms !important; animation-iteration-count: 1 !important; }
++  .reader-loading span { width: 100%; animation: none; opacity: .65; }
++}
+ @media (max-width: 400px) { .dialog-header { padding: 18px; } .dialog-content { padding: 18px; } }
+ @media (prefers-reduced-motion: reduce) { .community-dialog[open] { animation: none; } .board-row, .post-card strong { transition: none; } }
+ </style>
+--- a/src/console/components/Icon.vue
++++ b/src/console/components/Icon.vue
+@@ -21,6 +21,8 @@
+   bolt: 'M13 2L4 14h6l-1 8 9-12h-6z',
+   logout: 'M16 17l5-5-5-5M21 12H9M12 19H6a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h6',
+   menu: 'M3 6h18M3 12h18M3 18h18',
++  expand: 'M8 3H3v5M16 3h5v5M3 16v5h5M21 16v5h-5',
++  collapse: 'M3 8h5V3M21 8h-5V3M8 21v-5H3M16 21v-5h5',
+   chevronLeft: 'M15 18l-6-6 6-6',
+   chevronRight: 'M9 6l6 6-6 6',
+   refresh: 'M21 12a9 9 0 1 1-3-6.7L21 8M21 3v5h-5',
+--- a/src/components/MessageElements.vue
++++ b/src/components/MessageElements.vue
+@@ -156,7 +156,7 @@
+   const h = Number(el.attrs.height) || 0
+   if (!w || !h) return {}
+   // 只用来占位，实际尺寸交给 CSS 的 max-width/max-height
+-  return { aspectRatio: `${w} / ${h}` }
++  return { aspectRatio: `auto ${w} / ${h}` }
+ }
+ 
+ /** 点击图片/视频 → 页内灯箱查看（QQ 式），点空白处收起 */
+@@ -575,6 +575,8 @@
+ .rich :deep(img) { max-width: 100%; border-radius: 8px; }
+ .rich :deep(blockquote) { padding-left: 8px; border-left: 3px solid var(--line); opacity: .85; }
+ .media { max-width: min(320px, 100%); max-height: 460px; border-radius: 10px; display: block; object-fit: contain; cursor: zoom-in; background: var(--card2); }
++/* 两个 HTML 尺寸属性不能各自被 max-width/max-height 截断成固定黑框。 */
++img.media { width: min(320px, 100%, var(--media-natural-width, 320px), var(--media-fit-width, 320px)); height: auto; max-height: none; }
+ /* 文件气泡旁的保存按钮 */
+ .file-save {
+   align-self: center; margin-left: 6px; padding: 4px 10px; border-radius: 8px;
+--- a/src/core/resource-media.ts
++++ b/src/core/resource-media.ts
+@@ -6,6 +6,13 @@
+ const pools = new Map<Element | null, { observer: IntersectionObserver; count: number }>()
+ let minimized = false, locked = false, focused = true, listening = false
+ const blank = (w: number, h: number) => `data:image/svg+xml,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}"/>`)}`
++function rememberSize(el: HTMLImageElement, width?: number, height?: number) {
++  if (!Number.isFinite(width) || !Number.isFinite(height) || width! <= 0 || height! <= 0) return
++  el.style.setProperty('--media-natural-width', `${width}px`)
++  el.style.setProperty('--media-fit-width', `${460 * width! / height!}px`)
++  // The real resource wins over stale protocol dimensions; keep these bounds for stills/release.
++  el.style.aspectRatio = `auto ${width} / ${height}`
++}
+ function snapshot(entry: Entry) {
+   const img = entry.el as HTMLImageElement
+   if (entry.preview || !img.complete || !img.naturalWidth || img.getAttribute('src') !== entry.options.src) return
+@@ -56,13 +63,13 @@
+ watch(() => resourceMode.economy, refresh)
+ export const vResourceMedia: ObjectDirective<HTMLImageElement | HTMLMediaElement, Options> = {
+   beforeMount(el, { value }) {
+-    if (el instanceof HTMLImageElement) el.src = blank(value.width || 160, value.height || 120)
++    if (el instanceof HTMLImageElement) { rememberSize(el, value.width, value.height); el.src = blank(value.width || 160, value.height || 120) }
+     else el.preload = 'none'
+   },
+   mounted(el, { value }) {
+     const root = el.closest('.messages'), entry: Entry = { el, options: value, near: false, hover: false, preview: '', time: 0, root, cleanup: () => {} }
+     entries.set(el, entry); listen(true)
+-    const load = () => { if (el instanceof HTMLImageElement && el.getAttribute('src') === entry.options.src) { if (el.naturalWidth) { el.width = el.naturalWidth; el.height = el.naturalHeight } update(entry) } }
++    const load = () => { if (el instanceof HTMLImageElement && el.getAttribute('src') === entry.options.src) { if (el.naturalWidth) { el.width = el.naturalWidth; el.height = el.naturalHeight; rememberSize(el, el.naturalWidth, el.naturalHeight) } update(entry) } }
+     const enter = () => { entry.hover = true; update(entry) }, leave = () => { entry.hover = false; update(entry) }
+     const metadata = () => { if (entry.time && el instanceof HTMLMediaElement) { try { el.currentTime = entry.time } catch {} } }
+     el.addEventListener('load', load); el.addEventListener('pointerenter', enter); el.addEventListener('pointerleave', leave); el.addEventListener('loadedmetadata', metadata)
+@@ -79,7 +86,14 @@
+   },
+   updated(el, { value }) {
+     const entry = entries.get(el); if (!entry) return
+-    if (entry.options.src !== value.src) { entry.preview = ''; entry.time = 0 }
++    if (entry.options.src !== value.src) {
++      entry.preview = ''; entry.time = 0
++      if (el instanceof HTMLImageElement) {
++        el.removeAttribute('width'); el.removeAttribute('height')
++        el.style.removeProperty('--media-natural-width'); el.style.removeProperty('--media-fit-width'); el.style.removeProperty('aspect-ratio')
++        rememberSize(el, value.width, value.height)
++      }
++    }
+     entry.options = value; update(entry)
+   },
+   beforeUnmount(el) {
+--- a/scripts/test-ui-community.mjs
++++ b/scripts/test-ui-community.mjs
+@@ -24,9 +24,30 @@
+   await page.getByText('已显示全部文章',{exact:true}).waitFor()
+   await page.locator('.post-card').first().click()
+   await page.locator('.article-detail h1').filter({hasText:'物理光学：从观察开始'}).waitFor()
++  await page.waitForFunction(()=>getComputedStyle(document.querySelector('.board-library')).visibility==='hidden')
++  const area=await page.evaluate(()=>({reader:document.querySelector('.board-reader').getBoundingClientRect().width,workspace:document.querySelector('.community-workspace').clientWidth,scroll:document.querySelector('.reader-scroll').clientHeight,page:document.querySelector('.community-page').clientHeight,header:document.querySelector('.reader-header').getBoundingClientRect().height}))
++  assert.ok(area.reader>area.workspace*.95,JSON.stringify(area));assert.ok(area.scroll>area.page*.85,JSON.stringify(area));assert.ok(area.header<65)
++  await page.getByRole('button',{name:'展开板块列表',exact:true}).click()
++  await page.waitForFunction(()=>getComputedStyle(document.querySelector('.board-library')).visibility==='visible')
++  await page.getByRole('button',{name:'收起板块列表',exact:true}).click()
++  await page.getByRole('button',{name:'板块操作',exact:true}).click()
++  await page.getByRole('button',{name:'管理',exact:true}).waitFor({state:'visible'})
++  await page.getByRole('button',{name:'板块操作',exact:true}).click()
++  for (const width of [1280,980,740,390,320]) {
++    await page.setViewportSize({width,height:600})
++    await page.waitForTimeout(280)
++    const m=await page.evaluate(()=>({doc:document.documentElement.scrollWidth,reader:document.querySelector('.board-reader').clientWidth,scroll:document.querySelector('.reader-scroll').clientHeight}))
++    assert.ok(m.doc<=width&&m.reader>width*.85&&m.scroll>480,JSON.stringify({width,m}))
++    if(process.env.COMMUNITY_QA_DIR) await page.screenshot({animations:'disabled',path:process.env.COMMUNITY_QA_DIR+'/article-'+width+'.png'})
++  }
++  await page.setViewportSize({width:1280,height:850})
++  await page.emulateMedia({reducedMotion:'reduce'})
++  assert.ok(await page.locator('.community-workspace').evaluate(e=>parseFloat(getComputedStyle(e).transitionDuration)<.001))
++  await page.emulateMedia({reducedMotion:'no-preference'})
+   assert.equal(await page.evaluate(()=>window.evil),undefined)
+   assert.equal(await page.locator('.article-prose script, .article-prose [onerror]').count(),0)
+   await page.getByRole('button',{name:'文章列表',exact:true}).click()
++  await page.locator('.post-card').first().waitFor()
+   assert.equal(await page.locator('.post-card').count(),31)
+   await page.getByRole('button',{name:'管理',exact:true}).click()
+   await page.getByRole('dialog',{name:'管理板块'}).waitFor()
+@@ -58,7 +79,7 @@
+   await page.getByRole('button',{name:'热门',exact:true}).click()
+   await page.waitForFunction(()=>!window.__community.ctx.community.state.loading)
+   await page.getByLabel('筛选已加载板块').fill('９２５')
+-  assert.equal(await page.locator('.board-row').count(),1)
++  await page.waitForFunction(()=>document.querySelectorAll('.board-row').length===1)
+   await page.getByRole('button',{name:'清空板块搜索',exact:true}).click()
+   await page.getByRole('button',{name:'创建板块',exact:true}).click()
+   await page.getByRole('dialog',{name:'创建板块'}).waitFor()
+--- a/scripts/test-ui-resources.mjs
++++ b/scripts/test-ui-resources.mjs
+@@ -47,6 +47,32 @@
+  await page.waitForFunction(()=>document.querySelector('[data-mid=pressure-0] img.sticker')?.dataset.mediaState==='preview')
+  await page.evaluate(()=>{const ctx=window.__qa.ctx;ctx.chat.state.messages.push({id:'video-resource',type:10,ts:Date.now()+999,senderId:'other',sender:'测试',content:{},elements:[{type:'video',attrs:{src:'/qa-video/test.mp4'}}]})})
+  assert.equal(await page.locator('.video-wrap video').getAttribute('preload'),'none')
++ // Real message rendering must fit original pixels, including stale metadata and released stills.
++ await page.evaluate(()=>{
++   window.__resources.setResourceMode(false)
++   const svg=(w,h)=>'data:image/svg+xml,'+encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}"><rect width="100%" height="100%" fill="#69a"/></svg>`)
++   window.__qa.ctx.chat.state.messages=[
++     [1600,900,1200,2400],[600,2400,600,2400],[800,800,0,0],[80,40,80,40],
++   ].map(([w,h,mw,mh],i)=>({id:'fit-'+i,type:2,ts:Date.now()+i,senderId:'other',sender:'测试',content:{},elements:[{type:'img',attrs:{src:svg(w,h),width:mw,height:mh}}]}))
++ })
++ const verifyImages=async()=>{
++   const boxes=await page.locator('img.media').evaluateAll(imgs=>imgs.map(img=>({w:img.clientWidth,h:img.clientHeight,nw:img.naturalWidth,nh:img.naturalHeight})))
++   for(const b of boxes){assert.ok(b.w>0&&b.h>0&&b.w<=320&&b.h<=461,JSON.stringify(b));assert.ok(Math.abs(b.w/b.h-b.nw/b.nh)<.025,JSON.stringify(b))}
++   return boxes
++ }
++ await page.waitForFunction(()=>document.querySelectorAll('img.media').length===4&&[...document.querySelectorAll('img.media')].every(img=>img.complete&&img.naturalWidth&&img.dataset.mediaState==='source'))
++ const fitted=await verifyImages()
++ assert.ok(fitted[0].h<190,'landscape image must not use a tall metadata frame')
++ assert.equal(fitted[3].w,80,'small images should keep their own size')
++ await page.setViewportSize({width:720,height:820});await page.waitForTimeout(100);await verifyImages()
++ await page.evaluate(()=>window.__resources.setResourceMode(true))
++ await page.evaluate(()=>window.dispatchEvent(new CustomEvent('yh-window-minimized',{detail:true})))
++ await page.waitForFunction(()=>[...document.querySelectorAll('img.media')].every(img=>img.dataset.mediaState==='released'))
++ const released=await page.locator('img.media').evaluateAll(imgs=>imgs.map(img=>({w:img.clientWidth,h:img.clientHeight})))
++ for(let i=0;i<released.length;i++) assert.ok(Math.abs(released[i].w/released[i].h-fitted[i].w/fitted[i].h)<.025)
++ await page.evaluate(()=>window.dispatchEvent(new CustomEvent('yh-window-minimized',{detail:false})))
++ await page.setViewportSize({width:1280,height:820})
++ console.log('PASS: actual image ratios override stale dimensions, landscape/portrait/square/small images fit without letterboxing; viewport resize and released placeholders preserve proportions')
+  const cdp=await page.context().newCDPSession(page);const heap=await cdp.send('Runtime.getHeapUsage')
+  console.log(JSON.stringify({before,after,jsHeapMiB:Number((heap.usedSize/1048576).toFixed(2)),note:'JS heap only; excludes WebView/Node/GPU/native memory'},null,2))
+  assert.deepEqual(errors,[])
+--- a/package.json
++++ b/package.json
+@@ -1,7 +1,7 @@
+ {
+   "name": "yunhu-vue",
+   "private": true,
+-  "version": "1.0.20",
++  "version": "1.0.21",
+   "type": "module",
+   "description": "云湖牢大版 · Vue3 + 真 cordis 插件内核 + Satori 协议 + WebDAV 网关（仅供学习交流）",
+   "scripts": {
+--- a/package-lock.json
++++ b/package-lock.json
+@@ -1,12 +1,12 @@
+ {
+   "name": "yunhu-vue",
+-  "version": "1.0.20",
++  "version": "1.0.21",
+   "lockfileVersion": 3,
+   "requires": true,
+   "packages": {
+     "": {
+       "name": "yunhu-vue",
+-      "version": "1.0.20",
++      "version": "1.0.21",
+       "dependencies": {
+         "@capacitor/core": "^8.5.2",
+         "@jodit/image-editor": "0.2.5",
+--- a/src-tauri/tauri.conf.json
++++ b/src-tauri/tauri.conf.json
+@@ -1,7 +1,7 @@
+ {
+   "$schema": "https://schema.tauri.app/config/2",
+   "productName": "YunhuLaoda",
+-  "version": "1.0.20",
++  "version": "1.0.21",
+   "identifier": "com.richkobe.yunhulaoda",
+   "build": {
+     "beforeBuildCommand": "",
+--- a/src-tauri/Cargo.toml
++++ b/src-tauri/Cargo.toml
+@@ -1,6 +1,6 @@
+ [package]
+ name = "yunhulaoda-desktop"
+-version = "1.0.20"
++version = "1.0.21"
+ description = "云湖牢大版桌面客户端（Tauri 壳 + Node sidecar 服务）"
+ authors = ["yibanm"]
+ edition = "2021"
+--- a/src-tauri/Cargo.lock
++++ b/src-tauri/Cargo.lock
+@@ -4833,7 +4833,7 @@
+ 
+ [[package]]
+ name = "yunhulaoda-desktop"
+-version = "1.0.20"
++version = "1.0.21"
+ dependencies = [
+  "base64 0.22.1",
+  "serde",
+--- /dev/null
++++ b/RELEASE_NOTES_1.0.21.md
+@@ -0,0 +1,51 @@
++# YH LaoDa 1.0.21 — 阅读比例、图片适配与板块动画
++
++基线：最新的 `yunhu-richkobe-1.0.20-complete-source.zip`。先扫描完整源码包并检查板块页、公共样式、图片消息组件、媒体资源生命周期和 Windows 打包脚本后做增量修改。源码包未包含 Git 元数据，无法报告分支和提交 SHA；本次未访问用户 GitHub 账号。
++
++## 变化
++
++- 打开文章默认进入专注阅读：收起板块列表和页面级工具区，板块标题缩成一行，正文使用主要宽高。可以展开板块列表、显示关注/管理操作，或退出专注阅读。返回文章列表时恢复完整导航。
++- 普通布局的侧栏按容器宽度分配 220–270px；正文使用 16px 字号、1.85 行距，宽屏最大 1000px，兼顾内容面积与长行阅读。窄窗口继续使用单栏，避免横向溢出。
++- 修复聊天图片的上下/左右大块留白：不再让 HTML 宽高属性分别被最大宽高截断；按真实图片尺寸等比计算显示宽度，保留完整图片，不裁切、不拉伸，小图不强制放大。资源加载后的真实比例优先于消息中的旧尺寸。图片最大显示宽度仍为 320px，高度通过比例约束在 460px 内。
++- 保留图片离屏释放、动图静态预览、悬停播放和最小化暂停；释放占位和静态预览继续使用原图显示比例。
++- 板块侧栏折叠/展开、顶部收起、操作区展开、搜索结果增删与移动、文章/列表切换加入短过渡；板块和文章请求显示加载进度条。搜索与数据更新立即处理，动画不额外延迟请求。加载结束即移除进度条。
++- 适配系统“减少动态效果”。动画仅限板块界面，无全局轮询或常驻动画定时器。
++- 保留 1.0.20 的完整 Windows Node 运行时和校验，桌面窗口退出/托盘退出的 sidecar kill + wait 与 8902 端口释放路径未改变。
++
++## 关键修改
++
++`src/console/pages/CommunityPage.vue`、`src/console/components/Icon.vue`、`src/components/MessageElements.vue`、`src/core/resource-media.ts`，以及版本文件、界面回归脚本。附 `PATCH_1.0.21.diff` 便于审阅本次修改；完整源码保留历史功能和说明。
++
++## 验证
++
++- 板块服务 10 项回归通过；覆盖请求竞态、翻页重试、权限、草稿、退出清理。
++- 真实 Vue 页面浏览器检查通过：专注阅读面积、侧栏展开/收起、操作面板、文章返回、搜索、对话框、320–1280px 尺寸、深浅色和减少动态效果。
++- 真实聊天媒体检查通过：横图、长图、方图、小图、错误协议尺寸、窗口缩放及最小化释放后的比例；120 个动图的离屏释放和悬停播放检查通过。
++- Vue 类型检查、源码 preflight、生产构建、sidecar 重新打包通过。
++- 生产页面启动检查通过：隔离空数据目录，模拟上游，阻断外部 HTTP/WebSocket；实际插件启动和登录界面可用。
++- sidecar 进程身份校验、拒绝未授权请求、模拟 AI 转发检查通过。
++- Windows 运行时完整性回归 2 项通过；使用 NSIS 在本机编译安装器，解包后检查所有资源及摘要一致性。
++
++安装器内前端、sidecar、安装登记与源码版本为 1.0.21；Rust 原生壳和 WebView2Loader 沿用 1.0.20 对应的完整二进制，本次未重新编译 Rust 主程序。未在真实 Windows 桌面安装运行或登录真实账号；浏览器与 sidecar 检查使用本机 Linux，不能替代原生 Windows 端到端验证。
++
++## 安装与复现
++
++完全退出旧程序后覆盖安装，无需清除本地账号或设置。
++
++```bash
++npm ci
++npm run typecheck
++npm run test:community
++npm run build
++node scripts/build-server-bundle.mjs
++npm run test:sidecar-userbot
++npm run fetch:windows-node
++npm run test:windows-assets
++# 浏览器检查需要 Playwright 和 Chromium
++PLAYWRIGHT_MODULE=/absolute/path/playwright/index.mjs CHROMIUM_EXECUTABLE=/path/to/chromium npm run test:ui-community
++PLAYWRIGHT_MODULE=/absolute/path/playwright/index.mjs CHROMIUM_EXECUTABLE=/path/to/chromium npm run test:ui-resources
++PLAYWRIGHT_MODULE=/absolute/path/playwright/index.mjs CHROMIUM_EXECUTABLE=/path/to/chromium npm run test:ui-startup
++# 原生与安装器构建参照 scripts/package-windows-local.sh
++```
++
++完整源码包包含生产 dist 与生成的 sidecar；不包含 node_modules、Rust target、Windows Node 二进制、安装器、测试临时数据或个人凭据。

@@ -13,10 +13,10 @@
  *   · 自带「主题」控制台页面，配置写在 yunhu.config.yml → plugins.theme
  */
 import Schema from 'schemastery'
-import { reactive } from 'vue'
+import { reactive, watch } from 'vue'
 import type { Context } from '../core/context'
 import ThemePage from '../console/pages/ThemePage.vue'
-import SettingsUserPage from '../console/pages/SettingsUserPage.vue'
+import { themePalette } from '../core/theme-colors'
 
 export interface ThemePreset {
   id: string
@@ -74,7 +74,6 @@ const NEON_CSS_DARK = `
 .chat-header .t, .k-title h2 { text-shadow: 0 0 10px #ff33ff; }
 .bubble { text-shadow: 0 0 6px rgba(255,51,255,.55); }
 .row.right .bubble { text-shadow: 0 0 6px rgba(255,255,255,.5); }
-button { color: #fff; text-shadow: 0 0 5px #ff33ff, 0 0 10px #ff33ff; }
 .rail-logo { background: linear-gradient(135deg, #9700ff, #d20076); }
 .k-header, .statusbar { backdrop-filter: blur(6px); }
 .badge { box-shadow: 0 0 8px #ff33ff; }
@@ -82,7 +81,14 @@ button { color: #fff; text-shadow: 0 0 5px #ff33ff, 0 0 10px #ff33ff; }
 const NEON_BG_DARK = 'linear-gradient(45deg, #00009c, #9700ff, #d20076)'
 const NEON_BG_LIGHT = 'linear-gradient(45deg, #d8c7ff, #ffd6f5, #cfe3ff)'
 
+/** 旧默认「云湖蓝」存档/配置一律迁移到「科比紫」（用户指定新默认） */
+function migratePreset(p: string | undefined): string {
+  return p === 'yunhu' ? 'kobe' : (p || '')
+}
+
 export const PRESETS: ThemePreset[] = [
+  /* 默认主题（用户指定名）：M3 浅紫调，随明暗切换 */
+  { id: 'kobe', name: '科比紫', group: '内置', mode: 'dark', accent: '#d0bcff', bg: '#141218', rail: '#1d1b20', card: '#211f26' },
   { id: 'yunhu', name: '云湖蓝', group: '内置', mode: 'dark', accent: '#5a8cf8' },
   { id: 'midnight', name: '深夜紫', group: '内置', mode: 'dark', accent: '#a78bfa', bg: '#141225', rail: '#0d0b1a', card: '#1d1a33' },
   { id: 'forest', name: '森野绿', group: '内置', mode: 'dark', accent: '#34d399', bg: '#101a16', rail: '#0a1310', card: '#17241e' },
@@ -120,7 +126,7 @@ export const PRESETS: ThemePreset[] = [
     id: 'doki-mai', name: 'Mai Dark', group: 'Doki · Bunny Senpai', mode: 'dark',
     accent: '#fee3cf', bg: '#25254B', rail: '#1c1c3c', card: '#242448', border: '#33335f', fg: '#e6e6ff', fg2: '#a0a0cf',
     sticker: DOKI_CDN + 'stickers/vscode/bunnySenpai/mai/mai_dark.png',
-    css: `.rail-logo { background: linear-gradient(135deg,#5b5bff,#fee3cf); } .row.right .bubble { color:#2a2a52; }`,
+    css: `.rail-logo { background: linear-gradient(135deg,#5b5bff,#fee3cf); }`,
   },
   {
     id: 'doki-nagatoro', name: 'Hayase Nagatoro', group: 'Doki · 不要欺负我', mode: 'dark',
@@ -173,9 +179,10 @@ export const themePlugin = {
   provide: ['theme'],
 
   apply(ctx: Context, config: any = {}) {
-    const saved = JSON.parse(localStorage.getItem('yh.theme.pref') || 'null') || {}
+    let saved: any = {}
+    try { saved = JSON.parse(localStorage.getItem('yh.theme.pref') || 'null') || {} } catch { /* 坏配置使用默认值 */ }
     const state = reactive({
-      preset: saved.preset || config.preset || 'yunhu',
+      preset: migratePreset(saved.preset) || migratePreset(config.preset) || 'kobe',   // 旧默认「云湖蓝」迁移到「科比紫」
       accent: saved.accent || config.accent || '',
       wallpaper: saved.wallpaper || config.wallpaper || '',
       radius: saved.radius ?? config.radius ?? 10,
@@ -214,31 +221,31 @@ export const themePlugin = {
     function apply() {
       const root = document.documentElement
       const p = current()
-      const accent = state.accent || p.accent
+      const mode = ctx.ui.effectiveTheme as 'dark' | 'light'
+      const palette = themePalette(p, mode, state.accent)
+      const accent = palette.accent
 
-      root.dataset.theme = p.mode
+      root.dataset.theme = mode
       root.style.setProperty('--acc', accent)
-      root.style.setProperty('--acc2', shade(accent, p.mode === 'dark' ? -14 : -12))
-      root.style.setProperty('--acc-soft', alpha(accent, p.mode === 'dark' ? 0.16 : 0.1))
+      root.style.setProperty('--acc2', shade(accent, mode === 'dark' ? -14 : -12))
+      root.style.setProperty('--acc-soft', alpha(accent, mode === 'dark' ? 0.16 : 0.1))
+      root.style.setProperty('--on-acc', palette.onAccent)
+      root.style.setProperty('--link', palette.link)
       root.style.setProperty('--radius', state.radius + 'px')
 
       const setOrClear = (name: string, val?: string) => {
         if (val) root.style.setProperty(name, val)
         else root.style.removeProperty(name)
       }
-      setOrClear('--bg', p.bg)
-      setOrClear('--rail', p.rail)
-      setOrClear('--card', p.card)
-      setOrClear('--line', p.border)
-      setOrClear('--fg', p.fg)
-      setOrClear('--fg2', p.fg2)
+      for (const key of ['bg', 'rail', 'card', 'card2', 'line', 'fg', 'fg2']) setOrClear('--' + key, palette[key])
+      setOrClear('--bubble', palette.card2)
 
       if (state.wallpaper) root.style.setProperty('--wallpaper', `url("${state.wallpaper}")`)
       else root.style.removeProperty('--wallpaper')
       root.style.setProperty('--wallpaper-blur', state.blur + 'px')
 
       // 附加 CSS
-      ensureStyle().textContent = p.css || ''
+      ensureStyle().textContent = palette.matching ? (p.css || '') : ''
 
       // 看板娘贴纸
       const stickerUrl = state.sticker || p.sticker || ''
@@ -261,9 +268,27 @@ export const themePlugin = {
       presets: PRESETS,
       current,
       apply,
-      setPreset(id: string) { state.preset = id; state.accent = ''; state.sticker = ''; apply() },
+      setPreset(id: string) { state.preset = id; state.accent = ''; state.sticker = ''; ctx.ui.setTheme(current().mode); apply() },
       setAccent(hex: string) { state.accent = hex; apply() },
       setWallpaper(url: string) { state.wallpaper = url; apply() },
+      /** 本地图片上传到图床后设为壁纸（避免 base64 塞 localStorage） */
+      async uploadWallpaper(file: File) {
+        const api: any = ctx.get('api')
+        if (!api?.uploadAndUrl) throw new Error('api 服务未就绪')
+        const { url } = await api.uploadAndUrl(file, 'image')
+        state.wallpaper = url
+        apply()
+        return url
+      },
+      /** 本地图片上传到图床后设为看板娘贴纸 */
+      async uploadSticker(file: File) {
+        const api: any = ctx.get('api')
+        if (!api?.uploadAndUrl) throw new Error('api 服务未就绪')
+        const { url } = await api.uploadAndUrl(file, 'image')
+        state.sticker = url
+        apply()
+        return url
+      },
       setRadius(n: number) { state.radius = Number(n) || 0; apply() },
       setBlur(n: number) { state.blur = Number(n) || 0; apply() },
       setSticker(url: string) { state.sticker = url; apply() },
@@ -271,7 +296,7 @@ export const themePlugin = {
       setStickerOffset(x: string, y: string) { state.stickerX = x; state.stickerY = y; apply() },
       toggleSticker() { state.showSticker = !state.showSticker; apply() },
       reset() {
-        state.preset = 'yunhu'; state.accent = ''; state.wallpaper = ''
+        state.preset = 'kobe'; state.accent = ''; state.wallpaper = ''
         state.radius = 10; state.blur = 0
         state.sticker = ''; state.showSticker = true; state.stickerOpacity = 0.35
         apply()
@@ -281,7 +306,15 @@ export const themePlugin = {
     if (config.mode) (ctx as any).ui?.setTheme?.(config.mode)
 
     // cordis 的 effect 回调必须返回一个「可销毁物」，卸载时自动执行
-    ctx.effect(() => { apply(); return () => { /* 主题副作用随插件卸载回收 */ } })
+    ctx.effect(() => {
+      const stop = watch(() => ctx.ui.effectiveTheme, apply, { immediate: true, flush: 'sync' })
+      return () => {
+        stop()
+        document.getElementById('yh-theme-css')?.remove()
+        document.getElementById('yh-sticker')?.remove()
+        for (const key of ['acc', 'acc2', 'acc-soft', 'on-acc', 'link', 'radius', 'bg', 'rail', 'card', 'card2', 'line', 'fg', 'fg2', 'bubble', 'wallpaper', 'wallpaper-blur']) document.documentElement.style.removeProperty('--' + key)
+      }
+    })
     ctx.set('theme', theme)
     ctx.logger?.info(`theme 插件已加载（${current().name}）`)
 
@@ -295,7 +328,7 @@ export const themePlugin = {
           value: { preset: 'dark', radius: 8 },
         })
 cc.page({ name: '主题', path: '/theme', icon: 'palette', order: 850, component: ThemePage })
-        cc.page({ name: '用户设置', path: '/settings-user', icon: 'sliders', order: 870, component: SettingsUserPage })
+        // 用户设置已并入主题页底部（用户要求），不再独立成页
       })
     })
   },

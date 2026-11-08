@@ -40,7 +40,7 @@ function copyAll() {
   const text = list.value.map((l: any) => `[${l.level}] ${l.text}`).join('\n')
   navigator.clipboard?.writeText(text).then(
     () => ctx.ui?.toast('已复制当前列表', 'success'),
-    () => window.prompt('复制：', text),
+    () => navigator.clipboard.writeText(text).then(() => ctx.ui.toast('已复制', 'success')).catch(() => ctx.ui.toast('复制失败', 'error')),
   )
 }
 </script>

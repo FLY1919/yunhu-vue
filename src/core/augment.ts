@@ -11,6 +11,7 @@ declare module 'cordis' {
   interface Context {
     /* ---- 本项目注册的服务 ---- */
     app: any
+    storage: any
     /** 本项目自己的配置服务（cordis 内置的 config 已被占用，故用 cfg） */
     cfg: any
     /** 日志列表（包装 cordis 的 logger 得到） */
@@ -26,6 +27,8 @@ declare module 'cordis' {
     satori: any
     adapter: any
     chat: any
+    calls: any
+    lock?: { isLocked: boolean }
     ws: any
     messageActions: any
     group: any
@@ -36,6 +39,8 @@ declare module 'cordis' {
     stickers: any
     social: any
     botconsole: any
+    userbot: any
+    aiPanel: any
     community: any
     session: any
     /** 统一事件层：ctx.event.on/emit/history */
@@ -49,13 +54,18 @@ declare module 'cordis' {
     'auth/ready': (...args: any[]) => void
     'chat/open': (...args: any[]) => void
     'chat/incoming': (...args: any[]) => void
+    'chat/locate': (...args: any[]) => void
     'chat/reply': (...args: any[]) => void
     'chat/scroll-bottom': (...args: any[]) => void
     'chat/selection': (...args: any[]) => void
     'ui/toast': (...args: any[]) => void
     'ws/raw': (...args: any[]) => void
     'ws/message': (...args: any[]) => void
+    'ws/call-candidate': (signal: import('./yunhu-calls').CallCandidate) => void
+    'ws/call': (signal: import('./yunhu-calls').LiveCallSignal) => void
+    'ws/group-call': (invite: import('./yunhu-calls').GroupCallInvite) => void
     'ws/draft': (...args: any[]) => void
+    'ws/draft-ready': () => void
     'ws/stream': (...args: any[]) => void
     'message-created': (...args: any[]) => void
     'message-updated': (...args: any[]) => void

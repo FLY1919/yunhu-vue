@@ -116,7 +116,7 @@ function saveAndReload() {
 
     <!-- 表单模式：按各插件的 Config Schema 自动生成（对标 Koishi 控制台设置页） -->
     <template v-if="mode === 'form'">
-      <KCard v-for="it in schemas" :key="it.key" :title="it.key" class="mt">
+      <KCard v-for="it in schemas" :key="it.key" :title="({ chat: '消息与刷新', quickreply: '快捷回复', theme: '主题与外观', social: '通讯录', community: '社区', stickers: '表情包', botconsole: '机器人', logger: '日志' } as any)[it.key] || it.key" :data-setting-id="'config-' + it.key" tabindex="-1" class="mt">
         <SchemaForm :schema="it.schema" :model-value="draft[it.key] || {}" @update:model-value="v => draft[it.key] = v" />
       </KCard>
       <p v-if="!schemas.length" class="dim small">

@@ -4,7 +4,7 @@ import { inject, ref } from 'vue'
 import KLayout from '../components/KLayout.vue'
 import KCard from '../components/KCard.vue'
 
-const ctx = inject('ctx')
+const ctx = inject<any>('ctx')
 const qr = ctx.quickreply
 const ui = ctx.ui
 const draft = ref('')

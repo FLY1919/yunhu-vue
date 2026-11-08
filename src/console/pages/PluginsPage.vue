@@ -5,7 +5,7 @@ import KLayout from '../components/KLayout.vue'
 import KCard from '../components/KCard.vue'
 import Icon from '../components/Icon.vue'
 
-const ctx = inject('ctx')
+const ctx = inject<any>('ctx')
 const app = ctx.app
 const ui = ctx.ui
 const console_ = ctx.console

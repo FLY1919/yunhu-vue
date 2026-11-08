@@ -13,19 +13,29 @@
  *   · /v1/user/get-user-data 返回 data.data  ← 双层嵌套
  *   · /v1/user/save-user-data 是扁平字段
  */
-import { inject, ref, computed, onMounted } from 'vue'
-import KLayout from '../components/KLayout.vue'
+import { inject, ref, computed, onMounted, onUnmounted } from 'vue'
 import KCard from '../components/KCard.vue'
+import Icon from '../components/Icon.vue'
 import { resUrl } from '../../core/res'
 import { fallbackAvatar, fmtTime } from '../../core/util'
 
 const ctx = inject<any>('ctx')
+const props = withDefaults(defineProps<{ section?: string }>(), { section: 'profile' })
 const api = ctx.api
 const chat = ctx.chat
 const auth = ctx.auth
 const ui = ctx.ui
 
 const busy = ref(false)
+
+/** 当前会话（标题栏展示用） */
+const cur = computed(() => chat.state.current)
+/** 性别选项（云湖接口约定：1 男 2 女 3 其他，见 api.ts getMyProfile 注释） */
+const GENDERS = [
+  { v: 1, n: '男' },
+  { v: 2, n: '女' },
+  { v: 3, n: '其他' },
+]
 
 /* ============ 账号信息 ============ */
 const stats = ref<any>({})          // /v1/user/get-user 的结果
@@ -111,22 +121,24 @@ async function saveProfile() {
 /** 复制文本（非安全上下文没有 clipboard，退化到 prompt） */
 async function copy(text: string, label = '') {
   try { await navigator.clipboard.writeText(text); ui.toast(`已复制${label}`, 'success') }
-  catch { window.prompt(`复制${label}：`, text) }
+  catch { /* 剪贴板不可用时静默失败，值已在界面可见 */ }
 }
 
 onMounted(loadAll)
-ctx.on('chat/open', loadAll)
+const off = ctx.on('chat/open', loadAll)
+onUnmounted(() => off?.())
 </script>
 
 <template>
-  <KLayout ns="settings" title="设置" desc="账号信息 · 个人资料 · 群设置">
-    <template #actions>
+  <!-- 片段组件：账号设置内容（嵌入 AccountPage「账号」板块，不再单独成页） -->
+  <div class="set-frag">
+    <div class="set-actions">
       <span class="pill">{{ cur?.name || '未选择会话' }}</span>
       <button class="ghost small" @click="loadAll">刷新</button>
-    </template>
+    </div>
 
     <!-- ============ ① 账号信息 ============ -->
-    <KCard title="账号信息">
+    <KCard v-if="section === 'account'" title="账号信息" data-setting-id="account-info">
       <div class="account">
         <img :src="auth.state.user?.avatar ? resUrl(auth.state.user.avatar) : fallbackAvatar(auth.state.user?.name)"
              @error="(e: any) => (e.target.src = fallbackAvatar(auth.state.user?.name))" alt="" />
@@ -142,7 +154,7 @@ ctx.on('chat/open', loadAll)
       </div>
 
       <div class="grid mt-sm">
-        <div class="kv"><span class="k">金币</span><b>🪙 {{ meInfo.coin ?? 0 }}</b></div>
+        <div class="kv"><span class="k">金币</span><b><Icon name="coin" :size="14" class="inline-icon" aria-hidden="true" /> {{ meInfo.coin ?? 0 }}</b></div>
         <div class="kv"><span class="k">邀请码</span><span>{{ meInfo.invitationCode || '—' }}</span></div>
         <div class="kv"><span class="k">注册时间</span><span>{{ stats.registerTime || '—' }}</span></div>
         <div class="kv"><span class="k">在线天数</span><span>{{ stats.onlineDay ?? '—' }} 天（连续 {{ stats.continuousOnlineDay ?? '—' }}）</span></div>
@@ -158,15 +170,15 @@ ctx.on('chat/open', loadAll)
         <button class="ghost small" @click="showToken = !showToken">{{ showToken ? '隐藏' : '显示' }}</button>
         <button class="ghost small" @click="copy(api.token, ' Token')">复制</button>
       </div>
-      <p class="dim small mt-sm">Token 等同账号凭证，别外发；这里只存在浏览器 localStorage。</p>
+      <p class="dim small mt-sm">Token 用于本机恢复登录，请勿分享给他人。</p>
     </KCard>
 
     <!-- ============ ② 个人资料 ============ -->
-    <KCard title="个人资料" class="mt">
+    <KCard v-if="section === 'profile'" title="个人资料" data-setting-id="profile">
       <div class="account">
         <img :src="auth.state.user?.avatar ? resUrl(auth.state.user.avatar) : fallbackAvatar(auth.state.user?.name)"
              @error="(e: any) => (e.target.src = fallbackAvatar(auth.state.user?.name))" alt="" />
-        <div class="acc-main dim small">头像会先上传到云湖数据床，再用完整 URL 调 /v1/user/edit-avatar</div>
+        <div class="acc-main dim small">更新头像、昵称和对外展示的个人资料。</div>
         <button class="ghost small" :disabled="busy" @click="avatarInput?.click()">更换头像</button>
         <input ref="avatarInput" type="file" accept="image/*" hidden @change="onAvatar" />
       </div>
@@ -214,11 +226,12 @@ ctx.on('chat/open', loadAll)
     </KCard>
 
     <p class="dim small mt">群相关设置已移到「聊天 → 右上角 ⋮ → 群设置 / 成员 / 群标签」里。</p>
-
-  </KLayout>
+  </div>
 </template>
 
 <style scoped>
+.set-frag { display: flex; flex-direction: column; gap: 14px; }
+.set-actions { display: flex; align-items: center; gap: 8px; }
 .row-inline { display: flex; gap: 8px; align-items: center; }
 .row-inline input { flex: 1; min-width: 0; }
 .row-inline .grow { flex: 1; }

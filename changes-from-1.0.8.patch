@@ -1,0 +1,2353 @@
+diff --git a/.github/workflows/build-artifacts.yml b/.github/workflows/build-artifacts.yml
+index 2f179e6..8256547 100644
+--- a/.github/workflows/build-artifacts.yml
++++ b/.github/workflows/build-artifacts.yml
+@@ -43,6 +43,11 @@ jobs:
+       - name: 聊天与通知回归测试
+         run: npm run test:chat
+ 
++      - name: 账号、媒体与自动锁定回归测试
++        run: |
++          npm run test:settings
++          npm run test:features
++
+       - name: 构建前端 + server bundle
+         run: |
+           npm run build
+diff --git a/.github/workflows/build-tauri.yml b/.github/workflows/build-tauri.yml
+index 60dea9f..f4b52cb 100644
+--- a/.github/workflows/build-tauri.yml
++++ b/.github/workflows/build-tauri.yml
+@@ -6,12 +6,14 @@ on:
+     paths:
+       - 'src/**'
+       - 'server.ts'
++      - 'sticker-directory.ts'
+       - 'webdav.ts'
+       - 'satori.ts'
+       - 'satori-ws.ts'
+       - 'src-tauri/**'
+       - 'scripts/build-server-bundle.mjs'
+       - 'package.json'
++      - 'package-lock.json'
+       - '.github/workflows/build-tauri.yml'
+   workflow_dispatch:
+ 
+@@ -46,6 +48,13 @@ jobs:
+       - name: 安装前端依赖
+         run: npm ci --no-audit --no-fund
+ 
++      - name: 类型与功能回归检查
++        run: |
++          npm run typecheck
++          npm run test:chat
++          npm run test:settings
++          npm run test:features
++
+       - name: 构建前端 + server bundle
+         run: |
+           npm run build
+diff --git a/RELEASE_NOTES_1.0.9.md b/RELEASE_NOTES_1.0.9.md
+new file mode 100644
+index 0000000..fcc5f98
+--- /dev/null
++++ b/RELEASE_NOTES_1.0.9.md
+@@ -0,0 +1,74 @@
++# YH LaoDa 1.0.9
++
++基于已交付的 `yunhu-richkobe-1.0.8-complete-source.zip` 增量修改。
++基线 SHA-256：`af38f9579f1f9ea00c131f23fe352e7e75b1aa168820689cdfb7bb596c5795a4`。
++
++## 修复内容
++
++```text
++1. 修复设置内容被外层裁掉、滚动条消失及滚轮无法滚动；修正聊天与登录容器的高度约束。
++2. 图片、视频查看器支持触控板双指平移、捏合或 Ctrl + 滚轮缩放，并保留缩放与还原按钮。
++3. 图片编辑器支持预览缩放与双轴滚动，放大后可以查看局部；查看器编辑入口只显示图标。
++4. 修复首次账号登录与启动恢复的并发覆盖；保存账号立即更新列表，同一数据文件的写入按顺序完成。
++5. 用户资料页新增“已创建的表情包”，按作者云湖 ID 查询，显示名称按钮并在客户端打开对应合集。
++6. 好友判断优先使用当前通讯录，统一字符串 ID，并允许启动加载失败后重试。
++7. 群聊资料走群资料入口；不再把“用户不存在”推断为机器人，过期资料响应不会串到其他用户。
++8. “发现”页按云湖文档传递 appChannel、category、keyword、size、page，并解析 categories 和 groupList。
++9. 图片编辑新增任意颜色画笔与粗细设置，支持拖画、点画、撤销/重做和清除；文字可在点击位置放置。
++10. GIF 按文件签名识别并逐帧解码，支持动画预览、选帧及 GIF 导出，保留帧时长、循环与透明背景。
++11. 修复视频上传 HTTP 400 区域提示在重试前被拒绝的问题；自动转到正确七牛区域，按存储桶缓存成功地址。
++12. 设置 → 常规 / 账号与登录新增自动锁定：最小化时锁定、失去焦点后等待 1–1440 分钟锁定。
++```
++
++## 使用
++
++- 图片 / 视频查看器：双指滑动平移，触控板捏合或 `Ctrl + 滚轮` 缩放；点击 `1:1` 清除缩放和平移。
++- 图片编辑：画笔页选择颜色和粗细，在图片上按住绘制。文字页先填写文字再点击图片放置，也可先选位置再添加。查看器中点击铅笔图标进入。
++- GIF：默认导出 GIF 动图，标注应用到所有帧。选择 PNG/JPG 时只导出当前选中帧。可播放、暂停和使用帧滑块检查。
++- 自动锁定：先设置本地 4–6 位 PIN，再分别开启两个选项。及时返回窗口会取消失焦计时；超过期限即使后台定时器受限，返回时仍会锁定。浏览器版页面隐藏按最小化处理。默认不开启。
++- 表情包：用户主页的名称按钮打开本客户端的合集浏览。无记录表示目录暂未收录；服务错误会显示重试入口，不当作空列表。
++- GIF 为避免内存耗尽，最多 1000 帧，累计画面不超过 4800 万像素；过大时明确报错，不静默截帧。保存副本仍受 40 MB 文件限制。GIF 格式的色彩限制会影响重新编码后的颜色。
++
++## 原因与实现
++
++- 设置页已有 `overflow: hidden` 外壳，内部内容未形成受限滚动区域。修正 Grid/Flex 最小高度，在内容体建立原生滚动容器；保留浏览器原生滚轮与触控板事件。
++- 账号启动恢复与手动登录按队列执行，异步读取带版本检查，不覆盖更新的内存数据；同一文件写入串行，避免迟到的锁定写入覆盖解锁。
++- 通讯录群资料按钮原本直接打开用户资料页，资料失败又尝试机器人接口。现在入口和类型严格对应；未知通讯录分类不再默认归为机器人。
++- “发现”旧代码将字符串分类当成对象，发送 `categoryId` 并读取 `list`；现按 `yhchatAPI/src/api/v1/user.md` 修正。
++- 表情包目录使用用户提供的 `https://yhsticker.us.ci/api/docs` 中的 `GET /api/v1/packs?author_id=…&all=true`。生产服务和 Vite 共享固定目的地址的只读转发，不转发账号 Token；前端过滤作者并取消过期请求。
++- 视频错误的区域提示原本位于 HTTP 400 响应体，但 XHR 在解析响应前就拒绝 Promise。现先解析响应，再对可信七牛域名重试，同一次重试沿用文件、Token 与 key；仅成功后缓存地址。
++- 图片编辑仍沿用 Jodit 无界面处理内核；画笔与点击放字、历史、Vue UI 和本地保存由本项目提供。GIF 编解码按需加载 `gifuct-js@2.1.2`、`gifenc@1.0.3`，许可证见 `THIRD_PARTY_NOTICES.md`。
++- Windows 原生窗口事件传递最小化状态，失焦使用绝对期限计时。锁屏覆盖图片编辑器、用户资料和通知等浮层，锁定时退出原生媒体全屏、移除后台输入焦点，并阻止媒体编辑器的 Escape 快捷键。锁定期间当前会话的新消息保留未读，解锁后再按阅读状态清除。所有新增监听和计时器都有卸载清理。
++
++## 验证
++
++- 聊天 / 引用 / 通知 / 未读 / 视频协议等回归：71 项通过，新增锁定期间保留未读检查。
++- 账号隔离、凭据、设置搜索与编辑像素回归：11 项通过。
++- 本次新增回归：11 项通过，覆盖 HTTP 400 正确区域重试、发现协议、首次账号保存、延迟读取、顺序写入、好友判断、GIF disposal / 透明度 / 时序 / 循环、锁定期限、目录转发。
++- Rust 通知策略：5 项通过。以上共 98 项。
++- 原有浏览器界面回归及新增界面回归均通过。新增检查实际执行滚轮、Ctrl + 滚轮、画笔 / 点画、文字坐标、GIF 文件导出并重新解码，验证两个帧均有标注且时长不变；检查已知好友、群资料入口、表情包跳转、发现页及最小化锁定。
++- `npm run typecheck`、源码 preflight、生产前端构建、Node sidecar 构建通过。
++- 生产 sidecar 本地保存集成检查通过，覆盖 PNG/GIF 字节、重名副本、路径限制、非法内容、跨来源请求和账号文件持久化。
++- 本机已完成 Windows x64 GNU 目标的 Tauri release 编译与 NSIS 安装器制作，检查主程序只依赖 Windows 系统库及随包提供的 WebView2Loader.dll。前端 dist 与安装资源逐文件一致。
++
++未使用真实云湖账号进行线上收发、好友变更或上传联调。本机为 Linux，未在真实 Windows 桌面执行安装、触控板硬件手势、系统通知及最小化操作；浏览器和模拟响应测试不能替代这些设备联调。
++
++## 源码与构建
++
++完整源码包含锁文件、工作流、测试、生成的前端、sidecar 与 `changes-from-1.0.8.patch`。排除用户数据、凭据、证书、node_modules、Rust target 和大型 Windows Node 运行时；安装包内包含所需运行时。
++
++```bash
++npm ci
++npm run typecheck
++npm run test:chat
++npm run test:settings
++npm run test:features
++npm run build
++npm run test:local-files
++```
++
++浏览器回归运行 `npm run test:ui` 与 `npm run test:ui-features`，需要 Playwright 和 Chromium。可通过 `PLAYWRIGHT_MODULE`、`CHROMIUM_EXECUTABLE` 指定现有环境。
++
++Windows 原生构建使用现有工作流。Linux 交叉编译需 Rust 的 `x86_64-pc-windows-gnu` 目标、MinGW-w64、NSIS，准备官方 Node 22 x64 的 `src-tauri/resources/node.exe`，同步 `dist` 至 `src-tauri/resources/dist`，执行 Cargo release 构建后按 `scripts/package-windows-local.sh` 打包。WebView2 安装程序须来自微软官方。
++
++本次没有访问或推送用户的 GitHub 账号，也未触发任何远程构建或发布。
+diff --git a/THIRD_PARTY_NOTICES.md b/THIRD_PARTY_NOTICES.md
+index 1af6ea1..d116591 100644
+--- a/THIRD_PARTY_NOTICES.md
++++ b/THIRD_PARTY_NOTICES.md
+@@ -27,3 +27,84 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+ SOFTWARE.
++
++## gifuct-js 2.1.2
++
++Used for animated GIF decoding or encoding. Source: https://github.com/matt-way/gifuct-js.git
++
++The MIT License (MIT)
++
++Copyright (c) 2015 Matt Way
++
++Permission is hereby granted, free of charge, to any person obtaining a copy
++of this software and associated documentation files (the "Software"), to deal
++in the Software without restriction, including without limitation the rights
++to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
++copies of the Software, and to permit persons to whom the Software is
++furnished to do so, subject to the following conditions:
++
++The above copyright notice and this permission notice shall be included in all
++copies or substantial portions of the Software.
++
++THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
++IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
++FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
++AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
++LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
++OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
++SOFTWARE.
++
++
++
++## js-binary-schema-parser 2.0.3
++
++Used for animated GIF decoding or encoding. Source: https://github.com/matt-way/jsBinarySchemaParser.git
++
++The MIT License (MIT)
++
++Copyright (c) 2015 Matt Way
++
++Permission is hereby granted, free of charge, to any person obtaining a copy
++of this software and associated documentation files (the "Software"), to deal
++in the Software without restriction, including without limitation the rights
++to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
++copies of the Software, and to permit persons to whom the Software is
++furnished to do so, subject to the following conditions:
++
++The above copyright notice and this permission notice shall be included in all
++copies or substantial portions of the Software.
++
++THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
++IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
++FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
++AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
++LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
++OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
++SOFTWARE.
++
++
++
++## gifenc 1.0.3
++
++Used for animated GIF decoding or encoding. Source: git://github.com/mattdesl/gifenc.git
++
++The MIT License (MIT)
++Copyright (c) 2017 Matt DesLauriers
++
++Permission is hereby granted, free of charge, to any person obtaining a copy
++of this software and associated documentation files (the "Software"), to deal
++in the Software without restriction, including without limitation the rights
++to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
++copies of the Software, and to permit persons to whom the Software is
++furnished to do so, subject to the following conditions:
++
++The above copyright notice and this permission notice shall be included in all
++copies or substantial portions of the Software.
++
++THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
++EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
++MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
++IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
++DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
++OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE
++OR OTHER DEALINGS IN THE SOFTWARE.
+diff --git a/electron/main.cjs b/electron/main.cjs
+index ff2d9ae..e4f01d5 100644
+--- a/electron/main.cjs
++++ b/electron/main.cjs
+@@ -164,6 +164,8 @@ function createWindow() {
+   })
+   // UA 里的非 ASCII 段剔除（系统语言区标签等），避免个别请求头场景抛 Invalid header value
+   try { mainWindow.webContents.setUserAgent(mainWindow.webContents.getUserAgent().replace(/[^\x00-\x7F]/g, '')) } catch { /* 忽略 */ }
++  mainWindow.on('minimize', () => { mainWindow?.webContents.executeJavaScript("window.dispatchEvent(new CustomEvent('yh-window-minimized',{detail:true}))").catch(() => {}) })
++  mainWindow.on('restore', () => { mainWindow?.webContents.executeJavaScript("window.dispatchEvent(new CustomEvent('yh-window-minimized',{detail:false}))").catch(() => {}) })
+   mainWindow.loadURL('yunhu://app/index.html')
+ 
+   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+diff --git a/package-lock.json b/package-lock.json
+index 499beae..769872d 100644
+--- a/package-lock.json
++++ b/package-lock.json
+@@ -1,12 +1,12 @@
+ {
+   "name": "yunhu-vue",
+-  "version": "1.0.8",
++  "version": "1.0.9",
+   "lockfileVersion": 3,
+   "requires": true,
+   "packages": {
+     "": {
+       "name": "yunhu-vue",
+-      "version": "1.0.8",
++      "version": "1.0.9",
+       "dependencies": {
+         "@capacitor/core": "^8.5.2",
+         "@jodit/image-editor": "0.2.5",
+@@ -15,6 +15,8 @@
+         "cordis": "^3.18.1",
+         "cropperjs": "^1.7.0",
+         "dompurify": "^3.4.16",
++        "gifenc": "1.0.3",
++        "gifuct-js": "2.1.2",
+         "marked": "^18.0.14",
+         "qrcode": "^1.5.4",
+         "schemastery": "^3.18.0",
+@@ -4895,6 +4897,21 @@
+         "url": "https://github.com/sponsors/sindresorhus"
+       }
+     },
++    "node_modules/gifenc": {
++      "version": "1.0.3",
++      "resolved": "https://registry.npmjs.org/gifenc/-/gifenc-1.0.3.tgz",
++      "integrity": "sha512-xdr6AdrfGBcfzncONUOlXMBuc5wJDtOueE3c5rdG0oNgtINLD+f2iFZltrBRZYzACRbKr+mSVU/x98zv2u3jmw==",
++      "license": "MIT"
++    },
++    "node_modules/gifuct-js": {
++      "version": "2.1.2",
++      "resolved": "https://registry.npmjs.org/gifuct-js/-/gifuct-js-2.1.2.tgz",
++      "integrity": "sha512-rI2asw77u0mGgwhV3qA+OEgYqaDn5UNqgs+Bx0FGwSpuqfYn+Ir6RQY5ENNQ8SbIiG/m5gVa7CD5RriO4f4Lsg==",
++      "license": "MIT",
++      "dependencies": {
++        "js-binary-schema-parser": "^2.0.3"
++      }
++    },
+     "node_modules/glob": {
+       "version": "7.2.3",
+       "resolved": "https://registry.npmmirror.com/glob/-/glob-7.2.3.tgz",
+@@ -5356,6 +5373,12 @@
+         "jiti": "lib/jiti-cli.mjs"
+       }
+     },
++    "node_modules/js-binary-schema-parser": {
++      "version": "2.0.3",
++      "resolved": "https://registry.npmjs.org/js-binary-schema-parser/-/js-binary-schema-parser-2.0.3.tgz",
++      "integrity": "sha512-xezGJmOb4lk/M1ZZLTR/jaBHQ4gG/lqQnJqdIv4721DMggsa1bDVlHXNeHYogaIEHD9vCRv0fcL4hMA+Coarkg==",
++      "license": "MIT"
++    },
+     "node_modules/js-yaml": {
+       "version": "5.4.2",
+       "resolved": "https://registry.npmjs.org/js-yaml/-/js-yaml-5.4.2.tgz",
+diff --git a/package.json b/package.json
+index 1d0ac91..2d9c8e7 100644
+--- a/package.json
++++ b/package.json
+@@ -1,7 +1,7 @@
+ {
+   "name": "yunhu-vue",
+   "private": true,
+-  "version": "1.0.8",
++  "version": "1.0.9",
+   "type": "module",
+   "description": "云湖牢大版 · Vue3 + 真 cordis 插件内核 + Satori 协议 + WebDAV 网关（仅供学习交流）",
+   "scripts": {
+@@ -20,7 +20,9 @@
+     "desktop:dist": "electron-builder --linux AppImage --x64",
+     "test:settings": "node scripts/test-settings-regressions.mjs",
+     "test:ui": "node scripts/test-ui-regressions.mjs",
+-    "test:local-files": "node scripts/build-server-bundle.mjs && node scripts/test-local-image-save.mjs"
++    "test:local-files": "node scripts/build-server-bundle.mjs && node scripts/test-local-image-save.mjs",
++    "test:features": "node scripts/test-features-regressions.mjs",
++    "test:ui-features": "node scripts/test-ui-features.mjs"
+   },
+   "dependencies": {
+     "@capacitor/core": "^8.5.2",
+@@ -30,6 +32,8 @@
+     "cordis": "^3.18.1",
+     "cropperjs": "^1.7.0",
+     "dompurify": "^3.4.16",
++    "gifenc": "1.0.3",
++    "gifuct-js": "2.1.2",
+     "marked": "^18.0.14",
+     "qrcode": "^1.5.4",
+     "schemastery": "^3.18.0",
+diff --git a/scripts/package-windows-local.sh b/scripts/package-windows-local.sh
+index 3b25cd1..b7c159a 100644
+--- a/scripts/package-windows-local.sh
++++ b/scripts/package-windows-local.sh
+@@ -7,14 +7,15 @@ project_dir="$(cd "$(dirname "$0")/.." && pwd)"
+ cd "$project_dir"
+ app_version="$(node -p "JSON.parse(require('fs').readFileSync('package.json')).version")"
+ release_dir="$project_dir/release"
+-stage_dir="$release_dir/windows-stage"
+ target_dir="${WINDOWS_TARGET_DIR:-$project_dir/src-tauri/target/x86_64-pc-windows-gnu/release}"
+ : "${WEBVIEW2_BOOTSTRAPPER:?Set WEBVIEW2_BOOTSTRAPPER to the official Microsoft Evergreen setup executable}"
+-mkdir -p "$stage_dir" "$release_dir"
++mkdir -p "$release_dir"
++# A fresh stage prevents failed/overlapping local builds from bundling stale assets or partial copies.
++stage_dir="$(mktemp -d "$release_dir/windows-stage.XXXXXXXX")"
++trap 'rm -rf "$stage_dir"' EXIT
+ cp "$target_dir/yunhulaoda-desktop.exe" "$stage_dir/"
+ cp "$target_dir/WebView2Loader.dll" "$stage_dir/"
+ cp src-tauri/resources/node.exe src-tauri/resources/server-bundle.mjs "$stage_dir/"
+-rm -rf "$stage_dir/dist"
+ cp -r dist "$stage_dir/dist"
+ cp "$WEBVIEW2_BOOTSTRAPPER" "$stage_dir/MicrosoftEdgeWebview2Setup.exe"
+ makensis -V3 "-DSTAGE=$stage_dir" "-DOUTPUT=$release_dir/yunhulaoda-$app_version-windows-x64-setup.exe" \
+diff --git a/scripts/test-chat-regressions.mjs b/scripts/test-chat-regressions.mjs
+index 8327ea0..db3c2f3 100644
+--- a/scripts/test-chat-regressions.mjs
++++ b/scripts/test-chat-regressions.mjs
+@@ -891,6 +891,18 @@ try {
+     } finally { delete document.hasFocus; h.dispose(); await host.flush(); host.restore() }
+   })
+ 
++  await test('a locked foreground conversation retains unread messages until unlock', async () => {
++    const h = harness()
++    h.ctx.lock = { isLocked: true }
++    try {
++      await h.chat.open(channel('a')); h.chat.state.conversations = [{ ...channel('a'), unread: 0 }]
++      h.ctx.emit('message-created', session('a', 'received-while-locked')); await turn()
++      assert.equal(h.chat.state.conversations[0].unread, 1)
++      h.ctx.lock.isLocked = false; h.ctx.emit('app/unlock'); await turn()
++      assert.equal(h.chat.state.conversations[0].unread, 0)
++    } finally { h.dispose() }
++  })
++
+   await test('polling fallback notifies only new unread messages and keeps server unread counts', async () => {
+     let round = 0
+     const h = harness({ conversations: async () => [{ ...channel('b'), ts: ++round, unread: round }], messages: async () => [message('new-from-poll')] })
+diff --git a/scripts/test-features-regressions.mjs b/scripts/test-features-regressions.mjs
+new file mode 100644
+index 0000000..cfc20e0
+--- /dev/null
++++ b/scripts/test-features-regressions.mjs
+@@ -0,0 +1,179 @@
++import assert from 'node:assert/strict'
++import { test } from 'node:test'
++import { mkdtemp, rm } from 'node:fs/promises'
++import { join } from 'node:path'
++import { pathToFileURL } from 'node:url'
++import { build } from 'esbuild'
++import { reactive, nextTick } from 'vue'
++import gifenc from 'gifenc'
++const { GIFEncoder } = gifenc
++const temp = await mkdtemp(join(process.cwd(), 'node_modules', '.features-regression-'))
++await build({ stdin: { contents: `export { apiPlugin } from './src/plugins/api'; export { storagePlugin } from './src/plugins/storage';
++  export { authPlugin } from './src/plugins/auth'; export { groupAdminPlugin } from './src/plugins/group-admin'; export * as pb from './src/core/pb'; export { createAutoLock } from './src/core/auto-lock';
++  export { decodeGif, encodeGif } from './src/core/gif-edit'; export { stickerDirectory } from './sticker-directory';`, resolveDir: process.cwd() },
++  outfile: join(temp, 'test.mjs'), bundle: true, platform: 'node', format: 'esm', packages: 'external',
++  plugins: [{ name: 'components', setup(b) { b.onLoad({ filter: /\.vue$/ }, () => ({ contents: 'export default {}', loader: 'js' })) } }],
++})
++const { apiPlugin, storagePlugin, authPlugin, groupAdminPlugin, pb, createAutoLock, decodeGif, encodeGif, stickerDirectory } = await import(pathToFileURL(join(temp, 'test.mjs')))
++class LocalStorage {
++  values = new Map()
++  getItem(k) { return this.values.get(k) ?? null }
++  setItem(k, v) { this.values.set(k, String(v)) }
++  removeItem(k) { this.values.delete(k) }
++}
++const deferred = () => { let resolve; const promise = new Promise(r => { resolve = r }); return { promise, resolve } }
++const apiHarness = () => { const ctx = { set(k, v) { this[k] = v } }; apiPlugin.apply(ctx, { base: '/test' }); return ctx.api }
++try {
++  await test('video HTTP 400 region hint retries the same token/file/key in the correct region and caches by bucket', async () => {
++    globalThis.localStorage = new LocalStorage()
++    const api = apiHarness(), oldFetch = globalThis.fetch, oldXHR = globalThis.XMLHttpRequest, uploads = []
++    const uploadToken = 'test-ak:signature:' + Buffer.from(JSON.stringify({ scope: 'chat68-video' })).toString('base64url')
++    api.uploadToken = async () => uploadToken
++    globalThis.fetch = async () => new Response(JSON.stringify({ hosts: [{ up: { domains: ['upload.qiniup.com'] } }] }))
++    globalThis.XMLHttpRequest = class {
++      upload = {}
++      open(_method, url) { this.url = url }
++      send(body) {
++        uploads.push({ url: this.url, token: body.get('token'), key: body.get('key'), file: body.get('file') })
++        this.status = this.url.includes('up-cn-east-2') ? 200 : 400
++        this.responseText = JSON.stringify(this.status === 200 ? { key: body.get('key') } : { error: 'incorrect region, please use up-cn-east-2.qiniup.com, bucket is: chat68-video' })
++        queueMicrotask(() => this.onload())
++      }
++    }
++    try {
++      const file = new File(['fake video bytes'], 'clip.mp4', { type: 'video/mp4' })
++      const result = await api.uploadFile(file, 'video')
++      assert.equal(result.host, 'up-cn-east-2.qiniup.com'); assert.equal(uploads.length, 2)
++      assert.equal(uploads[0].key, uploads[1].key); assert.equal(uploads[0].token, uploads[1].token)
++      assert.equal(await uploads[1].file.text(), 'fake video bytes')
++      await api.uploadFile(file, 'video'); assert.equal(uploads.length, 3)
++      assert.match(uploads[2].url, /up-cn-east-2/)
++    } finally { globalThis.fetch = oldFetch; globalThis.XMLHttpRequest = oldXHR }
++  })
++  await test('discovery uses documented category strings, groupList and botList fields', async () => {
++    const api = apiHarness(), oldFetch = globalThis.fetch, requests = []
++    globalThis.fetch = async (url, init) => {
++      requests.push({ url, body: JSON.parse(init.body) })
++      const data = url.endsWith('recommend-category-list') ? { categories: ['精选', '游戏'] }
++        : url.endsWith('recommend-list') ? { groupList: [{ chatId: '60923138', nickname: '测试群', avatarUrl: 'avatar' }] }
++        : { botList: [{ chatId: 'bot', nickname: '助手' }] }
++      return new Response(JSON.stringify({ code: 1, data }))
++    }
++    try {
++      const categories = await api.recommendCategories(); assert.equal(categories[0].id, '精选')
++      const groups = await api.recommendList(categories[0].id); assert.equal(groups[0].chatType, 2); assert.equal(groups[0].name, '测试群')
++      assert.deepEqual(requests[0].body, { appChannel: 'default' })
++      assert.deepEqual(requests[1].body, { category: '精选', keyword: '', size: 30, page: 1 })
++      assert.equal((await api.recommendBots())[0].chatType, 3)
++    } finally { globalThis.fetch = oldFetch }
++  })
++  await test('a late initial account read cannot overwrite the first successful account save', async () => {
++    const oldFetch = globalThis.fetch, get = deferred(), started = deferred(); globalThis.localStorage = new LocalStorage()
++    const ctx = { set(k, v) { this[k] = v } }; storagePlugin.apply(ctx)
++    globalThis.fetch = async (url, init = {}) => {
++      if (url === '/data/session') return new Response('{}')
++      if (!init.method && url === '/data/accounts') { started.resolve(); return get.promise }
++      return new Response('{}')
++    }
++    try {
++      const loading = ctx.storage.load('accounts'); await started.promise
++      const saved = { items: [{ id: 'first', token: 'local-test-token' }] }
++      await ctx.storage.save('accounts', saved)
++      get.resolve(new Response('{}')); await loading
++      assert.deepEqual(await ctx.storage.load('accounts'), saved)
++    } finally { globalThis.fetch = oldFetch }
++  })
++  await test('startup restoration finishes before the first new login; list and disk contain the new account after one login', async () => {
++    const data = { session: { token: 'old', user: { id: 'old' } } }, hold = deferred(), events = []
++    globalThis.localStorage = new LocalStorage(); globalThis.window = { location: { reload() { events.push('reload') } } }
++    const ctx = { api: { token: '', setToken(t) { this.token = t }, async self(t) { if (t === 'old') await hold.promise; return { id: t, name: t } } },
++      storage: { async load(k) { return structuredClone(data[k] || {}) }, async save(k, value) { data[k] = structuredClone(value) }, setAccount() {} },
++      get(k) { return this[k] }, set(k, v) { this[k] = v }, on() {}, emit() {}, inject() {} }
++    authPlugin.apply(ctx)
++    const restoring = ctx.auth.restore(), login = ctx.auth.loginWithToken('first')
++    hold.resolve(); await restoring; await login
++    assert.equal(data.session.user.id, 'first'); assert.equal(data.accounts.items.filter(x => x.id === 'first').length, 1)
++    assert.ok(ctx.auth.state.savedAccounts.some(x => x.id === 'first')); assert.equal(events.length, 1)
++  })
++  await test('lock-state writes are ordered so a delayed lock save cannot overwrite a later unlock', async () => {
++    const oldFetch=globalThis.fetch, hold=deferred(), started=deferred(), writes=[]
++    globalThis.localStorage=new LocalStorage()
++    const ctx={set(k,v){this[k]=v}};storagePlugin.apply(ctx)
++    globalThis.fetch=async (_url,init={})=>{
++      if(init.method==='PUT'){writes.push(JSON.parse(init.body));if(writes.length===1){started.resolve();await hold.promise}}
++      return new Response('{}')
++    }
++    try {
++      const lock=ctx.storage.save('lock',{locked:true});await started.promise
++      const unlock=ctx.storage.save('lock',{locked:false});await Promise.resolve()
++      assert.equal(writes.length,1);assert.equal((await ctx.storage.load('lock')).locked,false)
++      hold.resolve();await Promise.all([lock,unlock]);assert.deepEqual(writes,[{locked:true},{locked:false}])
++    } finally {globalThis.fetch=oldFetch}
++  })
++  await test('automatic lock preserves the original blur deadline, cancels on timely focus and handles throttled timers', () => {
++    let now = 0, nextId = 0, locked = 0, prefs = { minimize: false, blurMinutes: 2 }
++    const timers = new Map(), clock = { now: () => now, set(fn, ms) { const id = ++nextId; timers.set(id, { fn, due: now + ms }); return id }, clear(id) { timers.delete(id) } }
++    const lock = createAutoLock(() => prefs, () => { locked++ }, clock)
++    lock.blur(); now = 60000; lock.blur(); assert.equal([...timers.values()][0].due, 120000)
++    lock.focus(); now = 130000; assert.equal(timers.size, 0); assert.equal(locked, 0)
++    lock.blur(); now = 260001; lock.focus(); assert.equal(locked, 1)
++    prefs = { minimize: true, blurMinutes: 0 }; lock.minimize(true); assert.equal(locked, 2)
++    lock.stop(); assert.equal(timers.size, 0)
++  })
++  await test('GIF decode/export preserves all frames, timing, loop count and transparent pixels', async () => {
++    const encoded = GIFEncoder(), palette = [[255,0,0,255], [0,0,0,0], [0,0,255,255]]
++    encoded.writeFrame(new Uint8Array([0,1,1,0]), 2, 2, { palette, delay: 70, repeat: 3, transparent: true, transparentIndex: 1, dispose: 2 })
++    encoded.writeFrame(new Uint8Array([1,2,2,1]), 2, 2, { palette, delay: 130, transparent: true, transparentIndex: 1, dispose: 3 }); encoded.finish()
++    const source = await decodeGif(new Uint8Array(encoded.bytes()).buffer)
++    assert.equal(source.frames.length, 2); assert.deepEqual(source.delays, [70,130]); assert.equal(source.repeat, 3)
++    assert.equal(source.frames[1].data[3], 0); assert.equal(source.frames[1].data[6], 255)
++    const output = await encodeGif(source, frame => ({ ...frame, data: frame.data.slice() }))
++    const roundtrip = await decodeGif(await output.arrayBuffer())
++    assert.equal(output.type, 'image/gif'); assert.equal(roundtrip.frames.length, 2); assert.deepEqual(roundtrip.delays, [70,130]); assert.equal(roundtrip.repeat, 3)
++    assert.deepEqual([...roundtrip.frames[1].data], [...source.frames[1].data])
++    const controller = new AbortController(); controller.abort(); await assert.rejects(decodeGif(await output.arrayBuffer(), controller.signal), { name: 'AbortError' })
++  })
++  await test('directory bridge forwards author_id and all=true without forwarding account credentials', async () => {
++    const oldFetch = globalThis.fetch; let payload, status
++    globalThis.fetch = async (url, options) => { assert.equal(new URL(url).searchParams.get('author_id'), '100002'); assert.equal(new URL(url).searchParams.get('all'), 'true'); assert.equal(options.headers, undefined); return new Response('{"total":1,"data":[{"id":123,"name":"测试"}]}') }
++    const response = { writeHead(value) { status = value; return this }, end(text) { payload = JSON.parse(text) } }
++    try {
++      await stickerDirectory({ method: 'GET', headers: { token: 'private-token' } }, response, 'author_id=100002')
++      assert.equal(status, 200); assert.equal(payload.data[0].name, '测试')
++      await stickerDirectory({ method: 'GET' }, response, 'author_id=not-an-id'); assert.equal(status, 400)
++    } finally { globalThis.fetch = oldFetch }
++  })
++  await test('address book uses explicit chat types or documented list labels; unknown sections never become bots', async () => {
++    const api = apiHarness(), oldFetch = globalThis.fetch
++    const section = (name, type, id) => pb.fBytes(2,pb.build(pb.fStr(1,name),type ? pb.fNum(3,type):null,pb.fBytes(2,pb.build(pb.fStr(1,id),pb.fStr(8,id)))))
++    globalThis.fetch = async () => new Response(pb.build(pb.fBytes(1,pb.fNum(2,1)),section('用户',1,'friend'),section('我加入的群聊',0,'60923138'),section('机器人',3,'bot'),section('未知项目',0,'unknown')))
++    try { const book = await api.addressBook();assert.equal(book.groups[0].id,'60923138');assert.deepEqual(book.bots.map(x=>x.id),['bot']);assert.equal(book.users[0].id,'friend') }
++    finally { globalThis.fetch = oldFetch }
++  })
++  await test('friend lookup retries a failed startup load, normalizes IDs, follows address-book edits and rejects post-logout replies', async () => {
++    const listeners = new Map(), cleanups = [], ctx = { chat: { state: reactive({ current: null }) },
++      api: { addressBook: async () => { throw new Error('not signed in yet') } }, ui: { toast() {} },
++      social: { state: reactive({ loaded:false, book:{ users:[] } }) },
++      get(k){return this[k]},set(k,v){this[k]=v},on(name,fn){listeners.set(name,fn)},effect(fn){cleanups.push(fn())},inject(){} }
++    groupAdminPlugin.apply(ctx);await nextTick();await Promise.resolve()
++    assert.equal(ctx.group.state.friendsLoaded,false)
++    ctx.api.addressBook = async () => ({users:[{id:42}]});await ctx.group.loadFriends()
++    assert.equal(ctx.group.isFriend('42'),true)
++    ctx.social.state.loaded=true;ctx.social.state.book.users=[{id:43}]
++    assert.equal(ctx.group.isFriend('42'),false);assert.equal(ctx.group.isFriend('43'),true)
++    listeners.get('auth/logout')();const late=deferred();ctx.api.addressBook=()=>late.promise
++    const load=ctx.group.loadFriends();listeners.get('auth/logout')();late.resolve({users:[{id:'old-account-friend'}]});await load
++    assert.deepEqual(ctx.group.state.friendIds,[])
++    for(const cleanup of cleanups)cleanup?.()
++  })
++  await test('GIF restore-to-previous disposal and opaque-to-transparent exports do not leave trails', async () => {
++    const gif=GIFEncoder(),palette=[[255,0,0,255],[0,0,0,0],[0,0,255,255]]
++    for(const [pixels,dispose] of [[[0,1,1,1],1],[[1,2,1,1],3],[[1,1,0,1],1]])gif.writeFrame(new Uint8Array(pixels),2,2,{palette,transparent:true,transparentIndex:1,delay:60,dispose})
++    gif.finish();const animation=await decodeGif(new Uint8Array(gif.bytes()).buffer)
++    assert.deepEqual([...animation.frames[2].data.slice(0,8)],[255,0,0,255,0,0,0,0])
++    const opaque={width:2,height:2,data:new Uint8ClampedArray([255,0,0,255,255,0,0,255,255,0,0,255,255,0,0,255])}
++    const clear={...opaque,data:new Uint8ClampedArray(16)}
++    const output=await encodeGif({frames:[opaque,clear],delays:[100,100],repeat:0},x=>x)
++    assert.equal((await decodeGif(await output.arrayBuffer())).frames[1].data[3],0)
++  })
++} finally { await rm(temp, { recursive: true, force: true }) }
+diff --git a/scripts/test-local-image-save.mjs b/scripts/test-local-image-save.mjs
+index 971742d..defc55a 100644
+--- a/scripts/test-local-image-save.mjs
++++ b/scripts/test-local-image-save.mjs
+@@ -28,6 +28,12 @@ try {
+   assert.equal((await post('no-token.png', { headers: { 'content-type': 'image/png' } })).status, 403)
+   assert.equal((await post('cross-origin.png', { headers: { ...headers, origin: 'https://example.invalid' } })).status, 403)
+   assert.equal((await fetch(url + '/local-save-image')).status, 405)
++  const gif = await readFile('scripts/ui-fixture/animated.gif')
++  const animated = await post('animation_edited.gif', { body: gif, headers: { ...headers, 'content-type': 'image/gif' } })
++  assert.equal(animated.status, 200)
++  const animatedFile = await animated.json(); assert.ok(animatedFile.path.endsWith('.gif')); assert.deepEqual(await readFile(animatedFile.path), gif)
++  assert.equal((await post('fake.gif', { body: png, headers: { ...headers, 'content-type': 'image/gif' } })).status, 415)
++  assert.equal((await fetch(url + '/sticker-directory?author_id=not-valid')).status, 400)
+   const savedAccounts = { version: 1, items: [{ id: 'offline-a', token: 'offline-only' }] }
+   assert.equal((await fetch(url + '/data/accounts', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(savedAccounts) })).status, 200)
+   assert.deepEqual(await (await fetch(url + '/data/accounts')).json(), savedAccounts)
+diff --git a/scripts/test-ui-features.mjs b/scripts/test-ui-features.mjs
+new file mode 100644
+index 0000000..6c2f0c5
+--- /dev/null
++++ b/scripts/test-ui-features.mjs
+@@ -0,0 +1,152 @@
++import assert from 'node:assert/strict'
++import { createServer } from 'vite'
++import vue from '@vitejs/plugin-vue'
++import { readFile, mkdir } from 'node:fs/promises'
++import { resolve } from 'node:path'
++import { parseGIF, decompressFrames } from 'gifuct-js'
++const { chromium } = await import(process.env.PLAYWRIGHT_MODULE || 'playwright')
++const server = await createServer({ root: process.cwd(), configFile: false, plugins: [vue()], server: { host: '127.0.0.1', port: 0 }, logLevel: 'error' })
++await server.listen()
++const browser = await chromium.launch({ headless: true, executablePath: process.env.CHROMIUM_EXECUTABLE || undefined, args: ['--no-sandbox', '--disable-dev-shm-usage', '--disable-gpu'] })
++const page = await browser.newPage({ viewport: { width: 1280, height: 820 } }), errors = []
++page.on('pageerror', e => errors.push(e.message))
++const base = 'http://127.0.0.1:' + server.httpServer.address().port
++const shot = async name => { if (process.env.UI_QA_SCREENSHOTS) { await mkdir(process.env.UI_QA_SCREENSHOTS,{recursive:true});await page.screenshot({path:resolve(process.env.UI_QA_SCREENSHOTS,name+'.png')}) } }
++try {
++  await page.route('**/sticker-directory?*', route => {
++    const author = new URL(route.request().url()).searchParams.get('author_id')
++    return route.fulfill({ json: { total: 2, data: [{ id: 77, name: '自制测试表情', author: { user_id: author } }, { id: 88, name: '其他作者表情', author: { user_id: 'different' } }] } })
++  })
++  await page.goto(base + '/scripts/ui-fixture/features.html')
++  await page.waitForFunction(() => window.__qa?.featuresReady)
++  await page.evaluate(async () => { await window.__qa.ctx.lock.setPin('1234') })
++  await page.getByRole('button', { name: '账号与配置', exact: true }).click()
++  await page.getByRole('button', { name: '账号与登录', exact: true }).click()
++  await page.locator('[data-setting-id="saved-accounts"]').waitFor()
++  const body = page.locator('.settings-content .settings-page > .k-layout > .k-body').first()
++  await body.waitFor()
++  assert.ok(await body.evaluate(el => el.scrollHeight > el.clientHeight + 200))
++  await body.hover(); await page.mouse.wheel(0, 380)
++  await page.waitForFunction(() => document.querySelector('.settings-content .settings-page > .k-layout > .k-body').scrollTop > 100)
++  assert.equal(await body.evaluate(el => getComputedStyle(el, '::-webkit-scrollbar').width), '8px')
++  await page.getByRole('button', { name: '常规', exact: true }).click()
++  await page.getByLabel('最小化时锁定', { exact: true }).check()
++  await page.getByLabel('失去焦点后自动锁定', { exact: true }).check()
++  await page.getByLabel('失焦锁定等待分钟数', { exact: true }).fill('7')
++  await page.getByLabel('失焦锁定等待分钟数', { exact: true }).press('Tab')
++  assert.deepEqual(await page.evaluate(() => JSON.parse(JSON.stringify(window.__qa.ctx.lock.state.preferences))), { minimize: true, blurMinutes: 7 })
++  await page.evaluate(() => window.dispatchEvent(new CustomEvent('yh-window-minimized', { detail: true })))
++  await page.locator('.ls-mask').waitFor()
++  await page.evaluate(() => window.__qa.ctx.lock.unlock())
++  console.log('PASS: actual settings overflow scrolls with wheel, scrollbar has a visible width, auto-lock controls and native minimize event lock the real service')
++
++  await page.getByRole('button', { name: '通讯录', exact: true }).click()
++  await page.getByRole('button', { name: '查看 MAX 的资料', exact: true }).first().click()
++  await page.locator('.pf-packs button').waitFor()
++  assert.equal(await page.getByRole('button', { name: '添加好友', exact: true }).count(), 0)
++  assert.equal(await page.locator('.pf-packs button').count(), 1)
++  await shot('created-packs')
++  await page.getByRole('button', { name: '自制测试表情', exact: true }).click()
++  assert.equal(await page.evaluate(() => window.__qa.ctx.stickers.packRequests.at(-1).packId), 77)
++  await page.getByRole('button', { name: '通讯录', exact: true }).click()
++  await page.locator('.contact-tabs button').nth(1).click()
++  await page.getByRole('button', { name: '查看 云湖群 的资料', exact: true }).first().click()
++  assert.equal(await page.evaluate(() => window.__qa.ctx.group.state.panelOpen), true)
++  assert.equal(await page.evaluate(() => window.__qa.botCalls), 0)
++  await page.evaluate(() => { window.__qa.ctx.group.state.panelOpen = false; window.__qa.ctx.console.goto('/contacts') })
++  await page.getByRole('button', { name: '发现', exact: true }).click()
++  await page.getByText('发现测试群', { exact: true }).waitFor()
++  console.log('PASS: known friends have no add-friend prompt, created-pack names navigate by ID, group profiles never request bot info, discovery displays recommendations')
++
++  await page.evaluate(() => window.__qa.openEditor(false))
++  await page.waitForFunction(() => document.querySelector('.ied-preview canvas')?.width === 120)
++  await page.getByRole('button', { name: '放大编辑预览', exact: true }).click()
++  const preview = page.locator('.ied-preview'), canvas = preview.locator('canvas')
++  assert.ok(await preview.evaluate(el => el.scrollWidth > el.clientWidth || el.scrollHeight > el.clientHeight))
++  await preview.hover(); await page.mouse.wheel(150, 120)
++  await page.waitForFunction(() => document.querySelector('.ied-preview').scrollTop > 0 || document.querySelector('.ied-preview').scrollLeft > 0)
++  const before = await canvas.boundingBox()
++  await page.keyboard.down('Control'); await page.mouse.wheel(0, -40); await page.keyboard.up('Control')
++  await page.waitForFunction(width => document.querySelector('.ied-preview canvas').getBoundingClientRect().width > width, before.width)
++  await page.getByRole('button', { name: '适应窗口', exact: true }).click()
++  await page.getByRole('button', { name: '文字标注', exact: true }).click()
++  await page.getByRole('textbox', { name: '标注文字', exact: true }).fill('TEST')
++  await canvas.click({ position: { x: (await canvas.boundingBox()).width * .25, y: (await canvas.boundingBox()).height * .3 } })
++  await page.waitForFunction(() => !document.querySelector('[aria-label="标注文字"]').value)
++  await page.waitForFunction(() => { const c=document.querySelector('.ied-preview canvas'),d=c.getContext('2d').getImageData(0,0,c.width,c.height).data;for(let i=0;i<d.length;i+=4)if(d[i]>230&&d[i+1]>230&&d[i+2]>230)return true;return false })
++  const textBounds = await canvas.evaluate(el => {
++    const d = el.getContext('2d').getImageData(0, 0, el.width, el.height).data, xs = [], ys = []
++    for (let y=0;y<el.height;y++) for(let x=0;x<el.width;x++) { const i=(y*el.width+x)*4; if (d[i]>230 && d[i+1]>230 && d[i+2]>230) { xs.push(x);ys.push(y) } }
++    return { x: (Math.min(...xs)+Math.max(...xs))/2/el.width, y:(Math.min(...ys)+Math.max(...ys))/2/el.height }
++  })
++  assert.ok(Math.abs(textBounds.x-.25)<.06 && Math.abs(textBounds.y-.3)<.06)
++  await page.getByRole('button', { name: '画笔标注', exact: true }).click()
++  await page.getByLabel('画笔颜色', { exact: true }).fill('#00ff00')
++  const box = await canvas.boundingBox()
++  await page.mouse.move(box.x+box.width*.2,box.y+box.height*.75);await page.mouse.down();await page.mouse.move(box.x+box.width*.8,box.y+box.height*.75,{steps:10});await page.mouse.up()
++  await page.waitForFunction(() => { const el=document.querySelector('.ied-preview canvas'), d=el.getContext('2d').getImageData(60,60,1,1).data;return d[1]>200 && d[0]<50 })
++  await page.getByRole('button', { name: '撤销', exact: true }).click()
++  await page.waitForFunction(() => { const el=document.querySelector('.ied-preview canvas'), d=el.getContext('2d').getImageData(60,60,1,1).data;return d[1]<200 })
++  await page.getByRole('button', { name: '重做', exact: true }).click()
++  await shot('image-editor')
++  await page.evaluate(() => window.__qa.ctx.lock.lock())
++  await page.locator('.ls-mask').waitFor()
++  assert.ok(await page.evaluate(() => Number(getComputedStyle(document.querySelector('.ls-mask')).zIndex) > Number(getComputedStyle(document.querySelector('.ied-mask')).zIndex)))
++  await page.keyboard.press('Escape')
++  assert.equal(await page.locator('.ied-mask').count(),1)
++  assert.equal(await page.getByRole('dialog',{name:'放弃图片编辑',exact:true}).count(),0)
++  await page.evaluate(() => window.__qa.ctx.lock.unlock())
++  await page.getByRole('button', { name: '导出测试副本', exact: true }).click()
++  await page.waitForFunction(() => window.__qa.exported?.type === 'image/png')
++  console.log('PASS: editor pinch/scroll, clicked text positions, arbitrary-color strokes and exports work; lock overlay covers the editor and blocks its Escape shortcut')
++
++  await page.evaluate(() => window.__qa.openEditor(true))
++  await page.getByRole('slider', { name: 'GIF 当前帧', exact: true }).waitFor()
++  assert.equal(await page.getByLabel('导出格式', { exact: true }).inputValue(), 'image/gif')
++  await page.getByRole('button', { name: '画笔标注', exact: true }).click()
++  await page.getByLabel('画笔颜色', { exact: true }).fill('#00ff00')
++  await page.getByLabel('画笔粗细', { exact: true }).press('End')
++  const gifBox = await page.locator('.ied-preview canvas').boundingBox()
++  await page.mouse.click(gifBox.x+gifBox.width*.5,gifBox.y+gifBox.height*.5)
++  await page.getByRole('button', { name: '播放动图', exact: true }).click()
++  await page.waitForFunction(() => document.querySelector('[aria-label="GIF 当前帧"]').value === '1')
++  await page.getByRole('button', { name: '暂停动图', exact: true }).click()
++  await page.getByRole('button', { name: '导出测试副本', exact: true }).click()
++  await page.waitForFunction(() => window.__qa.exported || document.querySelector('.ied-error')?.textContent)
++  assert.equal(await page.locator('.ied-error').count() ? await page.locator('.ied-error').textContent() : '', '')
++  assert.equal(await page.evaluate(() => window.__qa.exported?.type), 'image/gif')
++  const bytes = Buffer.from(await page.evaluate(async () => [...new Uint8Array(await window.__qa.exported.arrayBuffer())]))
++  const gif = parseGIF(bytes.buffer.slice(bytes.byteOffset,bytes.byteOffset+bytes.byteLength)), frames = decompressFrames(gif,true)
++  assert.equal(frames.length,2);assert.deepEqual(frames.map(f=>f.delay),[80,140])
++  for(const f of frames) { const i=(8*24+12)*4;assert.ok(f.patch[i+1]>200 && f.patch[i]<50, JSON.stringify({ pixel:[...f.patch.slice(i,i+4)], colors:f.colorTable, dims:f.dims })) }
++  console.log('PASS: GIF with generic MIME opens by signature, preview animates, all frames receive the drawing and exported GIF retains both delays')
++
++  await page.evaluate(() => window.__qa.ctx.console.goto('/'))
++  await page.evaluate(async () => { const ctx=window.__qa.ctx;await ctx.chat.open(ctx.chat.state.conversations.find(c=>c.id==='normal')) })
++  const sticker=page.locator('[data-mid="sticker-test"] .sticker');await sticker.scrollIntoViewIfNeeded();await sticker.click({modifiers:['Control']})
++  await page.locator('.viewer-mask').waitFor()
++  assert.equal((await page.getByRole('button',{name:'编辑图片',exact:true}).textContent()).trim(),'')
++  await page.locator('.viewer-img').hover();await page.keyboard.down('Control');await page.mouse.wheel(0,-60);await page.keyboard.up('Control')
++  await page.waitForFunction(()=>parseInt(document.querySelector('.viewer-zoom').textContent)>100)
++  const initial=await page.locator('.viewer-img').getAttribute('style');await page.mouse.wheel(55,35)
++  await page.waitForFunction(style=>document.querySelector('.viewer-img').getAttribute('style')!==style,initial)
++  await page.locator('.viewer-bar button[title="关闭"]').click()
++  await page.evaluate(() => {
++    HTMLVideoElement.prototype.requestFullscreen = () => Promise.reject(new Error('test CSS fullscreen fallback'))
++    window.__qa.ctx.chat.state.messages.push({ id:'video-gestures',ts:Date.now(),type:10,sender:'虚拟用户',senderId:'peer',elements:[{type:'video',attrs:{src:'data:video/mp4;base64,',time:6}}] })
++  })
++  const videoRow = page.locator('[data-mid="video-gestures"]'); await videoRow.scrollIntoViewIfNeeded()
++  await videoRow.locator('.vfull').click()
++  await page.locator('.viewer-mask video').waitFor()
++  await page.locator('.viewer-mask video').hover();await page.keyboard.down('Control');await page.mouse.wheel(0,-40);await page.keyboard.up('Control')
++  await page.waitForFunction(()=>parseInt(document.querySelector('.viewer-zoom').textContent)>100)
++  const videoStyle=await page.locator('.viewer-mask video').getAttribute('style');await page.mouse.wheel(40,30)
++  await page.waitForFunction(style=>document.querySelector('.viewer-mask video').getAttribute('style')!==style,videoStyle)
++  await page.locator('.viewer-bar button[title="还原"]').click()
++  await page.locator('.viewer-mask video').click({position:{x:100,y:100}})
++  assert.equal(await page.locator('.viewer-mask').count(),1)
++  await page.locator('.viewer-bar button[title="关闭"]').click()
++  assert.deepEqual(errors,[])
++  if(process.env.UI_QA_SCREENSHOTS) { await mkdir(process.env.UI_QA_SCREENSHOTS,{recursive:true});await page.screenshot({path:resolve(process.env.UI_QA_SCREENSHOTS,'features-complete.png')}) }
++  console.log('PASS: viewer toolbar is icon-only, image/video pinch zoom and two-axis panning work, video clicks preserve playback; no browser exceptions')
++} finally { await browser.close(); await server.close() }
+diff --git a/scripts/test-ui-regressions.mjs b/scripts/test-ui-regressions.mjs
+index a1a9dbd..64d8053 100644
+--- a/scripts/test-ui-regressions.mjs
++++ b/scripts/test-ui-regressions.mjs
+@@ -143,7 +143,7 @@ try {
+   await page.getByRole('button', { name: '继续编辑', exact: true }).click()
+   await page.getByRole('button', { name: '文字标注', exact: true }).click()
+   await page.getByRole('textbox', { name: '标注文字', exact: true }).fill('TEST')
+-  await page.getByRole('button', { name: '添加居中文字', exact: true }).click()
++  await page.getByRole('button', { name: '添加到选中位置', exact: true }).click()
+   await page.waitForFunction(() => {
+     const canvas = document.querySelector('.ied-preview canvas'), data = canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height).data
+     for (let i = 0; i < data.length; i += 4) if (data[i] > 230 && data[i + 1] > 230 && data[i + 2] > 230) return true
+diff --git a/scripts/ui-fixture/animated.gif b/scripts/ui-fixture/animated.gif
+new file mode 100644
+index 0000000000000000000000000000000000000000..90bca19366948baef6eff6081dda246aa53dbc3e
+GIT binary patch
+literal 155
+zcmZ?wbhEHblwc5G_`tyMp8*6E|8x7fh6Fo12DlpO889<41BHIFFmM2+bU^YT#S9!u
+z42&Ey9vc=MY~~QwiaD`i;o)`xWv@9N8y6kzmN3q`lVP9$*2agdtpRMqf1qY&f|{)X
+D&$cLn
+
+literal 0
+HcmV?d00001
+
+diff --git a/scripts/ui-fixture/features.html b/scripts/ui-fixture/features.html
+new file mode 100644
+index 0000000..75023a8
+--- /dev/null
++++ b/scripts/ui-fixture/features.html
+@@ -0,0 +1 @@
++<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head><body><div id="app"></div><script type="module" src="./features.ts"></script></body></html>
+diff --git a/scripts/ui-fixture/features.ts b/scripts/ui-fixture/features.ts
+new file mode 100644
+index 0000000..b4596f6
+--- /dev/null
++++ b/scripts/ui-fixture/features.ts
+@@ -0,0 +1,37 @@
++/** Virtual accounts and deterministic local media only. */
++import './fixture'
++import { createApp, nextTick } from 'vue'
++import ImageEditor from '../../src/components/ImageEditor.vue'
++import ProfilePanel from '../../src/components/ProfilePanel.vue'
++import LockScreen from '../../src/console/components/LockScreen.vue'
++import { lockPlugin } from '../../src/plugins/lock'
++const qa = (window as any).__qa, ctx = qa.ctx
++ctx.get = (name: string) => ctx[name]
++qa.botCalls = 0; qa.exported = null
++ctx.api.getUser = async (id: string) => ({ id, name: '用户 ' + id })
++ctx.api.botInfo = async (id: string) => { qa.botCalls++; return { id, name: '机器人', isBot: true } }
++ctx.api.baListByCreate = async () => []
++ctx.api.recommendCategories = async () => [{ id: '精选', name: '精选' }]
++ctx.api.recommendList = async () => [{ id: 'discovered', name: '发现测试群', introduction: '本地推荐', chatType: 2 }]
++ctx.group.openProfile = (user: any) => { ctx.group.state.profileUser = user }
++ctx.group.closeProfile = () => { ctx.group.state.profileUser = null }
++ctx.group.open = () => { ctx.group.state.panelOpen = true }
++ctx.group.isFriend = (id: string) => ctx.social.state.book.users.some((u: any) => String(u.id) === String(id))
++const profileHost = document.createElement('div'); document.body.append(profileHost)
++const profileApp = createApp(ProfilePanel); profileApp.provide('ctx', ctx); profileApp.mount(profileHost)
++ctx.auth.state.status = 'ready'
++lockPlugin.apply(ctx)
++const lockHost = document.createElement('div'); document.body.append(lockHost)
++const lockApp = createApp(LockScreen); lockApp.provide('ctx', ctx); lockApp.mount(lockHost)
++qa.openEditor = async (gif = false) => {
++  qa.exported = null
++  const blob = gif ? await fetch('/scripts/ui-fixture/animated.gif').then(r => r.blob()) : await fetch(qa.messages.find((m: any) => m.id === 'sticker-test').elements[0].attrs.src).then(r => r.blob())
++  const file = new File([blob], gif ? 'animation.gif' : 'picture.png', { type: gif ? 'application/octet-stream' : 'image/png' })
++  const host = document.createElement('div'); document.body.append(host)
++  let app: ReturnType<typeof createApp>
++  const dispose = () => { app.unmount(); host.remove() }
++  app = createApp(ImageEditor, { file, confirmLabel: '导出测试副本', onDone(file: File) { qa.exported = file; dispose() }, onClose: dispose })
++  app.provide('ctx', ctx); app.mount(host); await nextTick()
++}
++qa.featuresReady = true
++window.addEventListener('beforeunload', () => { profileApp.unmount(); lockApp.unmount() })
+diff --git a/server.ts b/server.ts
+index 58e75ce..540f7bd 100644
+--- a/server.ts
++++ b/server.ts
+@@ -9,6 +9,7 @@
+  * 运行： HOST=:: PORT=8902 node server.ts
+  */
+ import http from 'node:http'
++import { stickerDirectory } from './sticker-directory.ts'
+ import https from 'node:https'
+ import { readFile, writeFile, unlink } from 'node:fs/promises'
+ import { execFileSync, execFile } from 'node:child_process'
+@@ -377,7 +378,7 @@ async function handleSaveImage(req: http.IncomingMessage, res: http.ServerRespon
+     res.writeHead(403, JSON_HDR).end(JSON.stringify({ ok: false, msg: '仅允许客户端保存图片' })); return
+   }
+   const type = String(req.headers['content-type'] || '').split(';')[0]
+-  if (!['image/png', 'image/jpeg'].includes(type)) { res.writeHead(415, JSON_HDR).end(JSON.stringify({ ok: false, msg: '仅支持 PNG 或 JPG 图片' })); return }
++  if (!['image/png', 'image/jpeg', 'image/gif'].includes(type)) { res.writeHead(415, JSON_HDR).end(JSON.stringify({ ok: false, msg: '仅支持 PNG、JPG 或 GIF 图片' })); return }
+   const chunks: Buffer[] = []; let length = 0
+   for await (const chunk of req) {
+     length += chunk.length
+@@ -386,11 +387,12 @@ async function handleSaveImage(req: http.IncomingMessage, res: http.ServerRespon
+   }
+   const data = Buffer.concat(chunks)
+   const valid = type === 'image/png' ? data.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))
+-    : data.length >= 3 && data[0] === 255 && data[1] === 216 && data[2] === 255
++    : type === 'image/gif' ? /^GIF8[79]a$/.test(data.subarray(0, 6).toString('ascii'))
++      : data.length >= 3 && data[0] === 255 && data[1] === 216 && data[2] === 255
+   if (!valid) { res.writeHead(415, JSON_HDR).end(JSON.stringify({ ok: false, msg: '图片内容格式不正确' })); return }
+   const requested = new URLSearchParams(search).get('name') || 'image_edited'
+   const base = requested.split(/[\\/]/).pop()!.replace(/[<>:"|?*\x00-\x1f]/g, '_').replace(/\.[^.]*$/, '').slice(0, 120) || 'image_edited'
+-  const extension = type === 'image/png' ? '.png' : '.jpg'
++  const extension = type === 'image/png' ? '.png' : type === 'image/gif' ? '.gif' : '.jpg'
+   mkdirSync(FILE_DIR, { recursive: true })
+   let dest = ''
+   for (let attempt = 0; attempt < 20; attempt++) {
+@@ -535,6 +537,7 @@ function serverApp(req: any, res: any) {
+   if (pathname === '/data-dir') { handleDataDir(req, res).catch(e => { res.writeHead(500, JSON_HDR).end(JSON.stringify({ ok: false, msg: e.message })) }); return }
+   if (pathname === '/update-check' && req.method === 'GET') { handleUpdateCheck(res).catch(e => { res.writeHead(502, JSON_HDR).end(JSON.stringify({ ok: false, msg: e.message })) }); return }
+   if (pathname === '/local-open' && req.method === 'GET') { handleLocalOpen(req, res, search).catch(e => { res.writeHead(500, JSON_HDR).end(JSON.stringify({ ok: false, msg: e.message })) }); return }
++  if (pathname === '/sticker-directory') { void stickerDirectory(req, res, search); return }
+   if (pathname === '/local-save-image') { handleSaveImage(req, res, search).catch(e => { res.writeHead(500, JSON_HDR).end(JSON.stringify({ ok: false, msg: e.message })) }); return }
+   if (pathname === '/file-dir') { handleFileDir(req, res).catch(e => { res.writeHead(500, JSON_HDR).end(JSON.stringify({ ok: false, msg: e.message })) }); return }
+   if (pathname === '/pick-dir' && req.method === 'GET') { handlePickDir(req, res); return }
+diff --git a/src-tauri/Cargo.lock b/src-tauri/Cargo.lock
+index 5b9f432..07ebfe5 100644
+--- a/src-tauri/Cargo.lock
++++ b/src-tauri/Cargo.lock
+@@ -4833,7 +4833,7 @@ dependencies = [
+ 
+ [[package]]
+ name = "yunhulaoda-desktop"
+-version = "1.0.8"
++version = "1.0.9"
+ dependencies = [
+  "base64 0.22.1",
+  "serde",
+diff --git a/src-tauri/Cargo.toml b/src-tauri/Cargo.toml
+index 5303524..55143c7 100644
+--- a/src-tauri/Cargo.toml
++++ b/src-tauri/Cargo.toml
+@@ -1,6 +1,6 @@
+ [package]
+ name = "yunhulaoda-desktop"
+-version = "1.0.8"
++version = "1.0.9"
+ description = "云湖牢大版桌面客户端（Tauri 壳 + Node sidecar 服务）"
+ authors = ["yibanm"]
+ edition = "2021"
+diff --git a/src-tauri/nsis/local-installer.nsi b/src-tauri/nsis/local-installer.nsi
+index f9c2b5e..b8e8d8a 100644
+--- a/src-tauri/nsis/local-installer.nsi
++++ b/src-tauri/nsis/local-installer.nsi
+@@ -50,7 +50,14 @@ Section "云湖牢大版" Main
+   ; Existing files may be locked by the running app. Do not silently skip them.
+   SetOverwrite on
+   SetOutPath "$INSTDIR"
+-  File /r "${STAGE}/*"
++  File "${STAGE}/yunhulaoda-desktop.exe"
++  File "${STAGE}/WebView2Loader.dll"
++  File "${STAGE}/node.exe"
++  File "${STAGE}/server-bundle.mjs"
++  File "${STAGE}/MicrosoftEdgeWebview2Setup.exe"
++  SetOutPath "$INSTDIR\dist"
++  File /r "${STAGE}/dist/*"
++  SetOutPath "$INSTDIR"
+   ; Install the Microsoft Evergreen WebView2 runtime if the machine has none.
+   ReadRegStr $0 HKCU "Software\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}" "pv"
+   ReadRegStr $1 HKLM "Software\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}" "pv"
+diff --git a/src-tauri/resources/server-bundle.mjs b/src-tauri/resources/server-bundle.mjs
+index 7e360b9..0988917 100644
+--- a/src-tauri/resources/server-bundle.mjs
++++ b/src-tauri/resources/server-bundle.mjs
+@@ -1,5 +1,30 @@
+ // server.ts
+ import http from "node:http";
++
++// sticker-directory.ts
++async function stickerDirectory(req, res, search) {
++  const headers = { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" };
++  if (req.method !== "GET") {
++    res.writeHead(405, headers).end('{"error":{"message":"\u9700\u8981 GET \u8BF7\u6C42"}}');
++    return;
++  }
++  const id = new URLSearchParams(search).get("author_id") || "";
++  if (!/^\d{1,32}$/.test(id)) {
++    res.writeHead(400, headers).end('{"error":{"message":"\u7528\u6237 ID \u4E0D\u6B63\u786E"}}');
++    return;
++  }
++  try {
++    const upstream = await fetch("https://yhsticker.us.ci/api/v1/packs?" + new URLSearchParams({ author_id: id, all: "true" }), { signal: AbortSignal.timeout(15e3) });
++    const body = await upstream.json();
++    if (!upstream.ok) throw new Error(body?.error?.message || "\u76EE\u5F55\u670D\u52A1\u6682\u65F6\u4E0D\u53EF\u7528");
++    if (!Array.isArray(body.data)) throw new Error("\u76EE\u5F55\u8FD4\u56DE\u683C\u5F0F\u4E0D\u6B63\u786E");
++    res.writeHead(200, headers).end(JSON.stringify(body));
++  } catch (error) {
++    res.writeHead(502, headers).end(JSON.stringify({ error: { message: error.name === "TimeoutError" ? "\u8868\u60C5\u5305\u76EE\u5F55\u8BF7\u6C42\u8D85\u65F6\uFF0C\u8BF7\u91CD\u8BD5" : error.message } }));
++  }
++}
++
++// server.ts
+ import https4 from "node:https";
+ import { readFile, writeFile, unlink } from "node:fs/promises";
+ import { execFileSync, execFile } from "node:child_process";
+@@ -1520,8 +1545,8 @@ async function handleSaveImage(req, res, search) {
+     return;
+   }
+   const type = String(req.headers["content-type"] || "").split(";")[0];
+-  if (!["image/png", "image/jpeg"].includes(type)) {
+-    res.writeHead(415, JSON_HDR).end(JSON.stringify({ ok: false, msg: "\u4EC5\u652F\u6301 PNG \u6216 JPG \u56FE\u7247" }));
++  if (!["image/png", "image/jpeg", "image/gif"].includes(type)) {
++    res.writeHead(415, JSON_HDR).end(JSON.stringify({ ok: false, msg: "\u4EC5\u652F\u6301 PNG\u3001JPG \u6216 GIF \u56FE\u7247" }));
+     return;
+   }
+   const chunks = [];
+@@ -1535,14 +1560,14 @@ async function handleSaveImage(req, res, search) {
+     chunks.push(chunk);
+   }
+   const data = Buffer.concat(chunks);
+-  const valid = type === "image/png" ? data.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10])) : data.length >= 3 && data[0] === 255 && data[1] === 216 && data[2] === 255;
++  const valid = type === "image/png" ? data.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10])) : type === "image/gif" ? /^GIF8[79]a$/.test(data.subarray(0, 6).toString("ascii")) : data.length >= 3 && data[0] === 255 && data[1] === 216 && data[2] === 255;
+   if (!valid) {
+     res.writeHead(415, JSON_HDR).end(JSON.stringify({ ok: false, msg: "\u56FE\u7247\u5185\u5BB9\u683C\u5F0F\u4E0D\u6B63\u786E" }));
+     return;
+   }
+   const requested = new URLSearchParams(search).get("name") || "image_edited";
+   const base = requested.split(/[\\/]/).pop().replace(/[<>:"|?*\x00-\x1f]/g, "_").replace(/\.[^.]*$/, "").slice(0, 120) || "image_edited";
+-  const extension = type === "image/png" ? ".png" : ".jpg";
++  const extension = type === "image/png" ? ".png" : type === "image/gif" ? ".gif" : ".jpg";
+   mkdirSync(FILE_DIR, { recursive: true });
+   let dest = "";
+   for (let attempt = 0; attempt < 20; attempt++) {
+@@ -1708,6 +1733,10 @@ function serverApp(req, res) {
+     });
+     return;
+   }
++  if (pathname === "/sticker-directory") {
++    void stickerDirectory(req, res, search);
++    return;
++  }
+   if (pathname === "/local-save-image") {
+     handleSaveImage(req, res, search).catch((e) => {
+       res.writeHead(500, JSON_HDR).end(JSON.stringify({ ok: false, msg: e.message }));
+diff --git a/src-tauri/src/main.rs b/src-tauri/src/main.rs
+index ff89c43..6039295 100644
+--- a/src-tauri/src/main.rs
++++ b/src-tauri/src/main.rs
+@@ -380,6 +380,7 @@ fn main() {
+                         WebviewUrl::External(target),
+                     )
+                     .title(title)
++                    .zoom_hotkeys_enabled(true)
+                     .inner_size(1280.0, 820.0)
+                     .min_inner_size(900.0, 600.0);
+ 
+@@ -455,7 +456,17 @@ fn main() {
+ 
+             Ok(())
+         })
+-        .on_window_event(|_window, event| {
++        .on_window_event(|window, event| {
++            if matches!(event, tauri::WindowEvent::Resized(_) | tauri::WindowEvent::Focused(_)) {
++                if let Some(webview) = window.get_webview_window("main") {
++                    let script = if window.is_minimized().unwrap_or(false) {
++                        "window.dispatchEvent(new CustomEvent('yh-window-minimized',{detail:true}))"
++                    } else {
++                        "window.dispatchEvent(new CustomEvent('yh-window-minimized',{detail:false}))"
++                    };
++                    let _ = webview.eval(script);
++                }
++            }
+             if let tauri::WindowEvent::Destroyed = event {
+                 notifications::clear();
+                 // 主窗口关闭 = 清理 sidecar（kill_sidecar 幂等，托盘退出路径已 take 过则为空操作）
+diff --git a/src-tauri/tauri.conf.json b/src-tauri/tauri.conf.json
+index aaefb8f..b823f47 100644
+--- a/src-tauri/tauri.conf.json
++++ b/src-tauri/tauri.conf.json
+@@ -1,7 +1,7 @@
+ {
+   "$schema": "https://schema.tauri.app/config/2",
+   "productName": "YunhuLaoda",
+-  "version": "1.0.8",
++  "version": "1.0.9",
+   "identifier": "com.richkobe.yunhulaoda",
+   "build": {
+     "beforeBuildCommand": "",
+diff --git a/src/components/AutoLockSettings.vue b/src/components/AutoLockSettings.vue
+new file mode 100644
+index 0000000..ec134bd
+--- /dev/null
++++ b/src/components/AutoLockSettings.vue
+@@ -0,0 +1,24 @@
++<script setup lang="ts">
++import { inject, ref, watch } from 'vue'
++const ctx = inject<any>('ctx'), lock = ctx.lock
++const pin = ref(''), repeat = ref(''), minutes = ref(lock.state.preferences.blurMinutes || 5), error = ref('')
++watch(() => lock.state.preferences.blurMinutes, value => { if (value > 0) minutes.value = value })
++async function save(patch: any) { try { error.value = ''; await lock.setAutoLock(patch) } catch (e: any) { error.value = e.message } }
++async function createPin() {
++  if (pin.value !== repeat.value || !/^\d{4,6}$/.test(pin.value)) { error.value = '请填写两次相同的 4–6 位数字 PIN'; return }
++  if (await lock.setPin(pin.value)) { pin.value = ''; repeat.value = ''; error.value = ''; ctx.ui?.toast?.('锁定 PIN 已设置', 'success') }
++}
++</script>
++<template>
++  <div class="auto-lock-settings">
++    <template v-if="!lock.state.hasPin"><p class="dim small">先设置 PIN，即可开启自动锁定。</p><div class="pin-fields"><input v-model="pin" type="password" inputmode="numeric" maxlength="6" autocomplete="new-password" aria-label="设置锁定 PIN" placeholder="4–6 位数字 PIN" /><input v-model="repeat" type="password" inputmode="numeric" maxlength="6" autocomplete="new-password" aria-label="确认锁定 PIN" placeholder="再次输入 PIN" /><button class="ghost small" @click="createPin">设置 PIN</button></div></template>
++    <label class="auto-lock-row"><span>最小化时锁定</span><input type="checkbox" :disabled="!lock.state.hasPin" :checked="lock.state.preferences.minimize" @change="save({ minimize: ($event.target as HTMLInputElement).checked })" /></label>
++    <label class="auto-lock-row"><span>失去焦点后自动锁定</span><input type="checkbox" :disabled="!lock.state.hasPin" :checked="lock.state.preferences.blurMinutes > 0" @change="save({ blurMinutes: ($event.target as HTMLInputElement).checked ? minutes : 0 })" /></label>
++    <label v-if="lock.state.preferences.blurMinutes > 0" class="auto-lock-row"><span>失去焦点后等待（分钟）</span><input v-model.number="minutes" aria-label="失焦锁定等待分钟数" type="number" min="1" max="1440" step="1" @change="minutes = Math.max(1, Math.min(1440, Math.round(Number(minutes) || 1))); save({ blurMinutes: minutes })" /></label>
++    <p class="dim small">返回软件会取消未到期的计时；已超过等待时间则保持锁定。浏览器版本在页面隐藏时按最小化处理。</p><p v-if="error" class="err small" role="alert">{{ error }}</p>
++  </div>
++</template>
++<style scoped>
++.auto-lock-row { display: flex; justify-content: space-between; align-items: center; gap: 16px; padding: 10px 0; font-size: 13px; }
++.auto-lock-row input[type=number] { width: 85px; }.pin-fields { display: flex; flex-wrap: wrap; gap: 8px; }.pin-fields input { min-width: 100px; width: 150px; }.auto-lock-settings p { line-height: 1.7; }
++</style>
+diff --git a/src/components/ImageEditor.vue b/src/components/ImageEditor.vue
+index 331cbed..f762f1e 100644
+--- a/src/components/ImageEditor.vue
++++ b/src/components/ImageEditor.vue
+@@ -2,7 +2,7 @@
+ /** YH LaoDa's editing surface, shared by the viewer and the attachment composer. */
+ import { computed, inject, onMounted, onUnmounted, ref } from 'vue'
+ import Icon from '../console/components/Icon.vue'
+-import { editedImageName, openImageEdit, type ImageDesignPatch } from '../core/image-edit'
++import { drawStrokes, editedImageName, openImageEdit, type ImageDesignPatch, type BrushStroke } from '../core/image-edit'
+ 
+ const props = defineProps<{ file: File; url?: string; confirmLabel?: string; saving?: boolean }>()
+ const emit = defineEmits<{ (e: 'done', file: File): void; (e: 'close'): void }>()
+@@ -14,8 +14,13 @@ const working = computed(() => busy.value || props.saving)
+ const tool = ref('transform'), format = ref('image/png'), lockRatio = ref(true)
+ const crop = ref({ x: 0, y: 0, width: 1, height: 1 }), size = ref({ width: 1, height: 1 })
+ const text = ref(''), textColor = ref('#ffffff'), textSize = ref(8)
++const textInput = ref<HTMLTextAreaElement | null>(null), textPosition = ref({ x: .5, y: .5 })
++const brushColor = ref('#ff3030'), brushSize = ref(2), zoom = ref(1)
++const gifFrame = ref(0), gifPlaying = ref(false), frameCount = ref(0), exportProgress = ref(0)
++const controller = new AbortController()
++let gifTimer: ReturnType<typeof setTimeout> | undefined
+ const dragging = ref<null | { x: number; y: number; w: number; h: number }>(null)
+-const tabs = [{ id: 'transform', title: '裁剪与旋转', icon: 'scissors' }, { id: 'adjust', title: '调色与滤镜', icon: 'sliders' }, { id: 'text', title: '文字标注', icon: 'pencil' }]
++const tabs = [{ id: 'transform', title: '裁剪与旋转', icon: 'scissors' }, { id: 'adjust', title: '调色与滤镜', icon: 'sliders' }, { id: 'text', title: '文字标注', icon: 'pencil' }, { id: 'brush', title: '画笔标注', icon: 'pencil' }]
+ const filters = [{ id: 'original', name: '原图' }, { id: 'grayscale', name: '黑白' }, { id: 'sepia', name: '复古' }, { id: 'invert', name: '反色' }]
+ let editor: Awaited<ReturnType<typeof openImageEdit>> | undefined
+ let frame = 0, disposed = false
+@@ -37,7 +42,7 @@ function repaint() {
+   frame = requestAnimationFrame(() => {
+     if (disposed || !editor || !canvas.value) return
+     try {
+-      const raster = editor.preview()
++      const raster = editor.preview(gifFrame.value)
+       canvas.value.width = raster.width; canvas.value.height = raster.height
+       canvas.value.getContext('2d')!.putImageData(new ImageData(new Uint8ClampedArray(raster.data), raster.width, raster.height), 0, 0)
+       fitPreview()
+@@ -47,10 +52,36 @@ function repaint() {
+ function fitPreview() {
+   if (!canvas.value || !previewStage.value) return
+   const c = canvas.value, stage = previewStage.value
+-  const scale = Math.min(Math.max(1, stage.clientWidth - 44) / c.width, Math.max(1, stage.clientHeight - 84) / c.height)
++  const scale = Math.min(Math.max(1, stage.clientWidth - 44) / c.width, Math.max(1, stage.clientHeight - 84) / c.height) * zoom.value
+   c.style.width = Math.max(1, Math.floor(c.width * scale)) + 'px'
+   c.style.height = Math.max(1, Math.floor(c.height * scale)) + 'px'
+ }
++function setZoom(value: number, clientX?: number, clientY?: number) {
++  const c = canvas.value, stage = previewStage.value
++  if (!c || !stage) return
++  const old = c.getBoundingClientRect(), view = stage.getBoundingClientRect()
++  const x = clientX ?? view.left + view.width / 2, y = clientY ?? view.top + view.height / 2
++  const px = (x - old.left) / old.width, py = (y - old.top) / old.height
++  zoom.value = Math.min(8, Math.max(.2, value)); fitPreview()
++  const current = c.getBoundingClientRect()
++  stage.scrollLeft += current.left + px * current.width - x
++  stage.scrollTop += current.top + py * current.height - y
++}
++function wheel(e: WheelEvent) {
++  if (!e.ctrlKey && !e.metaKey) return
++  e.preventDefault(); e.stopPropagation()
++  setZoom(zoom.value * Math.exp(-e.deltaY * (e.deltaMode === 1 ? .08 : .01)), e.clientX, e.clientY)
++}
++function stopGif() { gifPlaying.value = false; clearTimeout(gifTimer) }
++function playGif() {
++  if (gifPlaying.value) { stopGif(); return }
++  gifPlaying.value = true
++  const tick = () => {
++    if (disposed || !gifPlaying.value || !editor?.animation) return
++    gifTimer = setTimeout(() => { gifFrame.value = (gifFrame.value + 1) % frameCount.value; repaint(); tick() }, editor.animation.delays[gifFrame.value])
++  }
++  tick()
++}
+ function apply(patch: ImageDesignPatch) {
+   if (!editor || working.value) return
+   error.value = ''; editor.session.apply(patch); syncFields(); repaint()
+@@ -70,12 +101,50 @@ function setSize(axis: 'width' | 'height', value: string) {
+   }
+   apply({ resize: next })
+ }
+-function addText() {
++function addText(position = textPosition.value) {
+   if (!text.value.trim()) return
+-  apply({ annotations: [...(design.value?.annotations || []), { id: crypto.randomUUID(), type: 'text', text: text.value.trim(), x: .5, y: .5,
++  apply({ annotations: [...(design.value?.annotations || []), { id: crypto.randomUUID(), type: 'text', text: text.value.trim(), ...position,
+     fontSize: textSize.value / 100, fontFamily: 'Arial, "Microsoft YaHei", sans-serif', color: textColor.value, bold: true, italic: false, align: 'center', valign: 'middle' }] })
+   text.value = ''
+ }
++function imagePoint(e: PointerEvent) {
++  const rect = canvas.value!.getBoundingClientRect()
++  return { x: Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width)), y: Math.min(1, Math.max(0, (e.clientY - rect.top) / rect.height)) }
++}
++function beginEdit(e: PointerEvent) {
++  if (!editor || working.value || e.button !== 0 || e.ctrlKey || e.metaKey) return
++  stopGif()
++  if (tool.value === 'text') {
++    textPosition.value = imagePoint(e)
++    if (text.value.trim()) addText(textPosition.value)
++    else textInput.value?.focus({ preventScroll: true })
++    return
++  }
++  if (tool.value !== 'brush') { beginCrop(e); return }
++  releasePointer?.()
++  const element = canvas.value!, ctx2d = element.getContext('2d')!
++  const snapshot = ctx2d.getImageData(0, 0, element.width, element.height)
++  const stroke: BrushStroke = { id: crypto.randomUUID(), color: brushColor.value, size: brushSize.value / 100, points: [imagePoint(e)] }
++  const paint = () => { ctx2d.putImageData(snapshot, 0, 0); drawStrokes(ctx2d, element.width, element.height, [stroke]) }
++  const move = (ev: PointerEvent) => {
++    if (ev.pointerId !== e.pointerId) return
++    const point = imagePoint(ev), last = stroke.points[stroke.points.length - 1]
++    if (stroke.points.length < 8192 && (point.x !== last.x || point.y !== last.y)) stroke.points.push(point)
++    paint()
++  }
++  const stop = (ev: PointerEvent) => {
++    if (ev.pointerId !== e.pointerId) return
++    if (ev.type === 'pointerup') { move(ev); apply({ strokes: [...(design.value?.strokes || []), stroke] }) }
++    else ctx2d.putImageData(snapshot, 0, 0)
++    releasePointer?.()
++  }
++  releasePointer = () => {
++    element.removeEventListener('pointermove', move); element.removeEventListener('pointerup', stop); element.removeEventListener('pointercancel', stop)
++    if (element.hasPointerCapture(e.pointerId)) element.releasePointerCapture(e.pointerId)
++    releasePointer = undefined
++  }
++  element.setPointerCapture(e.pointerId); element.addEventListener('pointermove', move); element.addEventListener('pointerup', stop); element.addEventListener('pointercancel', stop); paint()
++}
+ // Draw a new crop on the rendered result. Map back through the existing crop/resize to oriented source coordinates.
+ function beginCrop(e: PointerEvent) {
+   if (tool.value !== 'transform' || !editor || working.value || e.button !== 0) return
+@@ -107,31 +176,36 @@ async function close() {
+ }
+ async function confirm() {
+   if (!editor || working.value || loading.value) return
+-  busy.value = true; error.value = ''
++  busy.value = true; error.value = ''; exportProgress.value = 0; stopGif()
+   try {
+-    const blob = await editor.export(format.value)
++    const blob = await editor.export(format.value, p => { exportProgress.value = p }, gifFrame.value)
+     if (!disposed) emit('done', new File([blob], editedImageName(props.file.name, format.value), { type: blob.type }))
+   } catch (e: any) { error.value = '导出失败：' + e.message }
+   finally { busy.value = false }
+ }
+ function keyboard(e: KeyboardEvent) {
++  if (ctx?.lock?.isLocked) return
+   if (e.key === 'Escape') { e.preventDefault(); e.stopImmediatePropagation(); void close(); return }
+   if ((e.target as HTMLElement)?.closest('input,textarea,select')) return
+   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') { e.preventDefault(); e.shiftKey ? redo() : undo() }
+   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'y') { e.preventDefault(); redo() }
+ }
++function visibility() { if (document.hidden) stopGif() }
+ onMounted(async () => {
+   window.addEventListener('keydown', keyboard, true)
++  document.addEventListener('visibilitychange', visibility)
+   observer = new ResizeObserver(fitPreview)
+   if (previewStage.value) observer.observe(previewStage.value)
+   try {
+-    editor = await openImageEdit(props.file)
++    editor = await openImageEdit(props.file, controller.signal)
+     if (disposed) return
++    frameCount.value = editor.animation?.frames.length || 0
++    if (editor.animation) format.value = 'image/gif'
+     syncFields(); repaint()
+   } catch (e: any) { error.value = '图片打开失败：' + e.message }
+   finally { loading.value = false }
+ })
+-onUnmounted(() => { disposed = true; observer?.disconnect(); releasePointer?.(); cancelAnimationFrame(frame); window.removeEventListener('keydown', keyboard, true); editor = undefined })
++onUnmounted(() => { disposed = true; controller.abort(); stopGif(); observer?.disconnect(); releasePointer?.(); cancelAnimationFrame(frame); window.removeEventListener('keydown', keyboard, true); document.removeEventListener('visibilitychange', visibility); editor = undefined })
+ </script>
+ 
+ <template>
+@@ -155,16 +229,16 @@ onUnmounted(() => { disposed = true; observer?.disconnect(); releasePointer?.();
+               <label class="ied-slider" v-for="item in ([['brightness', '亮度'], ['contrast', '对比度'], ['saturation', '饱和度']] as const)" :key="item[0]">{{ item[1] }}<span>{{ design?.finetune[item[0]] || 0 }}</span><input type="range" :aria-label="item[1]" min="-100" max="100" :value="design?.finetune[item[0]] || 0" @change="apply({ finetune: { [item[0]]: Number(($event.target as HTMLInputElement).value) } })" /></label>
+               <h3>滤镜</h3><div class="ied-grid"><button v-for="filter in filters" :key="filter.id" class="ghost small" :class="{ selected: design?.filter === filter.id }" @click="apply({ filter: filter.id })">{{ filter.name }}</button></div>
+             </div>
+-            <div v-else class="ied-panel"><h3>文字标注</h3><textarea v-model="text" placeholder="输入标注或水印文字" aria-label="标注文字" rows="3"></textarea><label class="ied-slider">字号（图片高度的百分比）<input v-model.number="textSize" type="range" min="2" max="20" /></label><label class="ied-check">文字颜色<input type="color" v-model="textColor" /></label><button class="ghost small" :disabled="!text.trim()" @click="addText">添加居中文字</button><button class="ghost small" :disabled="!design?.annotations.length" @click="apply({ annotations: [] })">清除文字</button></div>
++            <div v-else-if="tool === 'text'" class="ied-panel"><h3>文字标注</h3><p class="ied-hint">输入文字后，点击图片上的任意位置放置；也可以先点击选位置。</p><textarea ref="textInput" v-model="text" placeholder="输入标注或水印文字" aria-label="标注文字" rows="3"></textarea><label class="ied-slider">字号（图片高度的百分比）<input v-model.number="textSize" type="range" min="2" max="20" /></label><label class="ied-check">文字颜色<input type="color" v-model="textColor" /></label><button class="ghost small" :disabled="!text.trim()" @click="addText()">添加到选中位置</button><button class="ghost small" :disabled="!design?.annotations.length" @click="apply({ annotations: [] })">清除文字</button></div>
++            <div v-else class="ied-panel"><h3>画笔标注</h3><p class="ied-hint">在图片上按住拖动绘制；每一笔都可以撤销。GIF 标注会应用到所有帧。</p><label class="ied-check">画笔颜色<input aria-label="画笔颜色" type="color" v-model="brushColor" /></label><label class="ied-slider">笔宽（图片高度的百分比）<span>{{ brushSize }}%</span><input aria-label="画笔粗细" type="range" min=".2" max="15" step=".2" v-model.number="brushSize" /></label><button class="ghost small" :disabled="!design?.strokes.length" @click="apply({ strokes: [] })">清除画笔</button></div>
+           </aside>
+-          <div ref="previewStage" class="ied-preview">
++          <div class="ied-preview-area"><div ref="previewStage" class="ied-preview" @wheel="wheel">
+             <div v-if="loading" class="ied-loading" role="status">正在加载图片…</div>
+-            <div class="ied-image-wrap" :class="{ cropping: tool === 'transform' }"><canvas ref="canvas" aria-label="图片编辑预览" @pointerdown.prevent="beginCrop"></canvas><div v-if="dragging" class="ied-selection" :style="{ left: dragging.x + '%', top: dragging.y + '%', width: dragging.w + '%', height: dragging.h + '%' }"></div></div>
+-            <p class="ied-preview-note">{{ file.type === 'image/gif' ? '动图编辑为当前静态帧，导出为图片副本。' : '编辑只生成副本，保存后可自行发送。' }}</p>
+-          </div>
++            <div class="ied-image-wrap" :class="{ cropping: tool === 'transform' || tool === 'text' || tool === 'brush' }"><canvas ref="canvas" aria-label="图片编辑预览" @pointerdown.prevent="beginEdit"></canvas><div v-if="dragging" class="ied-selection" :style="{ left: dragging.x + '%', top: dragging.y + '%', width: dragging.w + '%', height: dragging.h + '%' }"></div></div>
++          </div><div class="ied-view-bar"><button class="ghost small" aria-label="缩小编辑预览" @click="setZoom(zoom / 1.25)">−</button><span>{{ Math.round(zoom * 100) }}%</span><button class="ghost small" aria-label="放大编辑预览" @click="setZoom(zoom * 1.25)">＋</button><button class="ghost small" @click="setZoom(1)">适应窗口</button><template v-if="frameCount"><button class="ghost small" :disabled="working" @click="playGif">{{ gifPlaying ? '暂停动图' : '播放动图' }}</button><input aria-label="GIF 当前帧" type="range" min="0" :max="frameCount - 1" v-model.number="gifFrame" @input="stopGif(); repaint()" /><span>{{ gifFrame + 1 }}/{{ frameCount }}</span></template></div><p class="ied-preview-note">{{ frameCount ? 'GIF 保留动画；PNG/JPG 导出所选帧。' : '编辑只生成副本，保存后可自行发送。' }} 双指滚动平移，捏合或 Ctrl + 滚轮缩放。</p></div>
+         </div>
+         <p v-if="error" class="ied-error" role="alert">{{ error }}</p>
+-        <footer class="ied-bar"><button class="ghost small" :disabled="!canUndo || working" @click="undo"><Icon name="undo" :size="15" /> 撤销</button><button class="ghost small" :disabled="!canRedo || working" @click="redo">重做</button><button class="ghost small" :disabled="loading || working" @click="reset">重置</button><span class="ied-spacer"></span><select v-model="format" aria-label="导出格式"><option value="image/png">PNG</option><option value="image/jpeg">JPG</option></select><button class="small" :disabled="loading || working || !design" @click="confirm">{{ working ? (saving ? '保存中…' : '导出中…') : confirmLabel || '应用到附件' }}</button></footer>
++        <footer class="ied-bar"><button class="ghost small" :disabled="!canUndo || working" @click="undo"><Icon name="undo" :size="15" /> 撤销</button><button class="ghost small" :disabled="!canRedo || working" @click="redo">重做</button><button class="ghost small" :disabled="loading || working" @click="reset">重置</button><span class="ied-spacer"></span><select v-model="format" aria-label="导出格式" :disabled="working"><option v-if="frameCount" value="image/gif">GIF 动图</option><option value="image/png">PNG</option><option value="image/jpeg">JPG</option></select><button class="small" :disabled="loading || working || !design" @click="confirm">{{ working ? (saving ? '保存中…' : ('导出中…' + (exportProgress ? exportProgress + '%' : ''))) : confirmLabel || '应用到附件' }}</button></footer>
+       </section>
+     </div>
+   </Teleport>
+@@ -192,12 +266,15 @@ onUnmounted(() => { disposed = true; observer?.disconnect(); releasePointer?.();
+ .ied-slider input { grid-column: 1/-1; width: 100%; }
+ .ied-panel textarea { width: 100%; resize: vertical; }
+ .ied-grid .selected { color: var(--acc); background: var(--acc-soft); border-color: var(--acc); }
+-.ied-preview { display: flex; align-items: center; justify-content: center; min-width: 0; min-height: 0; padding: 28px 22px 54px; position: relative; background: var(--bg); overflow: hidden; }
+-.ied-image-wrap { display: flex; position: relative; max-width: 100%; max-height: 100%; }
+-.ied-image-wrap canvas { display: block; max-width: 100%; object-fit: contain; box-shadow: 0 6px 28px rgb(0 0 0 / .14); touch-action: none; }
++.ied-preview-area { display: flex; flex-direction: column; min-width: 0; min-height: 0; background: var(--bg); }
++.ied-preview { flex: 1; min-width: 0; min-height: 0; padding: 24px 22px; position: relative; overflow: auto; overscroll-behavior: contain; scrollbar-gutter: stable; }
++.ied-image-wrap { display: block; position: relative; width: max-content; margin: auto; }
++.ied-image-wrap canvas { display: block; max-width: none; box-shadow: 0 6px 28px rgb(0 0 0 / .14); touch-action: none; }
++.ied-view-bar { display: flex; align-items: center; justify-content: center; gap: 6px; flex-wrap: wrap; padding: 8px; font-size: 11px; }
++.ied-view-bar input { min-width: 70px; width: 90px; }
+ .ied-image-wrap.cropping { cursor: crosshair; }
+ .ied-selection { position: absolute; pointer-events: none; border: 2px solid #fff; box-shadow: 0 0 0 1px #000, 0 0 0 100vmax rgb(0 0 0 / .35); }
+-.ied-preview-note { position: absolute; bottom: 16px; left: 15px; right: 15px; text-align: center; font-size: 11px; color: var(--fg2); }
++.ied-preview-note { margin: 0; padding: 0 12px 10px; text-align: center; font-size: 11px; color: var(--fg2); }
+ .ied-loading { position: absolute; color: var(--fg2); font-size: 13px; }
+ .ied-bar { display: flex; align-items: center; gap: 8px; padding: 15px 20px; border-top: 1px solid var(--line); flex-wrap: wrap; }
+ .ied-bar select { width: 82px; font-size: 12px; padding: 6px; }.ied-spacer { flex: 1; }
+diff --git a/src/components/MessageElements.vue b/src/components/MessageElements.vue
+index 94e2748..05ee32b 100644
+--- a/src/components/MessageElements.vue
++++ b/src/components/MessageElements.vue
+@@ -208,7 +208,7 @@ async function saveEdited(file: File) {
+   } catch (e: any) { if (e.name !== 'AbortError') ctx.ui?.toast?.('图片保存失败：' + e.message, 'error') }
+   finally { savingEdited.value = false }
+ }
+-function viewerKey(e: KeyboardEvent) { if (e.key === 'Escape' && !editingImage.value) closeViewer() }
++function viewerKey(e: KeyboardEvent) { if (e.key === 'Escape' && !editingImage.value && !ctx.lock?.isLocked) closeViewer() }
+ watch(viewer, value => { window.removeEventListener('keydown', viewerKey); if (value) window.addEventListener('keydown', viewerKey) })
+ onUnmounted(() => { closeViewer(); window.removeEventListener('keydown', viewerKey) })
+ 
+@@ -224,16 +224,30 @@ function openStickerPack(el: any, event?: MouseEvent) {
+   })
+ }
+ /** 滚轮缩放（以 1.25 步进，限 0.2–8 倍） */
++function setMediaZoom(next: number, x = innerWidth / 2, y = innerHeight / 2) {
++  const old = zoom.value
++  zoom.value = Math.min(8, Math.max(.2, next))
++  const factor = zoom.value / old
++  pan.value = { x: (pan.value.x - x + innerWidth / 2) * factor + x - innerWidth / 2,
++    y: (pan.value.y - y + innerHeight / 2) * factor + y - innerHeight / 2 }
++}
+ function onWheel(e: WheelEvent) {
+-  if (!viewer.value || viewer.value.kind !== 'image') return
+-  zoom.value = Math.min(8, Math.max(0.2, zoom.value * (e.deltaY < 0 ? 1.15 : 1 / 1.15)))
++  if (!viewer.value || (e.target as HTMLElement)?.closest('.viewer-bar')) return
++  e.preventDefault()
++  if (e.ctrlKey || e.metaKey || e.deltaMode !== 0) {
++    setMediaZoom(zoom.value * Math.exp(-e.deltaY * (e.deltaMode === 1 ? .08 : .01)), e.clientX, e.clientY)
++  } else {
++    // Precision touchpads send pixel deltas on both axes. Preserve them instead of stepping the zoom.
++    pan.value = { x: pan.value.x - e.deltaX, y: pan.value.y - e.deltaY }
++  }
+ }
+ /** 拖拽平移（放大后看局部）。
+  *  ⚠️ 拖完松手的 click 会命中 mask/img 的关闭逻辑——用户报「按住图片滑动松鼠标把灯箱关了」。
+  *    记录本次是否真拖过（位移>3px），拖过则吞掉紧随的那一次 click。 */
+ let justDragged = false
+ function startPan(e: MouseEvent) {
+-  if (zoom.value <= 1) return
++  if (e.button !== 0 || zoom.value <= 1) return
++  if (viewer.value?.kind === 'video' && e.offsetY >= (e.currentTarget as HTMLElement).clientHeight - 48) return
+   stopPan?.()
+   const sx = e.clientX, sy = e.clientY
+   const ox = pan.value.x, oy = pan.value.y
+@@ -442,21 +456,21 @@ watch(() => props.elements, fix, { deep: true })
+ 
+   <!-- 图片/视频灯箱：点空白收起；图片滚轮缩放+拖拽平移；视频可应用内全屏 -->
+   <Teleport to="body">
+-    <div v-if="viewer" class="viewer-mask" :class="{ 'video-full': videoFull }" @click.self="closeViewerGuarded" @wheel.prevent="onWheel">
++    <div v-if="viewer" class="viewer-mask" :class="{ 'video-full': videoFull }" @click.self="closeViewerGuarded" @wheel="onWheel">
+       <img v-if="viewer.kind === 'image'" :src="viewer.url" alt=""
+            :style="{ transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})` }"
+            class="viewer-img" @click.self="closeViewerGuarded"
+            @mousedown.prevent="startPan" @dblclick="zoom = zoom > 1 ? 1 : 2" />
+-      <video v-else ref="viewerVideo" :src="viewer.url" controls autoplay @click.self="closeViewer"></video>
++      <video v-else ref="viewerVideo" :src="viewer.url" controls autoplay :style="{ transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})` }" @mousedown="startPan"></video>
+       <div class="viewer-bar">
+-        <template v-if="viewer.kind === 'image'">
+-          <button class="viewer-ctl" title="缩小" @click="zoom = Math.max(0.2, zoom / 1.25)">−</button>
++        <template v-if="viewer">
++          <button class="viewer-ctl" title="缩小" @click="setMediaZoom(zoom / 1.25)">−</button>
+           <span class="viewer-zoom">{{ Math.round(zoom * 100) }}%</span>
+-          <button class="viewer-ctl" title="放大" @click="zoom = Math.min(8, zoom * 1.25)">＋</button>
++          <button class="viewer-ctl" title="放大" @click="setMediaZoom(zoom * 1.25)">＋</button>
+           <button class="viewer-ctl" title="还原" @click="zoom = 1; pan = { x: 0, y: 0 }">1:1</button>
+-          <button class="viewer-ctl" :disabled="editLoading" @click="editImage"><Icon name="pencil" :size="15" /> {{ editLoading ? '加载中…' : '编辑图片' }}</button>
++          <button v-if="viewer.kind === 'image'" class="viewer-ctl" :disabled="editLoading" aria-label="编辑图片" :title="editLoading ? '加载中…' : '编辑图片'" @click="editImage"><Icon name="pencil" :size="15" /></button>
+         </template>
+-        <template v-else>
++        <template v-if="viewer.kind === 'video'">
+           <!-- 全屏：CSS 伪全屏铺满灯箱（WebView2 里 Fullscreen API 常被拒），再试原生全屏作增强 -->
+           <button class="viewer-ctl" :title="videoFull ? '退出全屏' : '全屏播放'" @click="toggleVideoFull">
+             {{ videoFull ? '退出' : '全屏' }}
+diff --git a/src/components/ProfilePanel.vue b/src/components/ProfilePanel.vue
+index 1c1734e..8844759 100644
+--- a/src/components/ProfilePanel.vue
++++ b/src/components/ProfilePanel.vue
+@@ -10,7 +10,7 @@
+  * 好友判断：通讯录里有就是好友 → 显示「发消息」；否则显示「添加好友」；
+  * 看自己资料时显示「这是你自己」。点板块 chip 会跳到控制台板块页并进入该板块。
+  */
+-import { inject, ref, computed, watch } from 'vue'
++import { inject, ref, computed, watch, onUnmounted, nextTick } from 'vue'
+ import { resUrl } from '../core/res'
+ import { fallbackAvatar, fmtTime } from '../core/util'
+ 
+@@ -23,16 +23,38 @@ const cm = ctx.community
+ /** 该用户创建的板块（点谁的头像就看谁的，不再固定显示「我的」） */
+ const userBas = ref<any[]>([])
+ const basLoading = ref(false)
++const createdPacks = ref<any[]>([]), packsLoading = ref(false), packsError = ref('')
++let packsRequest: AbortController | undefined
++let profileVersion = 0
++async function loadPacks(id: string) {
++  packsRequest?.abort()
++  const request = new AbortController(); packsRequest = request
++  createdPacks.value = []; packsError.value = ''; packsLoading.value = true
++  try {
++    const response = await fetch('/sticker-directory?' + new URLSearchParams({ author_id: id }), { signal: request.signal })
++    const result = await response.json()
++    if (!response.ok || !Array.isArray(result.data)) throw new Error(result.error?.message || '目录返回格式不正确')
++    if (packsRequest === request) createdPacks.value = result.data.filter(p => Number.isSafeInteger(Number(p.id)) && Number(p.id) > 0 && String(p.author?.user_id) === id)
++  } catch (e: any) { if (!request.signal.aborted && packsRequest === request) packsError.value = e.message }
++  finally { if (packsRequest === request) packsLoading.value = false }
++}
++async function gotoPack(pack: any) {
++  g.closeProfile(); ctx.console?.goto?.('/')
++  await nextTick()
++  await ctx.stickers?.openPackOf?.({ packId: Number(pack.id) })
++}
++onUnmounted(() => { profileVersion++; packsRequest?.abort() })
+ 
+ async function loadBas(id: string) {
+   if (!id) { userBas.value = []; return }
+   basLoading.value = true
+   try {
+-    userBas.value = await ctx.api.baListByCreate(id)
++    const result = await ctx.api.baListByCreate(id)
++    if (String(g.state.profileUser?.id) === id) userBas.value = result
+   } catch {
+     // 接口失败时，如果是自己就退回本地缓存的「我的板块」
+-    userBas.value = String(id) === String(ctx.auth?.state?.user?.id || '') ? (cm?.state?.mine || []) : []
+-  } finally { basLoading.value = false }
++    if (String(g.state.profileUser?.id) === id) userBas.value = String(id) === String(ctx.auth?.state?.user?.id || '') ? (cm?.state?.mine || []) : []
++  } finally { if (String(g.state.profileUser?.id) === id) basLoading.value = false }
+ }
+ 
+ /** 点板块 → 跳到控制台「板块」页并定位到这个板块 */
+@@ -85,41 +107,32 @@ async function toggleBlack() {
+ 
+ async function load() {
+   const u = g.state.profileUser
++  const version = ++profileVersion
+   if (!u) { data.value = null; return }
+-  loading.value = true
++  loading.value = true; data.value = null
+   try {
+-    data.value = await api.getUser(u.id)
++    const result = u.isBot ? await api.botInfo(u.id) : await api.getUser(u.id)
++    if (version === profileVersion) data.value = { ...result, id: String(result.id || u.id), isBot: !!u.isBot }
+   } catch (e: any) {
+-    // 机器人不是「用户」（get-user 返回「该用户不存在」），改走 /v1/bot/bot-info
+-    if (u.isBot || /不存在/.test(e.message)) {
+-      try {
+-        data.value = await api.botInfo(u.id)
+-        loading.value = false
+-        return
+-      } catch (e2: any) {
+-        data.value = { id: u.id, name: u.name || u.id, avatar: u.avatar, isBot: true, _note: '机器人资料加载失败：' + e2.message }
+-        loading.value = false
+-        return
+-      }
+-    }
+-    ui.toast('资料加载失败：' + e.message, 'error')
+-    data.value = null
+-  } finally { loading.value = false }
++    if (version === profileVersion) data.value = { ...u, _note: (u.isBot ? '机器人' : '用户') + '资料加载失败：' + e.message }
++  } finally { if (version === profileVersion) loading.value = false }
+ }
+ 
+ watch(() => g.state.profileUser, (u) => {
+   load()
++  userBas.value = []; createdPacks.value = []; packsError.value = ''; packsRequest?.abort(); packsLoading.value = false
+   // 看谁的资料就拉谁的板块
+-  if (u?.id) loadBas(String(u.id))
++  if (u?.id && !u.isBot) { loadBas(String(u.id)); loadPacks(String(u.id)) }
+   if (u && !(cm?.state?.mine || []).length) cm?.mine?.()
+-})
++}, { immediate: true })
+ 
+ /** 和 TA 聊天：切到该用户的私聊会话 */
+ function chatWith() {
+   const u = data.value || g.state.profileUser
+-  const conv = chat.state.conversations.find((c: any) => c.id === u.id)
+-  if (conv) { chat.open(conv); g.closeProfile() }
+-  else ui.toast('还没有和 TA 的会话', 'warn')
++  const type = u.isBot ? 3 : 1
++  let conv = chat.state.conversations.find((c: any) => String(c.id) === String(u.id) && c.type === type)
++  if (!conv) { conv = { id: String(u.id), type, name: u.name, avatar: u.avatar, preview: '', unread: 0, ts: Date.now() }; chat.state.conversations.unshift(conv) }
++  ctx.console?.goto?.('/'); chat.open(conv); g.closeProfile()
+ }
+ 
+ function copyId() {
+@@ -211,6 +224,13 @@ function copyId() {
+           </div>
+         </div>
+ 
++        <section v-if="!data.isBot" class="pf-ba pf-packs" aria-label="已创建的表情包">
++          <div class="lab">已创建的表情包 <span v-if="createdPacks.length">（{{ createdPacks.length }} 个）</span></div>
++          <p v-if="packsLoading" class="dim small" role="status">正在查询表情包目录…</p>
++          <p v-else-if="packsError" class="small" role="alert">{{ packsError }} <button class="ghost small" @click="loadPacks(String(data.id))">重试</button></p>
++          <div v-else-if="createdPacks.length" class="ba-list"><button v-for="p in createdPacks" :key="p.id" class="ba-chip" :title="'查看表情包 ' + p.id" @click="gotoPack(p)">{{ p.name || ('表情包 ' + p.id) }}</button></div>
++          <p v-else class="dim small">目录暂未收录该用户创建的表情包。</p>
++        </section>
+         <div class="pf-actions">
+           <!-- 好友才能直接发消息；非好友只能加好友 -->
+           <template v-if="isMe">
+@@ -258,7 +278,7 @@ function copyId() {
+ .pf-intro { margin-top: 14px; }
+ .pf-intro .lab { font-size: 12.5px; color: var(--fg2); margin-bottom: 4px; }
+ .pf-intro p { margin: 0; font-size: 13px; white-space: pre-wrap; background: var(--card2); padding: 10px; border-radius: 8px; }
+-.pf-actions { display: flex; gap: 8px; margin-top: 18px; }
++.pf-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 18px; }
+ .pf-ba { margin-top: 16px; }
+ .pf-ba .lab { font-size: 12.5px; color: var(--fg2); margin-bottom: 6px; }
+ .ba-list { display: flex; flex-wrap: wrap; gap: 6px; }
+diff --git a/src/console/components/LockScreen.vue b/src/console/components/LockScreen.vue
+index e74c960..ea630ac 100644
+--- a/src/console/components/LockScreen.vue
++++ b/src/console/components/LockScreen.vue
+@@ -152,7 +152,7 @@ async function forgotReset() {
+ 
+ <style scoped>
+ .ls-mask {
+-  position: fixed; inset: 0; z-index: 95; display: grid; place-items: center;
++  position: fixed; inset: 0; z-index: 20000; display: grid; place-items: center;
+   background: rgba(18, 18, 22, .72); backdrop-filter: blur(22px) saturate(1.2);
+ }
+ .ls-box {
+diff --git a/src/console/pages/AccountConfigPage.vue b/src/console/pages/AccountConfigPage.vue
+index d2dca95..f7d66d6 100644
+--- a/src/console/pages/AccountConfigPage.vue
++++ b/src/console/pages/AccountConfigPage.vue
+@@ -90,7 +90,9 @@ onUnmounted(() => clearTimeout(timer))
+ .settings-content { min-width: 0; min-height: 0; overflow: hidden; }
+ .settings-page, .settings-page > :deep(.k-layout) { height: 100%; min-height: 0; }
+ .settings-content :deep(.k-header) { padding: 27px 30px 20px; }
+-.settings-content :deep(.k-body) { padding: 8px 30px 28px; }
++.settings-content :deep(.k-body) { padding: 8px 30px 28px; flex: 1; min-height: 0; overflow: auto; overscroll-behavior: contain; scrollbar-gutter: stable; }
++.settings-content :deep(.k-header) { flex-shrink: 0; }
++.settings-content :deep(.k-body > *) { flex-shrink: 0; }
+ .settings-results { height: 100%; overflow: auto; padding: 30px; }
+ .settings-results h2 { font-size: 20px; margin: 0 0 8px; }
+ .settings-results h2 span { font-size: 12px; color: var(--fg2); margin-left: 8px; }
+diff --git a/src/console/pages/AccountPage.vue b/src/console/pages/AccountPage.vue
+index 0eafd4c..7791af6 100644
+--- a/src/console/pages/AccountPage.vue
++++ b/src/console/pages/AccountPage.vue
+@@ -7,6 +7,7 @@ import SettingsFrag from './SettingsPage.vue'
+ import NotificationSettings from '../../components/NotificationSettings.vue'
+ import Icon from '../components/Icon.vue'
+ import SavedAccounts from '../../components/SavedAccounts.vue'
++import AutoLockSettings from '../../components/AutoLockSettings.vue'
+ import Login from '../../components/Login.vue'
+ import { resUrl } from '../../core/res.js'
+ import { fallbackAvatar } from '../../core/util.js'
+@@ -68,6 +69,7 @@ onMounted(() => {
+       <p class="dim small">免打扰会话仍显示未读角标；阅读会话后清除。</p>
+     </KCard>
+ 
++    <KCard v-if="ctx.lock && (section === 'general' || section === 'account')" title="锁定" class="mt" data-setting-id="auto-lock"><AutoLockSettings /></KCard>
+     <KCard v-if="section === 'connection'" title="连接状态" data-setting-id="connection">
+       <div class="kv"><span class="k">API 基址</span><code>{{ api.base }}</code></div>
+       <div class="kv">
+diff --git a/src/console/pages/ContactsPage.vue b/src/console/pages/ContactsPage.vue
+index 1111587..f701f65 100644
+--- a/src/console/pages/ContactsPage.vue
++++ b/src/console/pages/ContactsPage.vue
+@@ -34,17 +34,18 @@ const newGroup = ref({ name: '', introduction: '' })
+ const discLoading = ref(false)
+ const discCats = ref<any[]>([])
+ const discItems = ref<Record<string, any[]>>({})
+-async function openDiscover() {
++const discError = ref('')
++async function openDiscover(force = false) {
+   tab.value = 'discover'
+-  if (discCats.value.length || discLoading.value) return
++  if ((!force && discCats.value.length) || discLoading.value) return
+   discLoading.value = true
++  discError.value = ''; discItems.value = {}
+   try {
+     const cats = await ctx.api.recommendCategories()
+-    discCats.value = cats.slice(0, 6)
+-    for (const c of discCats.value) {
+-      discItems.value[c.id] = (await ctx.api.recommendList(c.id).catch(() => [])).slice(0, 6)
+-    }
+-  } catch (e: any) { ctx.ui?.toast?.('推荐加载失败：' + e.message, 'error') }
++    discCats.value = cats
++    const results = await Promise.allSettled(cats.map(async c => { discItems.value[c.id] = await ctx.api.recommendList(c.id) }))
++    if (results.some(r => r.status === 'rejected')) discError.value = '部分推荐加载失败，请刷新重试。'
++  } catch (e: any) { discCats.value = []; discError.value = '推荐加载失败：' + e.message }
+   finally { discLoading.value = false }
+ }
+ async function applyJoin(it: any) {
+@@ -104,14 +105,15 @@ function openChat(it: any) {
+   ctx.chat.open(conv)
+ }
+ function showProfile(it: any) {
+-  ctx.group?.openProfile?.({ id: it.id, name: it.name, avatar: it.avatar, isBot: tab.value === 'bots' })
++  if (tab.value === 'groups') { openChat(it); ctx.group?.open?.(); return }
++  ctx.group?.openProfile?.({ id: String(it.id), name: it.name, avatar: it.avatar, isBot: tab.value === 'bots' })
+ }
+ </script>
+ 
+ <template>
+   <KLayout ns="contacts" title="通讯录" desc="把熟悉的人和常去的群，放在一起。">
+     <template #actions>
+-      <button class="ghost small contact-refresh" :disabled="s.loading" @click="sc.loadBook()"><Icon name="refresh" :size="15" :class="{ spinning: s.loading }" /> 刷新</button>
++      <button class="ghost small contact-refresh" :disabled="s.loading || discLoading" @click="tab === 'discover' ? openDiscover(true) : sc.loadBook()"><Icon name="refresh" :size="15" :class="{ spinning: s.loading || discLoading }" /> 刷新</button>
+       <button class="ghost small" :aria-expanded="createOpen" @click="createOpen = !createOpen; addOpen = false"><Icon name="contacts" :size="15" /> 创建群聊</button>
+       <button class="small" :aria-expanded="addOpen" @click="addOpen = !addOpen; createOpen = false"><Icon name="plus" :size="16" /> 添加</button>
+     </template>
+@@ -158,6 +160,7 @@ function showProfile(it: any) {
+ 
+     <Transition name="contact-list" mode="out-in">
+       <div v-if="tab === 'discover'" key="discover" class="contact-discovery">
++        <p v-if="discError" class="err" role="alert">{{ discError }} <button class="ghost small" @click="openDiscover(true)">重试</button></p>
+         <div v-if="discLoading" class="contact-empty" role="status"><Icon name="refresh" :size="26" class="spinning" /><p>正在发现好玩的群聊…</p></div>
+         <template v-else>
+           <section v-for="cat in discCats" :key="cat.id" class="disc-category">
+diff --git a/src/core/auto-lock.ts b/src/core/auto-lock.ts
+new file mode 100644
+index 0000000..048864f
+--- /dev/null
++++ b/src/core/auto-lock.ts
+@@ -0,0 +1,25 @@
++export interface AutoLockPreferences { minimize: boolean; blurMinutes: number }
++/** Keep the original blur deadline: repeated blur/visibility events cannot postpone locking. */
++export function createAutoLock(read: () => AutoLockPreferences, lock: () => void, clock = {
++  now: () => Date.now(), set: (fn: () => void, ms: number): any => setTimeout(fn, ms), clear: (id: any) => clearTimeout(id),
++}) {
++  let blurredAt: number | null = null, timer: any
++  const cancel = () => { clock.clear(timer); timer = undefined }
++  function expired() {
++    return blurredAt !== null && read().blurMinutes > 0 && clock.now() - blurredAt >= read().blurMinutes * 60000
++  }
++  function arm() {
++    cancel()
++    if (blurredAt === null || read().blurMinutes <= 0) return
++    const remaining = read().blurMinutes * 60000 - (clock.now() - blurredAt)
++    if (remaining <= 0) { lock(); return }
++    timer = clock.set(() => { if (expired()) lock(); else arm() }, remaining)
++  }
++  return {
++    blur() { if (blurredAt === null) blurredAt = clock.now(); arm() },
++    focus() { if (expired()) lock(); blurredAt = null; cancel() },
++    minimize(value: boolean) { if (value) { if (read().minimize) lock(); if (blurredAt === null) blurredAt = clock.now(); arm() } },
++    configure: arm,
++    stop() { blurredAt = null; cancel() },
++  }
++}
+diff --git a/src/core/gif-edit.ts b/src/core/gif-edit.ts
+new file mode 100644
+index 0000000..985e390
+--- /dev/null
++++ b/src/core/gif-edit.ts
+@@ -0,0 +1,60 @@
++import { parseGIF, decompressFrame } from 'gifuct-js'
++import * as gifenc from 'gifenc'
++import type { RasterImage } from '@jodit/image-editor'
++const { GIFEncoder, quantize, applyPalette } = typeof gifenc.GIFEncoder === 'function' ? gifenc : (gifenc as any).default
++
++export interface GifAnimation { frames: RasterImage[]; delays: number[]; repeat: number }
++const yieldFrame = () => new Promise<void>(resolve => setTimeout(resolve, 0))
++const check = (signal?: AbortSignal) => { signal?.throwIfAborted() }
++export async function decodeGif(data: ArrayBuffer, signal?: AbortSignal): Promise<GifAnimation> {
++  const gif = parseGIF(data), width = gif.lsd.width, height = gif.lsd.height
++  const images = gif.frames.filter((f: any) => !!f.image) as any[]
++  if (!width || !height || !images.length) throw new Error('GIF 没有有效画面')
++  if (images.length > 1000 || width * height * images.length > 48_000_000) throw new Error('GIF 画面过大，请先缩小动图后再编辑')
++  const frames: RasterImage[] = [], delays: number[] = []
++  const pixels = new Uint8ClampedArray(width * height * 4)
++  const background = gif.gct?.[gif.lsd.backgroundColorIndex] || [0, 0, 0]
++  function fill(left: number, top: number, w: number, h: number, transparent: boolean) {
++    for (let y = top; y < Math.min(height, top + h); y++) for (let x = left; x < Math.min(width, left + w); x++) {
++      const i = (y * width + x) * 4
++      pixels.set(transparent ? [0, 0, 0, 0] : [...background, 255], i)
++    }
++  }
++  fill(0, 0, width, height, !!images[0].gce?.extras.transparentColorGiven)
++  let previous: ReturnType<typeof decompressFrame> | undefined, saved: Uint8ClampedArray | undefined
++  for (const image of images) {
++    check(signal)
++    if (previous?.disposalType === 2) { const d = previous.dims; fill(d.left, d.top, d.width, d.height, previous.transparentIndex !== undefined) }
++    else if (previous?.disposalType === 3 && saved) pixels.set(saved)
++    const frame = decompressFrame(image, gif.gct, true), d = frame.dims
++    if (!d.width || !d.height || d.left + d.width > width || d.top + d.height > height) throw new Error('GIF 帧尺寸不正确')
++    saved = frame.disposalType === 3 ? pixels.slice() : undefined
++    for (let y = 0; y < d.height; y++) for (let x = 0; x < d.width; x++) {
++      const from = (y * d.width + x) * 4
++      if (frame.patch[from + 3]) pixels.set(frame.patch.subarray(from, from + 4), ((y + d.top) * width + x + d.left) * 4)
++    }
++    frames.push({ width, height, data: pixels.slice() }); delays.push(Math.max(20, (image.gce?.delay || 10) * 10)); previous = frame
++    if (frames.length % 8 === 0) await yieldFrame()
++  }
++  const extension: any = gif.frames.find((f: any) => /NETSCAPE|ANIMEXTS/.test(f.application?.id || ''))
++  const blocks = extension?.application?.blocks
++  return { frames, delays, repeat: blocks?.[0] === 1 ? (blocks[1] | blocks[2] << 8) : -1 }
++}
++
++export async function encodeGif(animation: GifAnimation, render: (source: RasterImage) => RasterImage, signal?: AbortSignal, progress?: (percent: number) => void) {
++  const gif = GIFEncoder()
++  for (let i = 0; i < animation.frames.length; i++) {
++    check(signal)
++    const frame = render(animation.frames[i])
++    if (frame.width * frame.height * animation.frames.length > 48_000_000) throw new Error('输出 GIF 过大，请缩小输出尺寸')
++    const palette = quantize(frame.data, 255, { format: 'rgba4444', oneBitAlpha: true })
++    let transparentIndex = palette.findIndex((color: number[]) => color[3] === 0)
++    if (transparentIndex < 0) { transparentIndex = palette.length; palette.push([0, 0, 0, 0]) }
++    const indexed = applyPalette(frame.data, palette, 'rgba4444')
++    gif.writeFrame(indexed, frame.width, frame.height, { palette, delay: animation.delays[i], repeat: animation.repeat,
++      transparent: true, transparentIndex, dispose: 2 })
++    progress?.(Math.round((i + 1) / animation.frames.length * 100)); await yieldFrame()
++  }
++  check(signal); gif.finish()
++  return new Blob([new Uint8Array(gif.bytes())], { type: 'image/gif' })
++}
+diff --git a/src/core/image-edit.ts b/src/core/image-edit.ts
+index 47ca238..6f15c76 100644
+--- a/src/core/image-edit.ts
++++ b/src/core/image-edit.ts
+@@ -1,20 +1,23 @@
+ /** Headless adapter: Jodit provides pixels/codecs; YH LaoDa owns state, UI and file actions. */
+ import { createDefaultProcessor, createIdentityDesign, resize, execute, type Design, type RasterImage } from '@jodit/image-editor'
+ 
+-export type ImageDesignPatch = Omit<Partial<Design>, 'flip' | 'finetune'> & {
++export interface BrushStroke { id: string; color: string; size: number; points: { x: number; y: number }[] }
++type ImageDesign = Design & { strokes: BrushStroke[] }
++const identity = (): ImageDesign => ({ ...createIdentityDesign(), strokes: [] })
++export type ImageDesignPatch = Omit<Partial<ImageDesign>, 'flip' | 'finetune'> & {
+   flip?: Partial<Design['flip']>; finetune?: Partial<Design['finetune']>
+ }
+ const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value))
+ const bound = (n: number, min: number, max: number) => Math.min(max, Math.max(min, Math.round(Number(n) || 0)))
+ 
+ export class ImageEditSession {
+-  private entries: Design[] = [createIdentityDesign()]
++  private entries: ImageDesign[] = [identity()]
+   private index = 0
+   constructor(readonly source: RasterImage) {}
+   get design() { return clone(this.entries[this.index]) }
+   get canUndo() { return this.index > 0 }
+   get canRedo() { return this.index < this.entries.length - 1 }
+-  get dirty() { return JSON.stringify(this.entries[this.index]) !== JSON.stringify(createIdentityDesign()) }
++  get dirty() { return JSON.stringify(this.entries[this.index]) !== JSON.stringify(identity()) }
+   get orientedSize() {
+     const rotate = this.entries[this.index].rotate
+     return rotate % 180 ? { width: this.source.height, height: this.source.width } : { width: this.source.width, height: this.source.height }
+@@ -48,11 +51,11 @@ export class ImageEditSession {
+   }
+   undo() { if (this.canUndo) this.index-- }
+   redo() { if (this.canRedo) this.index++ }
+-  reset() { this.apply(createIdentityDesign()) }
++  reset() { this.apply(identity()) }
+   /** Preview runs on a smaller raster; crop coordinates always stay in original image pixels. */
+-  preview(maxEdge = 1100) {
+-    const scale = Math.min(1, maxEdge / Math.max(this.source.width, this.source.height))
+-    const source = scale === 1 ? this.source : resize(this.source, { width: Math.max(1, Math.round(this.source.width * scale)), height: Math.max(1, Math.round(this.source.height * scale)) })
++  preview(maxEdge = 1100, frame = this.source) {
++    const scale = Math.min(1, maxEdge / Math.max(frame.width, frame.height, this.outputSize.width, this.outputSize.height))
++    const source = scale === 1 ? frame : resize(frame, { width: Math.max(1, Math.round(frame.width * scale)), height: Math.max(1, Math.round(frame.height * scale)) })
+     const design = this.design
+     if (design.crop) design.crop = { x: Math.round(design.crop.x * scale), y: Math.round(design.crop.y * scale), width: Math.max(1, Math.round(design.crop.width * scale)), height: Math.max(1, Math.round(design.crop.height * scale)) }
+     if (design.resize) design.resize = { width: Math.max(1, Math.round(design.resize.width * scale)), height: Math.max(1, Math.round(design.resize.height * scale)) }
+@@ -62,17 +65,48 @@ export class ImageEditSession {
+   pixels() { return execute(this.source, this.design) }
+ }
+ 
+-export async function openImageEdit(blob: Blob) {
+-  if (!blob.type.startsWith('image/')) throw new Error('该文件不是可编辑的图片')
++/** Stroke coordinates share the output image's normalized space with text annotations. */
++export function drawStrokes(ctx: CanvasRenderingContext2D, width: number, height: number, strokes: BrushStroke[]) {
++  ctx.save(); ctx.lineCap = 'round'; ctx.lineJoin = 'round'
++  for (const stroke of strokes) {
++    if (!stroke.points.length) continue
++    ctx.strokeStyle = stroke.color; ctx.fillStyle = stroke.color; ctx.lineWidth = Math.max(1, stroke.size * height)
++    const start = stroke.points[0]
++    if (stroke.points.length === 1 || stroke.points.every(point => point.x === start.x && point.y === start.y)) { ctx.beginPath(); ctx.arc(start.x * width, start.y * height, ctx.lineWidth / 2, 0, Math.PI * 2); ctx.fill(); continue }
++    ctx.beginPath(); ctx.moveTo(start.x * width, start.y * height)
++    for (const point of stroke.points.slice(1)) ctx.lineTo(point.x * width, point.y * height)
++    ctx.stroke()
++  }
++  ctx.restore()
++}
++function compositeStrokes(raster: RasterImage, strokes: BrushStroke[]) {
++  if (!strokes.length) return raster
++  const canvas = document.createElement('canvas'); canvas.width = raster.width; canvas.height = raster.height
++  const ctx = canvas.getContext('2d')!
++  ctx.putImageData(new ImageData(new Uint8ClampedArray(raster.data), raster.width, raster.height), 0, 0)
++  drawStrokes(ctx, raster.width, raster.height, strokes)
++  return { width: raster.width, height: raster.height, data: ctx.getImageData(0, 0, raster.width, raster.height).data }
++}
++export async function openImageEdit(blob: Blob, signal?: AbortSignal) {
++  const signature = new TextDecoder().decode(await blob.slice(0, 6).arrayBuffer())
++  const isGif = /^GIF8[79]a$/.test(signature)
++  if (!blob.type.startsWith('image/') && !isGif) throw new Error('该文件不是可编辑的图片')
+   const processor = createDefaultProcessor(undefined, { maxSize: 4096, maxPixels: 16_777_216 })
+-  const session = new ImageEditSession(await processor.decode(blob))
++  const animation = isGif ? await (await import('./gif-edit')).decodeGif(await blob.arrayBuffer(), signal) : undefined
++  signal?.throwIfAborted()
++  const session = new ImageEditSession(animation?.frames[0] || await processor.decode(blob))
++  const render = (source: RasterImage) => compositeStrokes(processor.render(source, session.design), session.design.strokes)
+   return {
+-    session,
+-    preview() { const { source, design } = session.preview(); return processor.render(source, design) },
+-    export(type = 'image/png') { return processor.toBlob(session.source, session.design, { type, quality: .94 }) },
++    session, animation,
++    preview(index = 0) { const { source, design } = session.preview(1100, animation?.frames[index] || session.source); return compositeStrokes(processor.render(source, design), design.strokes) },
++    async export(type = 'image/png', progress?: (percent: number) => void, index = 0) {
++      if (type === 'image/gif' && animation) return (await import('./gif-edit')).encodeGif(animation, render, signal, progress)
++      const pixels = render(animation?.frames[index] || session.source)
++      return processor.toBlob(pixels, createIdentityDesign(), { type, quality: .94 })
++    },
+   }
+ }
+ 
+ export function editedImageName(original: string, type = 'image/png') {
+-  return (original.replace(/[\\/:*?"<>|]/g, '_').replace(/\.[^.]*$/, '') || 'image') + '_edited.' + (type === 'image/jpeg' ? 'jpg' : 'png')
++  return (original.replace(/[\\/:*?"<>|]/g, '_').replace(/\.[^.]*$/, '') || 'image') + '_edited.' + (type === 'image/jpeg' ? 'jpg' : type === 'image/gif' ? 'gif' : 'png')
+ }
+diff --git a/src/core/settings-catalog.ts b/src/core/settings-catalog.ts
+index 6c5365d..1ec1873 100644
+--- a/src/core/settings-catalog.ts
++++ b/src/core/settings-catalog.ts
+@@ -12,6 +12,7 @@ export const settingsCategories = [
+   { id: 'about', title: '关于', icon: 'help', group: '高级设置' },
+ ]
+ export const settingsFeatures = [
++  { category: 'general', anchor: 'auto-lock', title: '自动锁定', description: '最小化锁定、失去焦点后按分钟锁定与本地 PIN', keywords: '安全 最小化 焦点 失焦 分钟 锁屏 隐私 PIN' },
+   { category: 'general', anchor: 'general', title: '常用设置', description: '版本、外观模式与未读提示', keywords: '版本 深色 浅色 红点 未读' },
+   { category: 'appearance', anchor: '', title: '主题与外观', description: '配色、主色调、壁纸、圆角与界面偏好', keywords: '暗色 亮色 自动 跟随系统 背景 看板娘 贴纸 字体 模糊 透明度' },
+   { category: 'notifications', anchor: 'notifications', title: '消息通知', description: 'Windows 系统通知、软件内 Toast 与通知测试', keywords: 'toast 弹窗 免打扰 桌面 提醒' },
+diff --git a/src/gifenc.d.ts b/src/gifenc.d.ts
+new file mode 100644
+index 0000000..d581797
+--- /dev/null
++++ b/src/gifenc.d.ts
+@@ -0,0 +1,5 @@
++declare module 'gifenc' {
++  export function GIFEncoder(): { writeFrame(index: Uint8Array, width: number, height: number, options: Record<string, any>): void; finish(): void; bytes(): Uint8Array }
++  export function quantize(data: Uint8Array | Uint8ClampedArray, count: number, options?: Record<string, any>): number[][]
++  export function applyPalette(data: Uint8Array | Uint8ClampedArray, palette: number[][], format?: string): Uint8Array
++}
+diff --git a/src/plugins/api.ts b/src/plugins/api.ts
+index 0bc8443..2220ba2 100644
+--- a/src/plugins/api.ts
++++ b/src/plugins/api.ts
+@@ -664,14 +664,18 @@ export const apiPlugin = {
+         const r = assertOk(await request('/v1/friend/address-book-list', { body: new Uint8Array() }))
+         const out: Record<string, any[]> = { users: [], groups: [], bots: [] }
+         for (const d of pb.each(r.pb, 2)) {
+-          const type = pb.num(d, 3)
++          const label = pb.str(d, 1)
++          const declared = pb.num(d, 3)
++          const type = [1, 2, 3].includes(declared) ? declared : /群/.test(label) ? 2 : /机器人/.test(label) ? 3 : /用户|好友/.test(label) ? 1 : 0
++          if (!type) continue
+           const list = pb.each(d, 2).map(u => ({
+             id: pb.str(u, 1), remark: pb.str(u, 2), avatar: pb.str(u, 3),
+             level: pb.num(u, 4), noDisturb: pb.bool(u, 5),
+             name: pb.str(u, 8) || pb.str(u, 2) || pb.str(u, 1),
+           }))
+-          out[type === 1 ? 'users' : type === 2 ? 'groups' : 'bots'] = list
++          out[type === 1 ? 'users' : type === 2 ? 'groups' : 'bots'].push(...list)
+         }
++        for (const key of Object.keys(out)) out[key] = [...new Map(out[key].map(item => [String(item.id), item])).values()]
+         return out
+       },
+ 
+@@ -899,12 +903,17 @@ export const apiPlugin = {
+ 
+         // 记住上次成功的上传域名（按 bucket 缓存），避免每次先撞一次区域错误
+         const cacheKey = `yh.up.host.${bucket || ak || 'default'}`
+-        let host = localStorage.getItem(cacheKey) || 'upload.qiniup.com'
+-        if (ak && bucket && !localStorage.getItem(cacheKey)) {
++        const validHost = (value: string) => /^(?:[a-z0-9-]+\.)*(?:qiniup\.com|qbox\.me)$/i.test(value)
++        let cached = ''
++        try { cached = localStorage.getItem(cacheKey) || '' } catch { /* storage can be unavailable */ }
++        let host = validHost(cached) ? cached : 'upload.qiniup.com'
++        if (ak && bucket && !cached) {
+           try {
+-            const q: any = await fetch(`https://api.qiniu.com/v4/query?ak=${ak}&bucket=${bucket}`).then(r => r.json())
+-            const d = q?.up?.domains?.[0] || q?.up?.acc?.domains?.[0] || q?.up?.src?.domains?.[0]
+-            if (d) host = String(d).replace(/^https?:\/\//, '')
++            const q: any = await fetch(`https://api.qiniu.com/v4/query?ak=${encodeURIComponent(ak)}&bucket=${encodeURIComponent(bucket)}`, { signal: AbortSignal.timeout(8000) }).then(r => r.json())
++            const up = q?.hosts?.[0]?.up || q?.up
++            const d = up?.domains?.[0] || up?.acc?.domains?.[0] || up?.src?.domains?.[0]
++            const candidate = String(d || '').replace(/^https?:\/\//, '').replace(/\/$/, '')
++            if (validHost(candidate)) host = candidate
+           } catch { /* 忽略，用默认 */ }
+         }
+ 
+@@ -920,7 +929,7 @@ export const apiPlugin = {
+         const tried = new Set<string>()
+         let lastErr = ''
+         for (let attempt = 0; attempt < 4; attempt++) {
+-          if (tried.has(host)) host = 'up.qiniup.com'
++          if (tried.has(host)) break
+           tried.add(host)
+           const fd = new FormData()
+           fd.append('token', token)
+@@ -928,7 +937,7 @@ export const apiPlugin = {
+           fd.append('file', file)
+           // 经本站代理上传：/up/<上传域名>/ -> https://<域名>/
+           // 用 XHR 而非 fetch：fetch 拿不到上传进度，XHR 的 upload.onprogress 可以（速度条要用）
+-          const text = await new Promise<string>((resolve, reject) => {
++          const result = await new Promise<{ status: number; text: string }>((resolve, reject) => {
+             const xhr = new XMLHttpRequest()
+             xhr.open('POST', `/up/${host}/`)
+             xhr.timeout = 120000
+@@ -937,20 +946,22 @@ export const apiPlugin = {
+             if (onProgress) {
+               xhr.upload.onprogress = (e) => { if (e.lengthComputable) onProgress(e.loaded, e.total) }
+             }
+-            xhr.onload = () => xhr.status >= 200 && xhr.status < 300 ? resolve(xhr.responseText) : reject(new Error('上传失败 HTTP ' + xhr.status + '：' + xhr.responseText.slice(0, 160)))
++            // Region redirects arrive as HTTP 400 JSON. Parse them before deciding whether to reject.
++            xhr.onload = () => resolve({ status: xhr.status, text: xhr.responseText })
+             xhr.onerror = () => reject(new Error('上传网络错误'))
+             xhr.send(fd)
+           })
++          const text = result.text
+           let json: any = {}
+           try { json = JSON.parse(text) } catch { /* 非 JSON */ }
+-          if (json.key) {
+-            localStorage.setItem(cacheKey, host)
++          if (result.status >= 200 && result.status < 300 && json.key) {
++            try { localStorage.setItem(cacheKey, host) } catch { /* successful upload remains successful */ }
+             return { key: json.key as string, host }
+           }
+ 
+-          lastErr = json.error || text.slice(0, 160) || '上传失败'
++          lastErr = String(json.error || text.slice(0, 200) || ('上传失败 HTTP ' + result.status))
+           const m = lastErr.match(/please use\s+([\w.-]+)/i)
+-          if (m) { host = m[1]; continue }
++          if (m && validHost(m[1]) && !tried.has(m[1])) { host = m[1]; onProgress?.(0, file.size); continue }
+           break
+         }
+         throw new Error(lastErr)
+@@ -1062,21 +1073,24 @@ export const apiPlugin = {
+       },
+       /** 「发现」页：推荐分区列表 */
+       async recommendCategories() {
+-        const r = await request('/v1/user/recommend-category-list', { body: {} })
++        const r = await request('/v1/user/recommend-category-list', { body: { appChannel: 'default' } })
+         assertOk(r)
+-        return r.json?.data?.list || r.json?.data?.categories || []
++        return (r.json?.data?.categories || r.json?.data?.list || []).map((c: any) => {
++          const name = typeof c === 'string' ? c : c.name || c.categoryName || c.category || String(c.id)
++          return { id: name, name }
++        })
+       },
+       /** 「发现」页：分区内推荐群/机器人 */
+       async recommendList(categoryId: number | string) {
+-        const r = await request('/v1/user/recommend-list', { body: { categoryId } })
++        const r = await request('/v1/user/recommend-list', { body: { category: String(categoryId), keyword: '', size: 30, page: 1 } })
+         assertOk(r)
+-        return r.json?.data?.list || []
++        return (r.json?.data?.groupList || r.json?.data?.list || []).map((x: any) => ({ ...x, id: String(x.chatId || x.id), name: x.nickname || x.name, avatar: x.avatarUrl || x.avatar, chatType: 2 }))
+       },
+       /** 「发现」页：推荐机器人 */
+       async recommendBots() {
+         const r = await request('/v1/user/recommend', { body: {} })
+         assertOk(r)
+-        return r.json?.data?.list || r.json?.data?.bots || []
++        return (r.json?.data?.botList || r.json?.data?.list || r.json?.data?.bots || []).map((x: any) => ({ ...x, id: String(x.chatId || x.id), name: x.nickname || x.name, avatar: x.avatarUrl || x.avatar, chatType: 3 }))
+       },
+       /** 举报用户/群/机器人（/v1/report/create） */
+       async report(chatId: string, chatType: number, chatName: string, content: string) {
+diff --git a/src/plugins/auth.ts b/src/plugins/auth.ts
+index b6faec2..2cb8f4a 100644
+--- a/src/plugins/auth.ts
++++ b/src/plugins/auth.ts
+@@ -12,6 +12,8 @@ export const authPlugin = {
+     let deviceId = '', contextAccount = '', busy = false
+     let accounts: any[] = []
+     let loaded: Promise<void> | undefined
++    let operations = Promise.resolve<any>(undefined)
++    let restoration: Promise<any> | undefined
+     const newDevice = () => 'web-' + crypto.randomUUID()
+     const invalidCredential = (error: any) => /token|credential|expired|unauthori[sz]ed|未登录|登录.{0,8}(失效|过期)|401|403/i.test(error?.message || '')
+     const publicUser = (u: any) => ({ id: String(u.id), name: u.name || String(u.id), avatar: u.avatar || '', email: u.email || '' })
+@@ -37,8 +39,8 @@ export const authPlugin = {
+       return loaded
+     }
+     async function persistAccounts() {
+-      await storage.save('accounts', { version: 1, items: accounts })
+       publish()
++      await storage.save('accounts', { version: 1, items: accounts })
+     }
+     async function ensureDevice() {
+       if (deviceId) return deviceId
+@@ -46,12 +48,15 @@ export const authPlugin = {
+       deviceId = s.device || localStorage.getItem('yh.device') || newDevice()
+       return deviceId
+     }
+-    async function exclusive(fn: () => Promise<any>) {
+-      if (busy) throw new Error('正在处理账号，请稍候')
+-      busy = true; state.error = ''
+-      try { return await fn() }
+-      catch (e: any) { state.error = e?.message || String(e); throw e }
+-      finally { busy = false }
++    function exclusive(fn: () => Promise<any>) {
++      const task = operations.then(async () => {
++        busy = true; state.error = ''
++        try { return await fn() }
++        catch (e: any) { state.error = e?.message || String(e); throw e }
++        finally { busy = false }
++      })
++      operations = task.catch(() => {})
++      return task
+     }
+     async function enter(token: string, device: string, restore = false) {
+       token = token.trim()
+@@ -129,7 +134,9 @@ export const authPlugin = {
+           localStorage.removeItem('yh.token'); localStorage.removeItem('yh.device')
+         } finally { busy = false }
+       },
+-      async restore() {
++      restore() {
++        if (restoration) return restoration
++        restoration = exclusive(async () => {
+         await loadAccounts()
+         const session = await storage.load('session').catch(() => ({}))
+         const token = session.token || localStorage.getItem('yh.token')
+@@ -140,6 +147,8 @@ export const authPlugin = {
+           if (item && invalidCredential(error)) { item.needsLogin = true; await persistAccounts() }
+           api.setToken(''); state.status = 'guest'; state.user = null
+         }
++        })
++        return restoration
+       },
+     }
+     ctx.on('auth/login', u => ctx.logger?.info(`已登录：${u.name} (${u.id})`))
+diff --git a/src/plugins/chat.ts b/src/plugins/chat.ts
+index a63b439..18aa0c1 100644
+--- a/src/plugins/chat.ts
++++ b/src/plugins/chat.ts
+@@ -109,6 +109,7 @@ export const chatPlugin = {
+     })
+     // A selected conversation is only read while its chat page is actually visible in the foreground.
+     const viewingConversation = () => !!state.current && !document.hidden && document.hasFocus?.() !== false
++      && !(ctx as any).lock?.isLocked
+       && (!ctx.console || ctx.console.state.currentPage === '/')
+     function readCurrent() {
+       if (!viewingConversation()) return
+@@ -117,6 +118,7 @@ export const chatPlugin = {
+       if (hit) { hit.unread = 0; hit.at = false }
+       scheduleDismiss(cur.id)
+     }
++    ctx.on('app/unlock' as any, readCurrent)
+ 
+     const preferences = reactive({ antiRecall: localStorage.getItem('yh.chat.antiRecall') === 'true' })
+     const recallCache = createRecallCache(storage, () => auth.state.user?.id || '', () => preferences.antiRecall)
+diff --git a/src/plugins/group-admin.ts b/src/plugins/group-admin.ts
+index 9ddcbfd..3e8e227 100644
+--- a/src/plugins/group-admin.ts
++++ b/src/plugins/group-admin.ts
+@@ -278,15 +278,22 @@ export const groupAdminPlugin = {
+     /* ---------------- 通讯录（好友判断） ---------------- */
+ 
+     /** 拉通讯录，拿到好友 id 列表（只对“用户”这一类） */
++    let friendVersion = 0
+     async function loadFriends() {
+       if (state.friendsLoaded) return
++      const version = friendVersion
+       try {
+         const book = await api.addressBook()
+-        state.friendIds = (book.users || []).map((u: any) => u.id)
++        if (version === friendVersion) { state.friendIds = (book.users || []).map((u: any) => String(u.id)); state.friendsLoaded = true }
+       } catch { /* 忽略 */ }
+-      finally { state.friendsLoaded = true }
+     }
+-    function isFriend(userId: string) { return state.friendIds.includes(userId) }
++    function isFriend(userId: string) {
++      const social = ctx.get('social')
++      if (social?.state.loaded) return social.state.book.users.some((u: any) => String(u.id) === String(userId))
++      return state.friendIds.includes(String(userId))
++    }
++    ctx.on('auth/login', () => { friendVersion++; state.friendIds = []; state.friendsLoaded = false; void loadFriends() })
++    ctx.on('auth/logout', () => { friendVersion++; state.friendIds = []; state.friendsLoaded = false; state.profileUser = null })
+ 
+     /* ---------------- 群文件（群网盘） ---------------- */
+ 
+@@ -520,7 +527,7 @@ export const groupAdminPlugin = {
+       loadFriends, isFriend, loadDisk, openFolder, backFolder, createFolder, locateFile,
+       openMount, closeMount, mountEnter, mountUp, reloadMount, loadMount,
+       /** 打开用户主页 */
+-      openProfile(user: any) { state.profileUser = user },
++      openProfile(user: any) { state.profileUser = { ...user, id: String(user.id) }; void loadFriends() },
+       closeProfile() { state.profileUser = null },
+       /** 底部看板栏开关 */
+       /** 退出全屏群界面（最右边那个按钮） */
+diff --git a/src/plugins/lock.ts b/src/plugins/lock.ts
+index 411a93e..bc758ae 100644
+--- a/src/plugins/lock.ts
++++ b/src/plugins/lock.ts
+@@ -14,6 +14,7 @@
+  */
+ import { reactive } from 'vue'
+ import LockScreen from '../console/components/LockScreen.vue'
++import { createAutoLock, type AutoLockPreferences } from '../core/auto-lock'
+ 
+ const REQ_TTL = 5 * 60 * 1000
+ 
+@@ -41,6 +42,7 @@ export const lockPlugin = {
+     const state = reactive({
+       locked: false,
+       hasPin: false,
++      preferences: { minimize: false, blurMinutes: 0 } as AutoLockPreferences,
+       /** 桌面端发出的解锁请求 nonce（等手机应答用） */
+       reqNonce: null as string | null,
+       reqStatus: '' as '' | 'waiting' | 'denied' | 'expired',
+@@ -50,6 +52,14 @@ export const lockPlugin = {
+ 
+     let pinHash = ''
+     let relayCache: any = null
++    const autoLock = createAutoLock(() => state.preferences, () => { if (state.hasPin && auth.state.status === 'ready') lock() })
++    function persistLock() { return storage.save('lock', { locked: state.locked, preferences: { ...state.preferences }, ts: Date.now() }) }
++    async function setAutoLock(patch: Partial<AutoLockPreferences>) {
++      if (!state.hasPin && (patch.minimize || patch.blurMinutes)) throw new Error('请先设置锁定 PIN')
++      state.preferences = { ...state.preferences, ...patch }
++      state.preferences.blurMinutes = Math.max(0, Math.min(1440, Number(state.preferences.blurMinutes) || 0))
++      autoLock.configure(); await persistLock()
++    }
+ 
+     async function relay(): Promise<any> {
+       relayCache = await storage.load('relay').catch(() => ({})) || {}
+@@ -69,15 +79,19 @@ export const lockPlugin = {
+       ])
+       state.hasPin = !!p.hash
+       pinHash = p.hash || ''
++      state.preferences = { minimize: !!l.preferences?.minimize, blurMinutes: Math.max(0, Math.min(1440, Number(l.preferences?.blurMinutes) || 0)) }
+       if (l.locked) state.locked = true
++      if (document.hidden || !document.hasFocus()) autoLock.blur()
+     }
+ 
+     function lock() {
+       if (state.locked) return
+       state.locked = true
++      ;(document.activeElement as HTMLElement | null)?.blur?.()
++      if (document.fullscreenElement && document.exitFullscreen) void document.exitFullscreen().catch(() => {})
+       state.reqNonce = null
+       state.reqStatus = ''
+-      storage.save('lock', { locked: true, ts: Date.now() }).catch(() => {})
++      autoLock.stop(); persistLock().catch(() => {})
+     }
+ 
+     async function unlock() {
+@@ -85,7 +99,8 @@ export const lockPlugin = {
+       state.reqNonce = null
+       state.reqStatus = ''
+       state.pending = null
+-      await storage.save('lock', { locked: false }).catch(() => {})
++      ctx.emit('app/unlock')
++      await persistLock().catch(() => {})
+       // 清掉中继里的旧请求/应答，避免下次误触
+       await putRelay({ lockreq: null, lockres: null })
+     }
+@@ -150,13 +165,30 @@ export const lockPlugin = {
+     ctx.effect(() => {
+       restore()
+       watchDesk()
+-      return () => { clearInterval(deskTimer) }
++      const focus = () => { if (!document.hidden) autoLock.focus() }
++      const blur = () => autoLock.blur()
++      const visibility = () => {
++        if (document.hidden) {
++          autoLock.blur()
++          if (!(window as any).__TAURI__ && !/Electron/i.test(navigator.userAgent)) autoLock.minimize(true)
++        } else if (document.hasFocus()) autoLock.focus()
++      }
++      const minimized = (event: Event) => autoLock.minimize(!!(event as CustomEvent).detail)
++      window.addEventListener('focus', focus); window.addEventListener('blur', blur)
++      window.addEventListener('yh-window-minimized', minimized); document.addEventListener('visibilitychange', visibility)
++      return () => {
++        clearInterval(deskTimer); autoLock.stop()
++        window.removeEventListener('focus', focus); window.removeEventListener('blur', blur)
++        window.removeEventListener('yh-window-minimized', minimized); document.removeEventListener('visibilitychange', visibility)
++      }
+     })
+ 
+     ctx.on('app/lock', () => lock())
++    ctx.on('auth/logout', () => { autoLock.stop(); state.locked = false; state.hasPin = false; pinHash = ''; state.preferences = { minimize: false, blurMinutes: 0 } })
++    ctx.on('auth/login', () => restore())
+ 
+     const lockApi = {
+-      state, lock, unlock, checkPin, setPin, clearPin, requestRemoteUnlock,
++      state, lock, unlock, checkPin, setPin, clearPin, requestRemoteUnlock, setAutoLock,
+       get isLocked() { return state.locked },
+     }
+     ctx.set('lock', lockApi)
+diff --git a/src/plugins/social.ts b/src/plugins/social.ts
+index 66701c9..dbf2822 100644
+--- a/src/plugins/social.ts
++++ b/src/plugins/social.ts
+@@ -52,10 +52,10 @@ export const socialPlugin = {
+       state.loading = true
+       try {
+         const book = await api.addressBook()
+-        if (version === generation) state.book = book
++        if (version === generation) { state.book = book; state.loaded = true }
+       } catch (e: any) {
+         if (version === generation) ui.toast('通讯录加载失败：' + e.message, 'error')
+-      } finally { if (version === generation) { state.loading = false; state.loaded = true } }
++      } finally { if (version === generation) state.loading = false }
+     }
+ 
+     async function loadRequests() {
+@@ -112,6 +112,7 @@ export const socialPlugin = {
+ 
+     loadBook()
+     loadRequests()
++    ctx.on('auth/login', () => { generation++; state.loaded = false; loadBook(); loadRequests() })
+     ctx.setTimeout(loadRequests, 4000)
+ 
+     ctx.logger?.info('social 插件已加载（通讯录 / 添加 / 创建群聊）')
+diff --git a/src/plugins/storage.ts b/src/plugins/storage.ts
+index 628004b..d359ffd 100644
+--- a/src/plugins/storage.ts
++++ b/src/plugins/storage.ts
+@@ -13,6 +13,9 @@ export const storagePlugin = {
+     const mem = new Map<string, any>()
+     const scoped = new Set(['cache', 'recall'])
+     const writes = new Map<string, Promise<any>>()
++    const rawWrites = new Map<string, Promise<any>>()
++    const loads = new Map<string, Promise<any>>()
++    const revisions = new Map<string, number>()
+     let accountId = ''
+     let adoptLegacy = false
+     let ok: boolean | null = null   // 仅缓存「可用」，失败下次仍重试（dev 时 server 可能后起）
+@@ -27,17 +30,20 @@ export const storagePlugin = {
+     }
+ 
+     /** 读一份数据；不存在/不可用返回 {} */
+-    async function loadRaw(name: string): Promise<any> {
++    async function readRaw(name: string): Promise<any> {
+       if (mem.has(name)) return mem.get(name)
++      const version = revisions.get(name) || 0
+       if (await probe()) {
+         try {
+           const r = await fetch('/data/' + name)
+           if (r.ok) {
+             const j = await r.json()
++            if (version !== (revisions.get(name) || 0)) return mem.get(name) || {}
+             if (j && Object.keys(j).length) { mem.set(name, j); return j }
+           }
+         } catch { /* 落到回退 */ }
+       }
++      if (version !== (revisions.get(name) || 0)) return mem.get(name) || {}
+       // 回退：localStorage（旧版本数据 / 无本地 server 的端）
+       try {
+         const raw = localStorage.getItem('yh.data.' + name)
+@@ -51,11 +57,24 @@ export const storagePlugin = {
+       mem.set(name, empty)
+       return empty
+     }
++    function loadRaw(name: string): Promise<any> {
++      if (mem.has(name)) return Promise.resolve(mem.get(name))
++      if (loads.has(name)) return loads.get(name)!
++      const job = readRaw(name).finally(() => { loads.delete(name) })
++      loads.set(name, job)
++      return job
++    }
+ 
+     /** 写一份数据；返回是否落到了文件（false=只落在 localStorage 回退） */
+-    async function saveRaw(name: string, value: any): Promise<boolean> {
++    function saveRaw(name: string, value: any): Promise<boolean> {
++      revisions.set(name, (revisions.get(name) || 0) + 1)
+       mem.set(name, value)
+       const raw = JSON.stringify(value)
++      const job = (rawWrites.get(name) || Promise.resolve()).catch(() => {}).then(() => writeRaw(name, raw))
++      rawWrites.set(name, job)
++      return job
++    }
++    async function writeRaw(name: string, raw: string): Promise<boolean> {
+       if (await probe()) {
+         try {
+           const r = await fetch('/data/' + name, {
+@@ -72,7 +91,9 @@ export const storagePlugin = {
+ 
+     /** 删一份数据（幂等） */
+     async function removeRaw(name: string): Promise<void> {
+-      mem.delete(name)
++      revisions.set(name, (revisions.get(name) || 0) + 1)
++      mem.set(name, {})
++      await rawWrites.get(name)?.catch(() => {})
+       if (await probe()) {
+         try { await fetch('/data/' + name, { method: 'DELETE' }) } catch { /* 忽略 */ }
+       }
+diff --git a/src/styles-m3.css b/src/styles-m3.css
+index d413b42..cd1f3b6 100644
+--- a/src/styles-m3.css
++++ b/src/styles-m3.css
+@@ -105,7 +105,7 @@ textarea, .dlg-input:not(input), .gp-row textarea, .m-form textarea { min-height
+ 
+ /* ---------- 滚动条：常规形态（8px 宽、小圆角，不做细椭圆） ---------- */
+ ::-webkit-scrollbar { width: 8px; height: 8px; }
+-::-webkit-scrollbar-thumb { background: var(--line2); border-radius: 4px; }
++::-webkit-scrollbar-thumb { background: color-mix(in srgb, var(--fg2) 65%, var(--card)); border-radius: 4px; }
+ ::-webkit-scrollbar-thumb:hover { background: color-mix(in srgb, var(--acc) 45%, var(--line2)); }
+ 
+ /* 面板只做短距离淡入；减少动态效果时停止非必要动画。 */
+diff --git a/src/styles.css b/src/styles.css
+index c67e9a3..f558356 100644
+--- a/src/styles.css
++++ b/src/styles.css
+@@ -96,6 +96,7 @@ a { color: var(--link, var(--acc)); text-underline-offset: 3px; }
+ /* ---------- 登录 ---------- */
+ .login-wrap {
+   height: 100%; display: flex; align-items: center; justify-content: center; padding: 20px;
++  overflow: auto;
+   background:
+     radial-gradient(1000px 520px at 12% 8%, color-mix(in srgb, var(--acc) 16%, transparent), transparent 62%),
+     var(--bg);
+@@ -104,6 +105,7 @@ a { color: var(--link, var(--acc)); text-underline-offset: 3px; }
+   width: 400px; max-width: 100%; background: var(--card); border: 1px solid var(--line);
+   border-radius: 14px; padding: 28px; box-shadow: var(--shadow);
+ }
++.login-wrap > .login-card { margin-block: auto; flex-shrink: 0; }
+ .login-card h1 { font-size: 19px; margin: 0 0 6px; font-weight: 600; }
+ .login-card .brand {
+   display: block; width: 72px; height: 72px; border-radius: 50%; object-fit: cover;
+@@ -125,7 +127,7 @@ a { color: var(--link, var(--acc)); text-underline-offset: 3px; }
+ .console {
+   display: grid;
+   grid-template-columns: 56px 1fr;
+-  grid-template-rows: 1fr 28px;
++  grid-template-rows: minmax(0, 1fr) 28px;
+   grid-template-areas: 'rail page' 'status status';
+   height: 100%;
+ }
+@@ -152,7 +154,7 @@ a { color: var(--link, var(--acc)); text-underline-offset: 3px; }
+ 
+ /* position: relative —— 群看板/群文件那层浮层要以它为定位父级，
+    这样浮层只在「右侧内容区」里铺开，不会盖到左边导航栏，导航栏也不用悬浮 */
+-.page-area { grid-area: page; overflow: auto; min-width: 0; position: relative; }
++.page-area { grid-area: page; overflow: auto; min-width: 0; min-height: 0; position: relative; }
+ .page-empty { height: 100%; display: flex; flex-direction: column; gap: 10px; align-items: center; justify-content: center; color: var(--fg2); }
+ 
+ .statusbar {
+@@ -236,7 +238,7 @@ a { color: var(--link, var(--acc)); text-underline-offset: 3px; }
+    =================================================================== */
+ .chat-page { display: flex; height: 100%; min-height: 0; position: relative; }
+ .chat-side { width: 292px; flex: 0 0 292px; border-right: 1px solid var(--line); background: var(--card); min-height: 0; }
+-.chat-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
++.chat-main { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+ /* 群设置面板打开时聊天区让位（QQ 式挤压，不遮盖） */
+ /* 群面板浮层不挤压聊天区（避免开/关跳动） */
+ @media (max-width: 900px) { .chat-page.gp-open .chat-main { margin-right: 0; } }
+@@ -369,7 +371,7 @@ a { color: var(--link, var(--acc)); text-underline-offset: 3px; }
+ .chat-header .head-side { display: flex; align-items: center; gap: 7px; font-size: 12px; color: var(--fg2); }
+ .only-mobile { display: none; }
+ 
+-.messages { flex: 1; overflow-y: auto; padding: 18px 20px; display: flex; flex-direction: column; gap: 14px; position: relative; isolation: isolate; }
++.messages { flex: 1; min-height: 0; overflow-y: auto; padding: 18px 20px; display: flex; flex-direction: column; gap: 14px; position: relative; isolation: isolate; }
+ /* 「回最新」悬浮箭头：离开底部时出现在消息区右下角 */
+ .jump-latest {
+   position: sticky; top: calc(100% - 56px); align-self: flex-end; margin-right: 6px;
+diff --git a/sticker-directory.ts b/sticker-directory.ts
+new file mode 100644
+index 0000000..c8a25d8
+--- /dev/null
++++ b/sticker-directory.ts
+@@ -0,0 +1,15 @@
++/** Public read-only directory. Forward only the documented author ID, never account credentials. */
++import type { IncomingMessage, ServerResponse } from 'node:http'
++export async function stickerDirectory(req: IncomingMessage, res: ServerResponse, search: string) {
++  const headers = { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' }
++  if (req.method !== 'GET') { res.writeHead(405, headers).end('{"error":{"message":"需要 GET 请求"}}'); return }
++  const id = new URLSearchParams(search).get('author_id') || ''
++  if (!/^\d{1,32}$/.test(id)) { res.writeHead(400, headers).end('{"error":{"message":"用户 ID 不正确"}}'); return }
++  try {
++    const upstream = await fetch('https://yhsticker.us.ci/api/v1/packs?' + new URLSearchParams({ author_id: id, all: 'true' }), { signal: AbortSignal.timeout(15000) })
++    const body = await upstream.json()
++    if (!upstream.ok) throw new Error(body?.error?.message || '目录服务暂时不可用')
++    if (!Array.isArray(body.data)) throw new Error('目录返回格式不正确')
++    res.writeHead(200, headers).end(JSON.stringify(body))
++  } catch (error: any) { res.writeHead(502, headers).end(JSON.stringify({ error: { message: error.name === 'TimeoutError' ? '表情包目录请求超时，请重试' : error.message } })) }
++}
+diff --git a/vite.config.ts b/vite.config.ts
+index 21fe82a..3e68fa1 100644
+--- a/vite.config.ts
++++ b/vite.config.ts
+@@ -5,6 +5,7 @@ import { readFile, writeFile, unlink } from 'node:fs/promises'
+ import { existsSync, mkdirSync, readFileSync } from 'node:fs'
+ import { join } from 'node:path'
+ import { homedir } from 'node:os'
++import { stickerDirectory } from './sticker-directory'
+ 
+ const RES_HOST_RE = /^chat-(img|img2|img3|audio1|file|file-oss|storage1|video1)\.jwznb\.com$/i
+ const REFERER = 'http://myapp.jwznb.com'
+@@ -123,7 +124,11 @@ const pkg = JSON.parse(readFileSync(join(process.cwd(), 'package.json'), 'utf8')
+ 
+ export default defineConfig({
+   define: { __APP_VERSION__: JSON.stringify(pkg.version) },
+-  plugins: [vue(), resProxyPlugin(), upProxyPlugin(), configPlugin(), dataPlugin()],
++  plugins: [vue(), resProxyPlugin(), upProxyPlugin(), configPlugin(), dataPlugin(), {
++    name: 'sticker-directory', configureServer(server) {
++      server.middlewares.use('/sticker-directory', (req, res) => { void stickerDirectory(req, res, (req.url || '').split('?')[1] || '') })
++    },
++  }],
+   base: './',
+   // 构建目标 es2020：安卓 WebView（部分设备 Chrome < 90）不支持 es2022 新语法，
+   // JS 一抛异常整页黑屏（WebView 里看不到 console）——es2020 是 Capacitor 官方推荐档

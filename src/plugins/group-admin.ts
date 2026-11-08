@@ -3,11 +3,10 @@
  * ------------------------------------------------------------------
  * 依赖 api、chat、ui
  */
-import { reactive } from 'vue'
+import { computed, reactive, watch } from 'vue'
 import type { Context } from '../core/context'
 import GroupPanel from '../components/GroupPanel.vue'
 import ProfilePanel from '../components/ProfilePanel.vue'
-import SettingsPage from '../console/pages/SettingsPage.vue'
 
 /** 禁言时长（秒），对齐云湖接口允许的取值 */
 export const GAG_OPTIONS = [
@@ -36,6 +35,7 @@ export const groupAdminPlugin = {
       members: [] as any[],
       membersTotal: 0,
       membersLoading: false,
+      membersError: '',
       memberKeyword: '',
       page: 1,
       /* 群信息 */
@@ -66,12 +66,15 @@ export const groupAdminPlugin = {
       mountPwd: '',
       mountNeedPwd: false,
       mountError: '',
-      dockTab: 'board' as 'board' | 'members' | 'tags' | 'search' | 'disk' | 'info' | 'all',  // 停靠栏页签
+      mountHighlight: '',   // 挂载盘视图内「定位」高亮的文件名
+      dockTab: 'all' as 'board' | 'members' | 'tags' | 'search' | 'disk' | 'info' | 'all',  // 停靠栏页签（默认全部看板）
       allBoards: [] as any[],    // 扫描到的所有会话看板
       scanProgress: 0,
       scanning: false,
       boardOwner: null as any,   // 看板所属机器人
       bots: [] as any[],         // 群内全部机器人（/v1/group/bot-list）
+      botsLoading: false,
+      botsError: '',
       boardBots: [] as any[],    // **只含有看板的**机器人（从扫描结果反推，见 refreshBoardBots）
       boardBotId: '',            // 当前查看哪个机器人的看板（空=会话默认看板）
       /* 群标签 */
@@ -85,6 +88,7 @@ export const groupAdminPlugin = {
       tagMemberFor: null as any,       // 正在给谁打标签
       tagMap: {} as Record<string, any[]>,  // userId -> [{id,tag,color}]，用于消息头顶显示标签
       tagMapLoading: false,
+      tagMapGroup: '',
       memberTagIds: [] as number[],
       /* 搜索 */
       searchWord: '',
@@ -104,39 +108,80 @@ export const groupAdminPlugin = {
       return cur.id
     }
 
+    let groupView = 0
+    let membersRequest = 0
+    let botsRequest = 0
+    let infoRequest: Promise<any> | undefined
+    const adminIds = computed(() => new Set<string>(state.info?.admins?.map(String)))
+    const memberRoles = computed(() => new Map<string, string>(state.members.map(m => [String(m.id), m.role])))
+
+    function roleOf(userId: string): 'owner' | 'admin' | null {
+      if (!userId || !isGroup()) return null
+      const id = String(userId)
+      const owner = String(state.info?.owner || '')
+      if (id === owner) return 'owner'
+      if (adminIds.value.has(id)) return 'admin'
+      if (owner && adminIds.value.size) return null
+      // Some group-info responses omit roles. Reuse member data already loaded for this group.
+      const role = memberRoles.value.get(id)
+      if (!owner && role === '群主') return 'owner'
+      return !adminIds.value.size && role === '管理员' ? 'admin' : null
+    }
+
     async function loadMembers(append = false) {
       const gid = requireGroup(); if (!gid) return
+      if (append && state.membersLoading) return
+      const view = groupView
+      const request = ++membersRequest
+      const page = append ? state.page + 1 : 1
+      const keyword = state.memberKeyword.trim()
       state.membersLoading = true
+      state.membersError = ''
       try {
-        if (!append) state.page = 1
         const { list, total } = await api.listMembers(gid, {
-          size: 50, page: state.page, keywords: state.memberKeyword,
+          size: 50, page, keywords: keyword,
         })
-        state.members = append ? [...state.members, ...list] : list
+        if (view !== groupView || request !== membersRequest) return
+        state.page = page
+        state.members = [...new Map((append ? [...state.members, ...list] : list).map(m => [String(m.id), m])).values()]
         state.membersTotal = total
       } catch (e: any) {
-        ui.toast('成员列表加载失败：' + e.message, 'error')
-      } finally { state.membersLoading = false }
+        if (view === groupView && request === membersRequest) state.membersError = e.message || '加载失败，请重试'
+      } finally { if (view === groupView && request === membersRequest) state.membersLoading = false }
     }
 
     async function loadMoreMembers() {
-      state.page += 1
       await loadMembers(true)
     }
 
-    async function loadInfo() {
+    async function loadInfo(silent = false) {
       const gid = requireGroup(); if (!gid) return
+      const view = groupView
       state.infoLoading = true
-      try { state.info = await api.groupInfo(gid) }
-      catch (e: any) { ui.toast('群信息加载失败：' + e.message, 'error') }
-      finally { state.infoLoading = false }
+      const request = infoRequest ??= Promise.resolve().then(() => api.groupInfo(gid, silent ? { timeout: 8000 } : undefined))
+      try {
+        const info = await request
+        if (infoRequest === request && (!info.id || String(info.id) === String(gid))) state.info = info
+      } catch (e: any) {
+        if (!silent && view === groupView) ui.toast('群信息加载失败：' + e.message, 'error')
+      } finally {
+        if (infoRequest === request) {
+          infoRequest = undefined
+          state.infoLoading = false
+        }
+      }
     }
 
     /** 群内机器人列表：每个机器人可以对应一个看板 */
     async function loadBots() {
       const cur = chat.state.current
       if (!cur || cur.type !== 2) { state.bots = []; return }
-      try { state.bots = await api.listBots(cur.id) } catch { state.bots = [] }
+      const view = groupView
+      const request = ++botsRequest
+      state.botsLoading = true; state.botsError = ''
+      try { const bots = await api.listBots(cur.id); if (view === groupView && request === botsRequest) state.bots = bots }
+      catch (e: any) { if (view === groupView && request === botsRequest) state.botsError = e.message || '机器人列表加载失败' }
+      finally { if (view === groupView && request === botsRequest) state.botsLoading = false }
     }
 
     /**
@@ -187,22 +232,29 @@ export const groupAdminPlugin = {
 
     async function kick(m: any) {
       const gid = requireGroup(); if (!gid) return
-      if (!window.confirm(`确定把「${m.name}」踢出本群？`)) return
+      const view = groupView
+      if (!(await ui.confirm('踢出成员', `确定把「${m.name}」踢出本群？`, { danger: true }))) return
+      if (view !== groupView) return false
       try {
         await api.kickMember(gid, m.id)
+        if (view !== groupView) return false
         ui.toast(`已踢出 ${m.name}`, 'success')
         state.members = state.members.filter((x: any) => x.id !== m.id)
         state.membersTotal = Math.max(0, state.membersTotal - 1)
+        return true
       } catch (e: any) { ui.toast('踢出失败：' + e.message, 'error') }
     }
 
     async function gag(m: any, seconds: number) {
       const gid = requireGroup(); if (!gid) return
+      const view = groupView
       try {
         await api.gagMember(gid, m.id, seconds)
+        if (view !== groupView) return false
         ui.toast(seconds === 0 ? `已解除 ${m.name} 的禁言` : `已禁言 ${m.name}（${GAG_OPTIONS.find(o => o.value === seconds)?.label}）`, 'success')
         m.isGag = seconds !== 0
         m.gagTs = seconds > 0 ? Date.now() + seconds * 1000 : 0
+        return true
       } catch (e: any) { ui.toast('禁言失败：' + e.message, 'error') }
     }
 
@@ -222,11 +274,14 @@ export const groupAdminPlugin = {
     }
 
     /** 打开群设置抽屉（原来的 toggle('members') 入口现在指这里） */
-    function open() { state.panelOpen = true }
+    function open() {
+      state.panelOpen = true; state.dockOpen = false
+      if (isGroup()) { void loadInfo(); if (!state.members.length) void loadMembers() }
+    }
     function close() { state.panelOpen = false; state.open = false; state.tagMemberFor = null }
     function toggle() {
-      state.panelOpen = !state.panelOpen
-      if (state.panelOpen) { loadInfo(); if (!state.members.length) loadMembers() }
+      if (state.panelOpen) close()
+      else open()
     }
 
     /* ---------------- 挂载盘：页内浏览 ----------------
@@ -260,6 +315,15 @@ export const groupAdminPlugin = {
       state.mountError = ''
       loadMount()
     }
+
+    /** 「在文件夹中打开」：打开群文件页签并高亮指定文件（消息右键菜单用） */
+    const locateHighlight = { name: '' }
+    function locateFile(name: string) {
+      state.dockOpen = true
+      state.dockTab = 'disk'
+      locateHighlight.name = name
+      loadDisk()
+    }
     function closeMount() { state.mountView = null; state.mountEntries = []; state.mountPath = [] }
     function mountEnter(name: string) { state.mountPath.push(name); loadMount() }
     function mountUp() { state.mountPath.pop(); loadMount() }
@@ -268,15 +332,28 @@ export const groupAdminPlugin = {
     /* ---------------- 通讯录（好友判断） ---------------- */
 
     /** 拉通讯录，拿到好友 id 列表（只对“用户”这一类） */
+    let friendVersion = 0
     async function loadFriends() {
       if (state.friendsLoaded) return
+      const version = friendVersion
       try {
         const book = await api.addressBook()
-        state.friendIds = (book.users || []).map((u: any) => u.id)
+        if (version === friendVersion) { state.friendIds = (book.users || []).map((u: any) => String(u.id)); state.friendsLoaded = true }
       } catch { /* 忽略 */ }
-      finally { state.friendsLoaded = true }
     }
-    function isFriend(userId: string) { return state.friendIds.includes(userId) }
+    function isFriend(userId: string) {
+      const social = ctx.get('social')
+      if (social?.state.loaded) return social.state.book.users.some((u: any) => String(u.id) === String(userId))
+      return state.friendIds.includes(String(userId))
+    }
+    ctx.on('auth/login', () => { friendVersion++; state.friendIds = []; state.friendsLoaded = false; void loadFriends() })
+    ctx.on('auth/logout', () => {
+      friendVersion++
+      state.friendIds = []
+      state.friendsLoaded = false
+      state.profileUser = null
+      resetGroupInfo()
+    })
 
     /* ---------------- 群文件（群网盘） ---------------- */
 
@@ -290,13 +367,17 @@ export const groupAdminPlugin = {
         state.diskTotal = await api.diskTotalSize(cur.id, cur.type).catch(() => null)
         // 挂载只在群根目录显示一次
         state.mounts = folderId === 0 && cur.type === 2 ? await api.mountList(cur.id).catch(() => []) : []
+        // 云湖自带网盘是空的但有第三方挂载时，自动进第一个挂载盘（用户「群文件不能浏览」的根因）
+        if (!state.diskList.length && state.mounts.length && !state.mountView) openMount(state.mounts[0])
       } catch (e: any) {
         ui.toast('群文件加载失败：' + e.message, 'error')
       } finally { state.diskLoading = false }
     }
     /** 进文件夹 */
     function openFolder(item: any) {
-      state.diskPath.push({ id: state.diskFolder, name: '根目录' })
+      // 目录栈存「进入的目录」：面包屑与上传路径都从它取（旧实现 push 父级且名字写死「根目录」，
+      // 深度 ≥2 时 backFolder 会跳级）
+      state.diskPath.push({ id: item.id, name: item.name || item.fileName || '目录' })
       loadDisk(item.id)
     }
     /** 返回上一级 */
@@ -324,10 +405,11 @@ export const groupAdminPlugin = {
         state.tagPage = 1
         state.tagsEnd = false
         const list = await api.listTags(gid, { size: 100, page: 1, tag: state.tagSearch.trim() })
+        if (chat.state.current?.id !== gid || !isGroup()) return
         state.tags = list
         state.tagsEnd = list.length < 100
       } catch (e: any) { ui.toast('标签加载失败：' + e.message, 'error') }
-      finally { state.tagsLoading = false }
+      finally { if (chat.state.current?.id === gid) state.tagsLoading = false }
     }
 
     /** 加载更多标签（云湖群标签可能上百个，必须分页） */
@@ -337,6 +419,7 @@ export const groupAdminPlugin = {
       try {
         state.tagPage += 1
         const list = await api.listTags(gid, { size: 100, page: state.tagPage, tag: state.tagSearch.trim() })
+        if (chat.state.current?.id !== gid || !isGroup()) return
         const seen = new Set(state.tags.map((t: any) => t.id))
         for (const t of list) if (!seen.has(t.id)) state.tags.push(t)
         state.tagsEnd = list.length < 100
@@ -365,7 +448,7 @@ export const groupAdminPlugin = {
     /** 删除标签 */
     async function removeTag(t: any) {
       const gid = requireGroup(); if (!gid) return
-      if (!window.confirm(`删除标签「${t.tag}」？`)) return
+      if (!(await ui.confirm('删除标签', `删除标签「${t.tag}」？`, { danger: true }))) return
       try { await api.deleteTag(gid, t.id); await loadTags(); ui.toast('已删除', 'success') }
       catch (e: any) { ui.toast('删除失败：' + e.message, 'error') }
     }
@@ -373,36 +456,52 @@ export const groupAdminPlugin = {
     /**
      * 构建「用户 -> 标签」映射：逐个标签查它绑定了哪些人。
      * 用来在消息头像上方显示该用户的群标签。
+     * ⚠️ 性能：标签可能上百个、每标签一次请求——按群缓存 5 分钟 + 并发提到 12，
+     *    否则每次进群/开 dock 都全量扫，用户感知「加载标签延迟」（2026-10-25 用户报）。
      */
-    async function loadTagMap() {
+    const tagMapCache: Record<string, { at: number; map: Record<string, any[]> }> = {}
+    const TAGMAP_TTL = 5 * 60 * 1000
+    const tagMapFlights = new Map<string, Promise<void>>()
+    async function loadTagMap(force = false) {
       const gid = requireGroup(); if (!gid) return
-      if (state.tagMapLoading) return
+      const cached = tagMapCache[gid]
+      if (!force && cached && Date.now() - cached.at < TAGMAP_TTL) {
+        state.tagMap = cached.map; state.tagMapGroup = gid
+        return
+      }
+      if (tagMapFlights.has(gid)) return tagMapFlights.get(gid)
       state.tagMapLoading = true
-      try {
-        if (!state.tags.length) await loadTags()
-        const map: Record<string, any[]> = {}
-        // 之前只取前 80 个标签，导致很多人的标签显示不出来；这里改成全量（并发 6）
-        const list = state.tags
-        const CONC = 6
-        for (let i = 0; i < list.length; i += CONC) {
-          const batch = list.slice(i, i + CONC)
-          const res = await Promise.all(batch.map(t =>
-            api.tagMembers(gid, t.id).then(users => ({ t, users })).catch(() => null)))
-          for (const r of res) {
-            if (!r) continue
-            for (const u of r.users) {
-              ;(map[u.id] = map[u.id] || []).push({ id: r.t.id, tag: r.t.tag, color: r.t.color })
+      const flight = (async () => {
+        try {
+          // This query is scoped to gid and independent of panel search/pagination state.
+          const tags: any[] = []
+          for (let page = 1; page <= 50; page++) {
+            const list = await api.listTags(gid, { size: 100, page, tag: '' })
+            tags.push(...list)
+            if (list.length < 100) break
+          }
+          const map: Record<string, any[]> = {}
+          for (let i = 0; i < tags.length; i += 6) {
+            const rows = await Promise.all(tags.slice(i, i + 6).map(t =>
+              api.tagMembers(gid, t.id).then(users => ({ t, users })).catch(() => null)))
+            for (const row of rows) if (row) for (const user of row.users) {
+              ;(map[user.id] = map[user.id] || []).push({ id: row.t.id, groupId: gid, tag: row.t.tag, color: row.t.color })
             }
           }
+          tagMapCache[gid] = { at: Date.now(), map }
+          if (isGroup() && chat.state.current?.id === gid) { state.tagMap = map; state.tagMapGroup = gid }
+        } catch { /* A failed request never substitutes another group's tags. */ }
+        finally {
+          tagMapFlights.delete(gid)
+          if (chat.state.current?.id === gid) state.tagMapLoading = false
         }
-        state.tagMap = map
-      } catch { /* 忽略 */ }
-      finally { state.tagMapLoading = false }
+      })()
+      tagMapFlights.set(gid, flight)
+      return flight
     }
 
-    /** 取某个用户在本群的标签 */
     function tagsOf(userId: string) {
-      return state.tagMap[userId] || []
+      return isGroup() && state.tagMapGroup === chat.state.current?.id ? state.tagMap[userId] || [] : []
     }
 
     /** 打开「给成员打标签」 */
@@ -455,7 +554,7 @@ export const groupAdminPlugin = {
               return b?.content ? { chat: c, board: b } : null
             } catch { return null }
           }))
-          for (const r of res) if (r) state.allBoards.push(r)
+          for (const r of res) if (r) state.allBoards.push({ ...r, open: true })   // 默认展开（用户：别压成纸片）
           state.scanProgress = Math.min(i + CONC, targets.length)
         }
         refreshBoardBots()
@@ -463,30 +562,48 @@ export const groupAdminPlugin = {
       } finally { state.scanning = false }
     }
 
-    /* 切换会话时重置 */
-    ctx.on('chat/open', () => {
+    function resetGroupInfo() {
+      groupView++
+      membersRequest++
+      botsRequest++
+      infoRequest = undefined
       state.members = []
       state.membersTotal = 0
+      state.membersLoading = false
+      state.membersError = ''; state.memberKeyword = ''; state.page = 1
+      state.bots = []; state.botsLoading = false; state.botsError = ''
       state.info = null
+      state.infoLoading = false
+    }
+
+    /* 切换会话时重置 */
+    const stopGroupWatch = watch(() => `${chat.state.current?.type}:${chat.state.current?.id}`, () => {
+      resetGroupInfo()
       state.board = null
       state.results = []
       state.searchWord = ''
       state.searched = false
       if (state.panelOpen) open()
-      state.tagMap = {}
-      if (chat.state.current?.type === 2) loadTagMap()
+      state.tags = []; state.tagsLoading = false; state.tagsEnd = false; state.tagPage = 1; state.tagSearch = ''
+      state.tagMap = {}; state.tagMapGroup = ''; state.tagMapLoading = false
+      if (isGroup()) {
+        loadTagMap()
+        if (!state.panelOpen) void loadInfo(true)
+        if (state.dockOpen && state.dockTab === 'members') { void loadMembers(); void loadBots() }
+      }
       loadFriends()
-    })
+    }, { flush: 'sync', immediate: true })
+    ctx.effect(() => () => { stopGroupWatch(); resetGroupInfo() })
 
     const group = {
-      state, GAG_OPTIONS, isGroup,
+      state, GAG_OPTIONS, isGroup, locateHighlight,
       open, close, toggle,
-      loadMembers, loadMoreMembers, loadInfo, loadBoard, loadBots, kick, gag, doSearch, scanAllBoards,
+      loadMembers, loadMoreMembers, loadInfo, roleOf, loadBoard, loadBots, kick, gag, doSearch, scanAllBoards,
       loadTags, loadMoreTags, searchTags, createTag, removeTag, openTagMember, saveMemberTags, loadTagMap, tagsOf,
-      loadFriends, isFriend, loadDisk, openFolder, backFolder, createFolder,
+      loadFriends, isFriend, loadDisk, openFolder, backFolder, createFolder, locateFile,
       openMount, closeMount, mountEnter, mountUp, reloadMount, loadMount,
       /** 打开用户主页 */
-      openProfile(user: any) { state.profileUser = user },
+      openProfile(user: any) { state.profileUser = { ...user, id: String(user.id) }; void loadFriends() },
       closeProfile() { state.profileUser = null },
       /** 底部看板栏开关 */
       /** 退出全屏群界面（最右边那个按钮） */
@@ -494,9 +611,10 @@ export const groupAdminPlugin = {
       toggleBoardDock() { state.dockOpen = !state.dockOpen; if (state.dockOpen && !state.board) { loadBots(); loadBoard() } },
       setDockTab(t: 'board' | 'members' | 'tags' | 'search' | 'disk' | 'info' | 'all') {
         state.dockTab = t
+        state.panelOpen = false
         state.dockOpen = true
         if (t === 'board' && !state.board) { loadBots(); loadBoard() }
-        if (t === 'members' && !state.members.length) { loadInfo(); loadMembers() }
+        if (t === 'members') { loadInfo(); if (!state.members.length) loadMembers(); loadBots() }
         if (t === 'tags' && !state.tags.length) loadTags()
         if (t === 'tags') loadTagMap()
         if (t === 'disk') loadDisk()
@@ -531,9 +649,7 @@ export const groupAdminPlugin = {
         cc.slot({ type: 'global', component: GroupPanel, order: 40 })
         cc.slot({ type: 'global', component: ProfilePanel, order: 41 })
       })
-      ctx.console.addEntry((cc: any) => {
-        cc.page({ name: '设置', path: '/settings', icon: 'sliders', order: 860, component: SettingsPage })
-      })
+      // 原「设置」页已并入「账号」页（AccountPage 内嵌 SettingsPage 片段），不再单独注册
     })
   },
 }

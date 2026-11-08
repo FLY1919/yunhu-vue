@@ -1,0 +1,101 @@
+name: Build Windows Artifacts
+
+on:
+  push:
+    branches: [master, ci/build-artifacts, 'fix/**']
+  workflow_dispatch:
+
+concurrency:
+  group: artifacts-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 安装 Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.23.4
+          cache: npm
+
+      - name: 安装 Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust 缓存
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: 安装前端依赖
+        run: npm ci --no-audit --no-fund
+
+      - name: 类型检查
+        run: npm run typecheck
+
+      - name: 聊天与通知回归测试
+        run: npm run test:chat
+
+      - name: 账号、媒体与自动锁定回归测试
+        run: |
+          npm run test:settings
+          npm run test:features
+
+      - name: 构建前端 + server bundle
+        run: |
+          npm run build
+          node scripts/build-server-bundle.mjs
+
+      - name: 准备 sidecar 资源（node.exe + dist）
+        shell: bash
+        run: |
+          set -e
+          mkdir -p src-tauri/resources/dist
+          cp dist/index.html src-tauri/resources/dist/
+          cp -r dist/assets src-tauri/resources/dist/assets
+          # node.exe 从 runner 自带 node 复制（版本与 setup-node 一致）
+          NODE_EXE=$(which node.exe || where node | head -1)
+          cp "$NODE_EXE" src-tauri/resources/node.exe
+          node scripts/verify-windows-assets.mjs --runtime-only src-tauri/resources
+          npm run test:windows-assets
+          ls -la src-tauri/resources/
+
+      - name: 构建 Tauri（NSIS）
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          projectPath: src-tauri
+          args: --bundles nsis
+
+      - name: 制作便携版（zip release 目录）
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $ver = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          $rel = 'src-tauri/target/release'
+          $stage = "portable/yunhulaoda-$ver-windows-x64-portable"
+          New-Item -ItemType Directory -Force -Path $stage | Out-Null
+          Copy-Item "$rel/yunhulaoda-desktop.exe" "$stage/"
+          Copy-Item "src-tauri/resources/node.exe" "$stage/"
+          Copy-Item "src-tauri/resources/server-bundle.mjs" "$stage/"
+          Copy-Item -Recurse "src-tauri/resources/dist" "$stage/dist"
+          Compress-Archive -Path "$stage/*" -DestinationPath "portable/yunhulaoda-$ver-windows-x64-portable.zip" -Force
+          Get-ChildItem portable/
+
+      - name: 上传产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: yunhulaoda-tauri-windows
+          path: |
+            src-tauri/target/release/bundle/nsis/*.exe
+            portable/*.zip
+          if-no-files-found: error
+          retention-days: 30

@@ -1,0 +1,268 @@
+import assert from 'node:assert/strict'
+import { createServer } from 'vite'
+import vue from '@vitejs/plugin-vue'
+import { resolve } from 'node:path'
+const root = resolve(import.meta.dirname, '..')
+const { chromium } = await import(process.env.PLAYWRIGHT_MODULE || 'playwright')
+const server = await createServer({ root, configFile: false, plugins: [vue()], server: { host: '127.0.0.1', port: 0 }, logLevel: 'error' })
+await server.listen()
+const browser = await chromium.launch({ headless: true, executablePath: process.env.CHROMIUM_EXECUTABLE || undefined, args: ['--no-sandbox', '--disable-dev-shm-usage', '--disable-gpu'] })
+const page = await browser.newPage({ viewport: { width: 1280, height: 860 } }), errors = [], requests = []
+page.setDefaultTimeout(6000)
+let holdResponses = false
+const held = []
+page.on('pageerror', error => { errors.push(error.message); console.error('PAGE ERROR:', error.message) })
+await page.addInitScript(() => {
+  const vault = {}
+  window.__TAURI__ = { core: { invoke: async (command, args = {}) => {
+    if (command === 'secure_read') return vault[args.name] ?? null
+    if (command === 'secure_write') { vault[args.name] = args.data; return }
+    if (command === 'secure_delete') { delete vault[args.name]; return }
+    if (command === 'ai_bridge_token') return 'mock-capability'
+    return false
+  } } }
+})
+await page.route('**/bot-ai/request', route => {
+  requests.push(route.request().postDataJSON())
+  if (holdResponses) return new Promise(resolve => held.push(text => { resolve(route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ status: 200, data: { choices: [{ message: { content: text } }], usage: { prompt_tokens: 10, completion_tokens: 5 } } }) })) }))
+  return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ status: 200, data: { choices: [{ message: { content: JSON.stringify({ format: 'markdown', content: '这是一条测试草稿' }) } }], usage: { prompt_tokens: 5, completion_tokens: 5 } } }) })
+})
+try {
+  await page.goto(`http://127.0.0.1:${server.httpServer.address().port}/scripts/ui-fixture/index.html?userbot=1`)
+  await page.waitForFunction(() => window.__qa?.ctx.userbot?.state.ready)
+  await page.getByRole('button', { name: '更多功能', exact: true }).first().click()
+  await page.getByRole('button', { name: '用户 Bot', exact: true }).click()
+  await page.getByRole('button', { name: '创建 Bot', exact: true }).click()
+  await page.getByLabel('Bot 名称').fill('测试搭子')
+  await page.getByLabel('启用此 Bot').check()
+  await page.getByLabel('允许自动发送文字 / Markdown 消息').check()
+  await page.getByRole('button', { name: 'AI 服务', exact: true }).click()
+  await page.getByRole('button', { name: '添加服务', exact: true }).click()
+  await page.getByLabel('服务名称').fill('测试服务')
+  await page.getByLabel('模型', { exact: true }).fill('mock-model')
+  await page.getByLabel('API Key').fill('fake-key')
+  await page.getByRole('button', { name: '保存密钥', exact: true }).click()
+  await page.getByText('已安全保存', { exact: true }).waitFor()
+  await page.getByRole('button', { name: '人设卡', exact: true }).click()
+  await page.getByRole('button', { name: '创建人设', exact: true }).click()
+  await page.getByLabel('人设名称').fill('阿澈')
+  await page.getByLabel('性格').fill('耐心')
+  await page.getByRole('button', { name: '会话设置', exact: true }).click()
+  await page.getByLabel('选择会话').selectOption('2:normal')
+  const botId = await page.evaluate(() => window.__qa.ctx.userbot.state.config.bots[0].id)
+  const personaId = await page.evaluate(() => window.__qa.ctx.userbot.state.config.personas[0].id)
+  await page.locator('[data-setting-id=conversation-bot] select').selectOption(botId)
+  await page.getByLabel('授权此 Bot 访问当前会话').check()
+  await page.getByLabel('回复模式').selectOption('manual')
+  await page.locator('.advanced-options').evaluate(el => { el.open = true })
+  await page.locator('[data-setting-id=conversation-persona] label').first().locator('select').selectOption(personaId)
+  await page.getByLabel('会话补充提示词').fill('讲清思路')
+  await page.getByRole('button', { name: '预览实际提示词' }).click()
+  assert.match(await page.locator('pre').innerText(), /阿澈[\s\S]*耐心[\s\S]*讲清思路/)
+  await page.getByLabel('搜索用户 Bot 设置').fill('温度')
+  await page.getByRole('button', { name: /生成参数和超时/ }).click()
+  assert.equal(await page.locator('[data-setting-id="service-parameters"]').count(), 1)
+  await page.locator('.rail-btn[title="消息"]').click()
+  await page.evaluate(async () => window.__qa.ctx.chat.open(window.__qa.ctx.chat.state.conversations.find(c => c.id === 'normal')))
+  await page.getByRole('button', { name: '用户 Bot / AI', exact: true }).click()
+  const strip = await page.locator('.ai-menu').boundingBox(), input = await page.locator('.composer textarea').boundingBox()
+  assert.ok(strip.width >= input.width * .96); assert.ok(strip.width > strip.height * 5)
+  assert.equal(await page.locator('.ai-menu').evaluate(e => getComputedStyle(e).position), 'static')
+  const leaving = await page.evaluate(async () => {
+    document.querySelector('[aria-label="收起 AI 回复"]').click()
+    await new Promise(requestAnimationFrame)
+    return document.querySelector('.ai-menu')?.classList.contains('ai-strip-leave-active')
+  })
+  assert.equal(leaving, true)
+  await page.locator('.ai-menu').waitFor({ state: 'detached' })
+  await page.getByRole('button', { name: '用户 Bot / AI', exact: true }).click()
+  await page.getByRole('button', { name: '生成回复草稿', exact: true }).click()
+  await page.getByText('这是一条测试草稿', { exact: true }).waitFor()
+  await page.getByRole('button', { name: '填入输入框', exact: true }).click()
+  assert.match(await page.locator('.composer textarea').inputValue(), /这是一条测试草稿/)
+  assert.match(await page.getByRole('button',{name:'消息格式'}).textContent(), /Markdown/i)
+  assert.equal(requests.length, 1); assert.equal(requests[0].payload.model, 'mock-model')
+  assert.match(requests[0].payload.messages[0].content, /阿澈/)
+  assert.deepEqual(errors, [])
+  console.log('PASS: More panel, categorized setting search, secure-key UI, bot and persona assignment, prompt preview, and composer draft end-to end')
+  // Automatic work opens the same horizontal strip and exposes actual processing stages.
+  holdResponses = true
+  await page.evaluate(() => {
+    const ctx = window.__qa.ctx, setting = ctx.userbot.state.config.conversations['2:normal']
+    Object.assign(setting, { mode: 'auto', trigger: 'always', cooldown: 0, mergeSeconds: .5, memoryEnabled: true, autoMemory: true, memoryThreshold: 60, memoryMaxTokens: 128, memoryKeepRecent: 2, tokenLimit: 1500 })
+    ctx.chat.state.messages = Array.from({ length: 8 }, (_, i) => ({ id: 'memory-' + i, type: 1, senderId: i % 2 ? 'me' : 'other', ts: Date.now() - (8 - i) * 1000, content: { text: '记'.repeat(100) } }))
+    window.__qa.sent = []
+    ctx.bots[0].sendMessage = async (channel, content) => { window.__qa.sent.push({ channel, content }); return 'automatic-sent' }
+    ctx.emit('message-created', { id: 'automatic', channel: { id: 'normal', type: 2 }, user: { id: 'other' }, content: '你好', raw: { type: 1, content: { text: '你好' } }, timestamp: Date.now() })
+  })
+  await page.getByRole('progressbar', { name: 'AI 回复进度' }).waitFor()
+  await page.getByText('正在压缩记忆', { exact: true }).waitFor()
+  await page.waitForFunction(() => document.querySelector('.ai-elapsed')?.textContent.includes('已等待'))
+  assert.equal(held.length, 1)
+  if (process.env.AI_QA_SCREENSHOT) await page.screenshot({ path: process.env.AI_QA_SCREENSHOT })
+  const progress = page.getByRole('progressbar', { name: 'AI 回复进度' })
+  assert.equal(await progress.getAttribute('aria-valuenow'), null)
+  held.shift()('用户喜欢简洁的回答。')
+  await page.getByText('正在生成回复', { exact: true }).waitFor()
+  for (let i = 0; i < 80 && held.length === 0; i++) await new Promise(r => setTimeout(r, 20))
+  assert.equal(held.length, 1)
+  held.shift()(JSON.stringify({ format: 'markdown', content: '**你好**，这是自动回复。' }))
+  await page.getByText('已自动发送', { exact: true }).waitFor()
+  assert.equal(await page.evaluate(() => window.__qa.sent.length), 1)
+  assert.equal(await page.evaluate(() => window.__qa.sent[0].content[0].type), 'markdown')
+  assert.equal(await page.evaluate(() => window.__qa.sent[0].content[0].attrs.content), '**你好**，这是自动回复。')
+  assert.equal(await page.getByRole('progressbar').count(), 0)
+  assert.match(await page.locator('.ai-context').innerText(), /记忆已自动更新/)
+  assert.deepEqual(errors, [])
+  console.log('PASS: horizontal inline strip, real fade-out, visible automatic summary/generation/send stages, indeterminate progress and completed automatic sending')
+  await page.setViewportSize({ width: 600, height: 800 })
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true)
+  await page.evaluate(() => window.__qa.ctx.userbot.open(window.__qa.ctx.chat.state.current))
+  await page.getByRole('heading', { name: '会话设置' }).waitFor()
+  const fits = await page.evaluate(() => document.querySelector('.bot-shell').scrollWidth <= document.querySelector('.bot-shell').clientWidth + 1)
+  assert.equal(fits, true)
+  await page.getByLabel('搜索用户 Bot 设置').fill('压缩')
+  await page.getByRole('button', { name: /AI 自动总结记忆/ }).click()
+  await page.getByLabel('上下文达到多少 % 时压缩').fill('75')
+  assert.equal(await page.evaluate(() => window.__qa.ctx.userbot.state.config.conversations['2:normal'].memoryThreshold), 75)
+  await page.getByRole('button', { name: '清空当前记忆', exact: true }).click()
+  assert.deepEqual(await page.evaluate(() => window.__qa.ctx.userbot.state.config.memoryCursors), {})
+  console.log('PASS: compact-width settings layout, searchable threshold setting and memory cursor clearing')
+  await page.getByLabel('搜索用户 Bot 设置').fill('预设')
+  await page.getByRole('button', { name: /预设人设卡/ }).click()
+  assert.equal(await page.locator('.preset-grid button').count(), 6)
+  await page.getByRole('button', { name: '添加预设人设：代码助手', exact: true }).click()
+  assert.equal(await page.getByLabel('人设名称').inputValue(), '代码助手')
+  await page.getByLabel('人设名称').fill('我的代码搭子')
+  await page.getByRole('button', { name: '添加预设人设：代码助手', exact: true }).click()
+  assert.equal(await page.getByLabel('人设名称').inputValue(), '代码助手')
+  assert.equal(await page.evaluate(() => window.__qa.ctx.userbot.state.config.personas.filter(p => ['我的代码搭子', '代码助手'].includes(p.name)).length), 2)
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true)
+  assert.deepEqual(errors, [])
+  console.log('PASS: native AI Markdown send, draft format synchronization, six searchable presets and independent editable copies')
+  await page.getByLabel('搜索用户 Bot 设置').fill('审核')
+  await page.getByRole('button', { name: /AI 群管理与操作审核/ }).click()
+  const management = page.getByLabel('允许此 Bot 提出并执行群管理操作')
+  assert.equal(await management.isChecked(), false)
+  await management.check()
+  await page.getByLabel('默认工作模式').selectOption('management')
+  const approval = page.getByLabel('操作执行前弹窗确认（默认开启）')
+  assert.equal(await approval.isChecked(), true)
+  await page.evaluate(() => {
+    const ctx = window.__qa.ctx, bot = ctx.userbot.state.config.bots[0]
+    window.__qa.actionCalls = []; window.__qa.groupInfo = { id: 'normal', name: '云湖测试群', owner: 'owner', admins: ['me'], introduction: '简介' }
+    ctx.api.groupInfo = async () => structuredClone(window.__qa.groupInfo)
+    ctx.api.listMembers = async () => ({ list: [{ id: 'other', name: '张三', level: 0 }], total: 1 })
+    ctx.api.listTags = async () => []
+    ctx.api.gagMember = async (...args) => { window.__qa.actionCalls.push(args) }
+    Object.assign(ctx.userbot.state.config.conversations['2:normal'], { mode: 'auto', trigger: 'always', tokenLimit: 10000, memoryEnabled: false, mergeSeconds: 0 })
+    window.__qa.proposeManagement = id => ctx.emit('message-created', { id, channel: { id: 'normal', type: 2 }, user: { id: 'other' }, content: '按群规则处理', raw: { type: 1, content: { text: '按群规则处理' } }, timestamp: Date.now() })
+  })
+  const resolveManagement = async () => {
+    for (let i = 0; i < 100 && !held.length; i++) await new Promise(r => setTimeout(r, 20))
+    assert.equal(held.length, 1)
+    held.shift()(JSON.stringify({ format: 'text', content: '尚未执行', actions: [{ type: 'mute', userId: 'other', seconds: 600, reason: '测试用户设定的管理规则' }] }))
+  }
+  await page.evaluate(() => window.__qa.proposeManagement('review-cancel'))
+  await resolveManagement()
+  const modal = page.getByRole('dialog', { name: '确认 AI 群管理操作' })
+  await modal.waitFor()
+  assert.match(await modal.innerText(), /云湖测试群.*normal/)
+  assert.match(await modal.innerText(), /张三（other）/)
+  assert.match(await modal.innerText(), /10 分钟/)
+  if (process.env.MANAGEMENT_QA_SCREENSHOT) { await modal.evaluate(el => Promise.all(el.parentElement.getAnimations({ subtree: true }).map(a => a.finished))); await page.screenshot({ path: process.env.MANAGEMENT_QA_SCREENSHOT }) }
+  assert.match(await modal.innerText(), /测试用户设定的管理规则/)
+  assert.equal(await page.evaluate(() => window.__qa.actionCalls.length), 0)
+  await modal.getByRole('button', { name: '取消本次', exact: true }).click()
+  await modal.waitFor({ state: 'detached' })
+  assert.equal(await page.evaluate(() => window.__qa.actionCalls.length), 0)
+  await page.evaluate(() => window.__qa.proposeManagement('review-confirm'))
+  await resolveManagement(); await modal.waitFor()
+  await modal.getByRole('button', { name: '确认执行 1 项操作', exact: true }).click()
+  await page.waitForFunction(() => window.__qa.actionCalls.length === 1)
+  assert.deepEqual(await page.evaluate(() => window.__qa.actionCalls[0]), ['normal', 'other', 600])
+  await page.waitForFunction(() => !window.__qa.ctx.userbot.state.busy['2:normal'])
+  await approval.uncheck()
+  assert.equal(await page.evaluate(() => {
+    const ub = window.__qa.ctx.userbot
+    ub.state.config.conversations['2:normal'].mergeSeconds = 3
+    window.__qa.proposeManagement('review-off')
+    return ub.state.busy['2:normal'] && !ub.state.queued['2:normal']
+  }), true)
+  await resolveManagement()
+  await page.waitForFunction(() => window.__qa.actionCalls.length === 2)
+  assert.equal(await modal.count(), 0)
+  await page.waitForFunction(() => !window.__qa.ctx.userbot.state.busy['2:normal'])
+  await page.evaluate(() => window.__qa.ctx.userbot.open(window.__qa.ctx.chat.state.current))
+  await page.getByRole('button', { name: '检查本群管理权限', exact: true }).click()
+  await page.getByText('本群管理权限：管理员', { exact: true }).waitFor()
+  assert.deepEqual(errors, [])
+  console.log('PASS: searchable per-Bot action permissions, cancel/approve, and immediate start when review is disabled despite a 3s merge setting')
+  // One-off directions are separate from the actual chat input and persistent prompts.
+  holdResponses = false
+  await page.evaluate(() => {
+    const ctx = window.__qa.ctx
+    ctx.userbot.state.config.conversations['2:normal'].mode = 'manual'
+    ctx.console.goto('/')
+  })
+  await page.getByRole('button', { name: '用户 Bot / AI', exact: true }).click()
+  await page.getByRole('button',{name:'AI 工作模式'}).click()
+  await page.getByRole('option',{name:'对话模式',exact:true}).click()
+  await page.getByRole('button', { name: '快捷指令', exact: true }).click()
+  const quick = page.getByRole('dialog', { name: 'AI 快捷指令' })
+  await quick.getByRole('button', { name: '简短一点', exact: true }).click()
+  await quick.getByLabel('给 AI 的本次指令').fill('委婉拒绝，只用两句话')
+  const beforeQuick = requests.length
+  await quick.getByRole('button', { name: '按指令生成', exact: true }).click()
+  await quick.waitFor({ state: 'detached' })
+  assert.equal(requests.length, beforeQuick + 1)
+  assert.match(requests.at(-1).payload.messages[0].content, /本次快捷指令[\s\S]*委婉拒绝，只用两句话/)
+  assert.equal(await page.evaluate(() => window.__qa.actionCalls.length), 2)
+  // Detach to a real second browser window. Production uses a native Tauri window.
+  const popupEvent = page.waitForEvent('popup')
+  await page.getByRole('button', { name: '独立浮窗', exact: true }).click()
+  const popup = await popupEvent
+  popup.on('pageerror', e => errors.push(e.message))
+  await popup.getByRole('textbox', { name: '给 AI 发出指令' }).waitFor()
+  await popup.waitForFunction(() => !document.querySelector('textarea').disabled)
+  assert.equal(await popup.evaluate(() => !!window.__qa?.ctx.userbot), false)
+  await page.getByText('AI 回复已在独立浮窗中', { exact: true }).waitFor()
+  await popup.getByRole('textbox', { name: '给 AI 发出指令' }).fill('更正式一点')
+  const beforeFloat = requests.length
+  await popup.getByRole('button', { name: '按指令生成', exact: true }).click()
+  await popup.waitForFunction(() => !document.querySelector('textarea').disabled)
+  assert.equal(requests.length, beforeFloat + 1)
+  assert.match(requests.at(-1).payload.messages[0].content, /更正式一点/)
+  if (process.env.FLOATING_AI_SCREENSHOT) await popup.screenshot({ path: process.env.FLOATING_AI_SCREENSHOT })
+  await popup.getByRole('button', { name: '填入聊天框', exact: true }).click()
+  await page.waitForFunction(() => !window.__qa.ctx.userbot.state.drafts['2:normal'])
+  assert.match(await page.locator('.composer textarea').inputValue(), /这是一条测试草稿/)
+  const closed = popup.waitForEvent('close')
+  await popup.getByRole('button', { name: '嵌回聊天框', exact: true }).click()
+  await closed
+  await page.locator('.ai-menu[aria-label="AI 回复助手"]').waitFor()
+  const secondPopupEvent = page.waitForEvent('popup')
+  await page.getByRole('button', { name: '独立浮窗', exact: true }).click()
+  const secondPopup = await secondPopupEvent
+  secondPopup.setDefaultTimeout(6000)
+  await secondPopup.getByRole('textbox', { name: '给 AI 发出指令' }).waitFor()
+  await secondPopup.waitForFunction(() => document.querySelector('textarea') && !document.querySelector('textarea').disabled)
+  const callsBeforeStale = requests.length
+  await secondPopup.evaluate(() => {
+    const session = new URLSearchParams(location.search).get('ai-panel')
+    const b = new BroadcastChannel('yh-ai-panel-' + session)
+    b.postMessage({ type: 'command', view: new URLSearchParams(location.search).get('ai-view'), id: 'stale-command', action: 'generate', key: '2:normal', revision: -1, instruction: 'stale request' }); b.close()
+  })
+  await secondPopup.getByRole('alert').filter({ hasText: '会话已变化' }).waitFor()
+  assert.equal(requests.length, callsBeforeStale)
+  await page.evaluate(() => { window.__qa.ctx.lock = { isLocked: true } })
+  await secondPopup.getByText('请在主窗口选择会话并解锁', { exact: true }).first().waitFor()
+  assert.equal(await secondPopup.getByRole('textbox', { name: '给 AI 发出指令' }).isDisabled(), true)
+  assert.equal(await secondPopup.locator('.floating-ai-message').count(), 0)
+  const secondClosed = secondPopup.waitForEvent('close')
+  await page.evaluate(() => window.__qa.ctx.emit('auth/logout'))
+  await secondClosed
+  assert.equal(await page.evaluate(() => window.__qa.ctx.aiPanel.state.detached), false)
+  assert.deepEqual(errors, [])
+  console.log('PASS: one-off quick commands, no group mutations, shared AI backend, draft sync/use, docking, stale-command rejection, lock privacy and logout closes the floating view')
+} finally { await browser.close(); await server.close() }

@@ -8,6 +8,7 @@ import { inject, computed } from 'vue'
 import KLayout from '../components/KLayout.vue'
 import KCard from '../components/KCard.vue'
 import SchemaForm from '../components/SchemaForm.vue'
+import NotificationSettings from '../../components/NotificationSettings.vue'
 
 const ctx = inject<any>('ctx')
 const ui = ctx.ui
@@ -18,6 +19,9 @@ const list = computed(() => ctx.console?.state?.settings || [])
 
 <template>
   <KLayout ns="settings-user" title="用户设置" desc="只影响你自己的偏好（存浏览器本地，不写配置文件）">
+    <KCard title="消息通知">
+      <NotificationSettings />
+    </KCard>
     <KCard v-for="s in list" :key="s.id" :title="s.title || s.id">
       <SchemaForm :schema="s.schema" :model-value="s.value || {}" @update:model-value="v => s.value = v" />
       <div class="acts">
@@ -25,12 +29,6 @@ const list = computed(() => ctx.console?.state?.settings || [])
       </div>
     </KCard>
 
-    <KCard v-if="!list.length" title="还没有用户设置">
-      <p class="dim small">
-        插件可以通过 <code>ctx.console.settings({ id, title, schema })</code>
-        注册「用户级」配置（比如主题、语言）。目前还没有插件注册。
-      </p>
-    </KCard>
   </KLayout>
 </template>
 

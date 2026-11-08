@@ -7,6 +7,7 @@
 import { inject, ref, computed } from 'vue'
 import KLayout from '../components/KLayout.vue'
 import KCard from '../components/KCard.vue'
+import Icon from '../components/Icon.vue'
 
 const ctx = inject<any>('ctx')
 const mk = ctx.market
@@ -85,7 +86,7 @@ async function doInstall() {
       <p class="dim small">
         URL 需是<strong>可直接访问的 .js 直链</strong>（GitHub raw / jsDelivr 等）。
         插件格式：<code>export function apply(ctx) { ... }</code>，可选 <code>export const name</code>。
-        ⚠️ 第三方插件能读到你的登录 token，只装信任的来源。
+        <Icon name="warning" :size="14" class="inline-icon" aria-hidden="true" /> 第三方插件能读到你的登录 token，只装信任的来源。
       </p>
     </KCard>
 

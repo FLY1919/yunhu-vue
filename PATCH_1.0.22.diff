@@ -1,0 +1,1405 @@
+--- /dev/null
++++ b/RELEASE_NOTES_1.0.22.md
+@@ -0,0 +1,59 @@
++# YH LaoDa 1.0.22 — 群管理、图片、账号与会话列表修复
++
++基于当前最新的 `yunhu-richkobe-1.0.21-complete-source.zip` 做增量修改。先检查完整源码目录及相关消息、上传、认证、存储、菜单、图片查看器、会话排序与桌面打包链路。本包没有 Git 元数据，不能报告分支或提交 SHA。本次未访问用户 GitHub 账号。
++
++## 本次修复
++
++- **管理员 Bot 撤回消息**：定位时传入真实消息序号；定位接口只返回相邻消息时，再从当前群最近 100 条消息精确匹配目标。保留已加载历史消息的序号，群管理上下文也能列出图片、文件、表情、视频、语音消息的真实 ID。查询失败、尚未定位、跨群和确已撤回分别处理。预览与批准后执行均重新核实群权限、发送者及消息状态；不会仅凭本地缓存直接撤回，也不会自动重试结果不明的管理操作。
++- **图片上传与空白消息**：拒绝零字节文件；对缺少图片 MIME 的常见扩展名正确识别；规范化上传后的资源地址，避免分发域名缺少末尾斜杠时拼成错误地址。发送图片带上真实宽高，仍按现有协议发送图片 key。加载失败显示明确的重试按钮，不再直接隐藏为一片空白；重试强制更新 HTTP 缓存。资源代理不再把 403/404 等失败响应缓存一天。
++- **登录与已保存账号**：登录页显示账号数量、名称、ID、过期状态，并支持刷新；20 个账号的列表可滚动。退出登录结束当前本地会话、清理聊天缓存，保留已保存账号；“移除”单独删除选定账号的本机凭据。退出不再撤销用于该已保存账号的上游设备登录。旧版已实际删除的凭据无法凭空恢复，需要重新登录一次。
++- **ACL 检查结论**：邮箱/Token 网络登录本身经 Node 代理，不使用 Tauri 命令 ACL；Windows 凭据读写使用 `secure_read`、`secure_write`、`secure_delete`。当前源码权限清单和沿用的原生壳中均有这些授权，主窗口及所选本机回环端口已覆盖，未复现缺失授权造成的原生登录拒绝。本次修正了把所有 403、含有 token 字样的网络错误都当成凭据失效的问题；账号列表读取错误会明确显示并允许刷新，不伪装成“没有账号”。保留系统加密存储、主窗口范围和后端进程身份核验。
++- **在文件夹中打开**：消息右键菜单现在调用本地下载及系统文件管理器链路，Windows 定位到文件资源管理器并选中文件。该动作不会打开群文件面板，也不会误走浏览器另存为。当前运行期间重复定位已下载附件会复用文件；不同附件重名时保存新副本，不覆盖原文件。系统文件管理器使用异步进程启动，下载和定位期间不会同步阻塞消息代理。
++- **图片查看器滚轮**：普通滚轮和 Ctrl/Command＋滚轮均以指针位置为中心缩放，保留缩放按钮、范围限制和拖拽平移。图片编辑器里的普通滚动与 Ctrl 缩放保持其原有操作方式。
++- **编辑完成闪动**：图片编辑输出先解码新预览，再替换图片、关闭编辑器及释放旧预览，避免露出尚未加载的空白图片。消息编辑后，较早开始的轮询不能覆盖刚保存的正文；收到编辑事件时保留原发送时间，不把消息重新移到新时间位置。修复旧编辑请求完成后误关闭另一条消息编辑框的竞态。
++- **免打扰与排序**：免打扰会话的未读标记为灰色，普通未读为更醒目的红色；免打扰未读标题和预览降低强调程度。仅有免打扰未读时，主导航提示为灰点。排序为置顶会话 → 当前未置顶会话 → 其余未置顶会话；当前会话即便原属分组已折叠，也显示在置顶区后方，保留原分组归属、避免重复。切换当前会话、置顶 Tab 与搜索继续按各自规则更新。
++- **顺手修复**：复制失败时不再重复调用同一个不可用的剪贴板接口；会话选中状态同时比较会话 ID 与类型。
++
++## 验证
++
++所有验证使用虚拟账号、本机模拟响应或临时数据目录；没有登录真实云湖账号或执行真实群管理操作。
++
++- 聊天/会话回归 **99 项**，用户 Bot **41 项**，账号/设置 **13 项**，其他功能 **13 项**；另有本地文件/资源回归 **2 项**、Windows 运行时与可执行资源校验 **2 项**，合计 **170 项**通过。
++- 真实 Vue + Chromium 离线上传链路：PNG/JPG/WebP/GIF 的 multipart 文件字节与输入逐字节一致；Protobuf 发送的图片 key、宽高及最终显示正确。覆盖无 MIME、空文件拒绝、404 提示与重试、普通/Ctrl 滚轮缩放。
++- 真实认证/存储/登录组件：所有已保存账号与过期账号展示、退出后保留、权限读取错误、刷新恢复，以及 20 个账号滚动展示。
++- 主界面检查：灰/红角标、当前会话位置、无重复行、深浅色、窄窗口、图片编辑导出及编辑器关闭后的每帧图片解码状态、原消息保持不变。
++- 原有媒体检查：120 个动图离屏释放、静态预览、悬停播放与最小化暂停；横/长/方/小图片比例正确。编辑器、锁屏、资料、GIF 导出与查看器检查通过。
++- Vue 类型检查、源码 preflight、生产前端构建、Node sidecar 构建通过。生产启动和 AI 桥接进程身份核验通过；本地图片副本保存通过。
++- 构建的 Node sidecar 实际监听 8902，退出后能立即重新绑定同一地址。原生壳窗口关闭/托盘退出的 `kill + wait` 清理路径保持原样。
++- 在本机编译 NSIS 安装器，并解包核对前端、sidecar、Node、DLL 和原生壳的资源摘要。
++
++## 桌面构建边界
++
++安装器、前端、后端与源码版本为 1.0.22。Windows 原生壳和 WebView2Loader 沿用 1.0.21 安装包所使用的已校验二进制（该原生壳来自 1.0.20）；本次没有重新编译 Rust 主程序，Rust 源码只有版本登记变化。Node 使用完整的 Windows x64 22.23.4 运行时并校验摘要。本机环境为 Linux，未在真实 Windows 桌面安装、登录或点击资源管理器，不能将离线浏览器/进程验证等同于 Windows 实机验收。
++
++## 安装与复现
++
++先彻底退出旧程序，再覆盖安装。无需删除本地账号或设置。旧版已经删除的本机账号需重新登录一次。
++
++```bash
++npm ci
++npm run typecheck
++node --test scripts/test-chat-regressions.mjs scripts/test-settings-regressions.mjs scripts/test-features-regressions.mjs scripts/test-userbot.mjs
++npm run build
++node scripts/build-server-bundle.mjs
++npm run test:maintenance
++npm run test:windows-assets
++node scripts/test-port-release.mjs
++npm run test:sidecar-userbot
++npm run test:local-files
++# 浏览器验证需要 Playwright 与 Chromium，可通过环境变量指定。
++npm run test:ui
++npm run test:ui-uploads
++npm run test:ui-accounts
++npm run test:ui-features
++npm run test:ui-resources
++npm run test:ui-startup
++# 原生壳及安装器构建说明见 scripts/package-windows-local.sh。
++```
++
++完整源码保留生产 dist、生成的 sidecar、历史功能与说明，并附 `PATCH_1.0.22.diff`。不包含 node_modules、Rust target、Windows Node 二进制、安装器、临时测试数据或个人凭据。
+--- a/package-lock.json
++++ b/package-lock.json
+@@ -1,12 +1,12 @@
+ {
+   "name": "yunhu-vue",
+-  "version": "1.0.21",
++  "version": "1.0.22",
+   "lockfileVersion": 3,
+   "requires": true,
+   "packages": {
+     "": {
+       "name": "yunhu-vue",
+-      "version": "1.0.21",
++      "version": "1.0.22",
+       "dependencies": {
+         "@capacitor/core": "^8.5.2",
+         "@jodit/image-editor": "0.2.5",
+--- a/package.json
++++ b/package.json
+@@ -1,7 +1,7 @@
+ {
+   "name": "yunhu-vue",
+   "private": true,
+-  "version": "1.0.21",
++  "version": "1.0.22",
+   "type": "module",
+   "description": "云湖牢大版 · Vue3 + 真 cordis 插件内核 + Satori 协议 + WebDAV 网关（仅供学习交流）",
+   "scripts": {
+@@ -41,7 +41,10 @@
+     "test:ui-community": "node scripts/test-ui-community.mjs",
+     "test:windows-assets": "node --test scripts/test-windows-assets.mjs",
+     "fetch:windows-node": "node scripts/fetch-windows-node.mjs",
+-    "test:ui-startup": "node scripts/test-ui-startup.mjs"
++    "test:ui-startup": "node scripts/test-ui-startup.mjs",
++    "test:maintenance": "node --test scripts/test-maintenance-fixes.mjs",
++    "test:ui-uploads": "node scripts/test-ui-upload-fixes.mjs",
++    "test:ui-accounts": "node scripts/test-ui-accounts.mjs"
+   },
+   "dependencies": {
+     "@capacitor/core": "^8.5.2",
+--- a/scripts/test-chat-regressions.mjs
++++ b/scripts/test-chat-regressions.mjs
+@@ -292,7 +292,7 @@
+       assert.equal(decodePush(pb.build(pb.fStr(9, id))).quoteId, id)
+     } finally { globalThis.fetch = originalFetch }
+   })
+-  await test('unread conversations precede read pins and reorder immediately after reading or marking unread', async () => {
++  await test('pins stay first, the active unpinned conversation follows, and remaining unread conversations reorder', async () => {
+     const h = harness()
+     try {
+       h.chat.state.conversations = [
+@@ -302,13 +302,34 @@
+         { ...channel('muted-unread'), ts: 3, unread: 1 },
+       ]
+       h.chat.togglePin('read-pin'); h.chat.toggleMute('muted-unread')
+-      assert.deepEqual(h.chat.filtered().map(c => c.id), ['muted-unread', 'unread-old', 'read-pin', 'read-new'])
++      assert.deepEqual(h.chat.filtered().map(c => c.id), ['read-pin', 'muted-unread', 'unread-old', 'read-new'])
+       await h.chat.open(channel('unread-old'))
+-      assert.deepEqual(h.chat.filtered().map(c => c.id), ['muted-unread', 'read-pin', 'read-new', 'unread-old'])
++      assert.deepEqual(h.chat.filtered().map(c => c.id), ['read-pin', 'unread-old', 'muted-unread', 'read-new'])
+       h.chat.markUnread('read-new')
+-      assert.deepEqual(h.chat.filtered().slice(0, 2).map(c => c.id), ['read-new', 'muted-unread'])
++      assert.deepEqual(h.chat.filtered().map(c => c.id), ['read-pin', 'unread-old', 'read-new', 'muted-unread'])
+       h.chat.state.keyword = 'read-new'
+       assert.equal(h.chat.filtered()[0].id, 'read-new')
++    } finally { h.dispose() }
++  })
++  await test('the active grouped conversation is shown below pins even when its group is collapsed, with no duplication', async () => {
++    const h = harness()
++    try {
++      h.chat.setPinMode('top')
++      h.chat.state.conversations = [channel('pin'), channel('active'), channel('other')]
++      h.chat.togglePin('pin'); h.chat.groups.groups.push({ id: 'folder', name: '文件夹' })
++      h.chat.assignTo('active', 'folder'); h.chat.toggleCollapse('folder')
++      await h.chat.open(channel('active'))
++      let sections = h.chat.sections(h.chat.filtered())
++      assert.deepEqual(sections.pinned.map(c => c.id), ['pin'])
++      assert.deepEqual(sections.active.map(c => c.id), ['active'])
++      assert.equal(sections.groups[0].items.length, 0)
++      assert.deepEqual(sections.ungrouped.map(c => c.id), ['other'])
++      assert.equal(h.chat.groupOf('active'), 'folder')
++      await h.chat.open(channel('other')); sections = h.chat.sections(h.chat.filtered())
++      assert.deepEqual(sections.active.map(c => c.id), ['other'])
++      assert.deepEqual(sections.groups[0].items.map(c => c.id), ['active'])
++      await h.chat.open(channel('pin')); sections = h.chat.sections(h.chat.filtered())
++      assert.equal(sections.active.length, 0); assert.equal(sections.pinned.filter(c => c.id === 'pin').length, 1)
+     } finally { h.dispose() }
+   })
+   await test('Windows registration failures retain the actual error and recover on the next test notification', async () => {
+@@ -1527,6 +1548,20 @@
+       assert.equal(h.chat.state.messages[0].content.text, 'newer text')
+     } finally { h.dispose() }
+   })
++  await test('a local edit survives an older in-flight poll and edit events retain the original send time', async () => {
++    const h = harness({ messages: async () => [message('edit-target', 1000)], editMessage: async () => {} })
++    try {
++      await h.chat.open(channel('a'))
++      const old = deferred(); h.api.messages = () => old.promise
++      const polling = h.chat.loadMessages(true)
++      await h.chat.edit('edit-target', 'edited body')
++      old.resolve([message('edit-target', 1000)]); await polling
++      assert.equal(h.chat.state.messages[0].content.text, 'edited body')
++      h.ctx.emit('message-updated', { id: 'edit-target', channel: channel('a'), user: { id: 'other', name: 'Other' }, timestamp: 999999999, raw: { type: 1, content: { text: 'remote edit' } } })
++      assert.equal(h.chat.state.messages[0].ts, 1000)
++      assert.equal(h.chat.state.messages[0].content.text, 'remote edit')
++    } finally { h.dispose() }
++  })
+   await test('video messages preserve native type, a nonzero duration and file metadata', () => {
+     const result = renderElements([{ type: 'video', attrs: { src: 'https://chat-video1.jwznb.com/test.mp4', time: 6.2, width: 640, height: 360, name: 'test.mp4', size: 1234 } }])
+     assert.equal(result.contentType, 10)
+--- /dev/null
++++ b/scripts/test-maintenance-fixes.mjs
+@@ -0,0 +1,63 @@
++/** Focused menu dispatch and server download regressions; all network stays local. */
++import { test, after } from 'node:test'
++import assert from 'node:assert/strict'
++import { build } from 'esbuild'
++import { mkdtemp, writeFile, readFile, rm, mkdir } from 'node:fs/promises'
++import { join, resolve } from 'node:path'
++import { pathToFileURL } from 'node:url'
++import { tmpdir } from 'node:os'
++import { spawn } from 'node:child_process'
++import http from 'node:http'
++const temp=await mkdtemp(join(process.cwd(),'node_modules','.maintenance-'))
++await build({stdin:{contents:"export {messageActionsPlugin} from './src/plugins/message-actions';",resolveDir:process.cwd()},outfile:join(temp,'menus.mjs'),bundle:true,platform:'node',format:'esm',packages:'external',plugins:[{name:'sfc',setup(b){b.onLoad({filter:/\.vue$/},()=>({contents:'export default {}',loader:'js'}))}}]})
++const {messageActionsPlugin}=await import(pathToFileURL(join(temp,'menus.mjs')))
++after(()=>rm(temp,{recursive:true,force:true}))
++await test('reveal uses the system-file endpoint rather than group files or the save picker; clipboard denial reports once',async()=>{
++  const oldFetch=globalThis.fetch,oldWindow=globalThis.window,oldDocument=globalThis.document
++  const actions=new Map(),requests=[],toasts=[]
++  globalThis.window={showSaveFilePicker(){throw new Error('reveal must not show a picker')}}
++  globalThis.document=new EventTarget()
++  globalThis.fetch=async url=>{requests.push(String(url));return Response.json({ok:true,path:'fixture'})}
++  const ctx={chat:{menu(){},action(id,a){actions.set(id,a.action)},slot(){return ()=>{}}},ui:{toast(...args){toasts.push(args)}},group:{setDockTab(){throw new Error('must not navigate to group files')},locateFile(){throw new Error('must not navigate')}},set(k,v){this[k]=v},effect(fn){fn()},inject(){}}
++  try {
++    messageActionsPlugin.apply(ctx)
++    await actions.get('msg.locate')({msg:{elements:[{type:'file',attrs:{src:'file.pdf',name:'文件.pdf'}}]}})
++    assert.equal(requests.length,1)
++    const url=new URL(requests[0],'http://local')
++    assert.equal(url.pathname,'/local-open');assert.equal(url.searchParams.get('url'),'/res/chat-file.jwznb.com/file.pdf');assert.equal(url.searchParams.get('name'),'文件.pdf')
++    await actions.get('msg.copy')({msg:{content:{text:'copy me'}}})
++    assert.equal(toasts.length,1);assert.match(toasts[0][0],/剪贴板/)
++  } finally {globalThis.fetch=oldFetch;globalThis.window=oldWindow;globalThis.document=oldDocument}
++})
++await test('failed resources are not cached; reveal preserves files and remains asynchronous; sidecar termination releases its port',async()=>{
++  const folder=await mkdtemp(join(tmpdir(),'yh-reveal-')),hits=new Map()
++  let child
++  const upstream=http.createServer((req,res)=>{
++    hits.set(req.url,(hits.get(req.url)||0)+1)
++    assert.equal(req.headers.referer,'http://myapp.jwznb.com')
++    if(req.url==='/missing')res.writeHead(404).end('not ready')
++    else res.writeHead(200,{'content-type':'application/octet-stream'}).end(req.url==='/second'?'second bytes':'first bytes')
++  });await new Promise(r=>upstream.listen(0,'127.0.0.1',r))
++  const finder=http.createServer();await new Promise(r=>finder.listen(0,'127.0.0.1',r));const port=finder.address().port;await new Promise(r=>finder.close(r))
++  try {
++    await mkdir(join(folder,'bin'))
++    await writeFile(join(folder,'bin','xdg-open'),'#!/usr/bin/env node\nsetTimeout(()=>process.exit(0),300)\n',{mode:0o755})
++    await writeFile(join(folder,'preload.mjs'),`import https from 'node:https';import http from 'node:http';https.request=(options,cb)=>http.request({...options,host:'127.0.0.1',hostname:'127.0.0.1',port:${upstream.address().port}},cb);`)
++    child=spawn(process.execPath,['--import',join(folder,'preload.mjs'),resolve('src-tauri/resources/server-bundle.mjs')],{env:{...process.env,HOST:'127.0.0.1',PORT:String(port),HTTPS_PORT:'0',YH_ROOT:folder,YH_DATA_DIR:join(folder,'data'),YH_FILE_DIR:join(folder,'files'),PATH:join(folder,'bin')+':'+process.env.PATH},stdio:'ignore'})
++    const root=`http://127.0.0.1:${port}`
++    let ready=false
++    for(let i=0;i<100;i++){try{ready=(await fetch(root+'/data/session')).ok;if(ready)break}catch{}await new Promise(r=>setTimeout(r,40))}
++    assert.ok(ready)
++    const missing=await fetch(root+'/res/chat-img.jwznb.com/missing');assert.equal(missing.status,404);assert.equal(missing.headers.get('cache-control'),'no-store')
++    const reveal=path=>fetch(root+'/local-open?url='+encodeURIComponent('/res/chat-file.jwznb.com/'+path)+'&name=same.pdf').then(r=>r.json())
++    const opening=reveal('first'),start=Date.now();assert.equal((await fetch(root+'/data/session')).status,200);assert.ok(Date.now()-start<250)
++    const first=await opening;assert.equal(first.ok,true);assert.equal(await readFile(first.path,'utf8'),'first bytes')
++    const repeated=await reveal('first');assert.equal(repeated.path,first.path);assert.equal(hits.get('/first'),1)
++    const second=await reveal('second');assert.equal(second.ok,true);assert.notEqual(second.path,first.path);assert.equal(await readFile(first.path,'utf8'),'first bytes');assert.equal(await readFile(second.path,'utf8'),'second bytes')
++    const ended=new Promise(r=>child.once('exit',r));child.kill();await ended
++    const available=http.createServer();await new Promise((r,j)=>{available.once('error',j);available.listen(port,'127.0.0.1',r)});await new Promise(r=>available.close(r))
++  }finally{
++    if(child&&child.exitCode===null&&child.signalCode===null){const ended=new Promise(r=>child.once('exit',r));child.kill();await ended}
++    await new Promise(r=>upstream.close(r));await rm(folder,{recursive:true,force:true})
++  }
++})
+--- /dev/null
++++ b/scripts/test-port-release.mjs
+@@ -0,0 +1,19 @@
++/** The built Node sidecar must release the desktop default port after process exit. */
++import assert from 'node:assert/strict'
++import net from 'node:net'
++import {spawn} from 'node:child_process'
++import {mkdtemp,rm} from 'node:fs/promises'
++import {tmpdir} from 'node:os'
++import {join,resolve} from 'node:path'
++const bind=async()=>{const s=net.createServer();await new Promise((r,j)=>{s.once('error',j);s.listen(8902,'127.0.0.1',r)});await new Promise(r=>s.close(r))}
++await bind()
++const temp=await mkdtemp(join(tmpdir(),'yh-port-')),child=spawn(process.execPath,[resolve('src-tauri/resources/server-bundle.mjs')],{env:{...process.env,HOST:'127.0.0.1',PORT:'8902',HTTPS_PORT:'0',YH_ROOT:temp,YH_DATA_DIR:join(temp,'data')},stdio:'ignore'})
++try {
++  let ready=false
++  for(let i=0;i<100;i++){try{ready=(await fetch('http://127.0.0.1:8902/data/session')).ok;if(ready)break}catch{}await new Promise(r=>setTimeout(r,40))}
++  assert.ok(ready)
++}finally{
++  const ended=new Promise(r=>child.once('exit',r));if(child.exitCode===null&&!child.signalCode){child.kill();await ended}
++  await rm(temp,{recursive:true,force:true})
++}
++await bind();console.log('PASS: production sidecar starts on 8902 and the same address can be rebound after exit')
+--- a/scripts/test-settings-regressions.mjs
++++ b/scripts/test-settings-regressions.mjs
+@@ -75,7 +75,23 @@
+     assert.equal(h.auth.state.savedAccounts.find(a => a.id === 'b').needsLogin, false)
+     assert.equal(h.auth.user.id, 'a'); assert.equal(h.api.token, a.token)
+   })
+-  await test('adding an already saved account deduplicates, while explicit logout only forgets current credentials', async () => {
++  await test('403 and native ACL errors leave saved accounts retryable; explicit credential expiry requires login', async () => {
++    for (const error of [Object.assign(new Error('permission denied'), { status: 403 }), new Error('secure_read not allowed by ACL'), new Error('token lookup network timeout')]) {
++      const a = account('a'), b = account('b'), h = authHarness({ session: { ...a }, accounts: { items: [a, b] } })
++      await h.auth.restore(); h.api.self = async () => { throw error }
++      await assert.rejects(h.auth.switchAccount('b'))
++      assert.equal(h.auth.state.savedAccounts.find(a => a.id === 'b').needsLogin, false)
++      assert.equal(h.auth.user.id, 'a')
++    }
++  })
++  await test('refresh reloads the persistent account list without changing the active session', async () => {
++    const a = account('a'), b = account('b'), h = authHarness({ session: { ...a }, accounts: { items: [a] } })
++    await h.auth.restore(); h.data.set('accounts', { items: [a, b] })
++    await h.auth.loadAccounts(true)
++    assert.deepEqual(h.auth.state.savedAccounts.map(a => a.id).sort(), ['a', 'b'])
++    assert.equal(h.auth.user.id, 'a'); assert.equal(h.api.token, a.token)
++  })
++  await test('adding an account deduplicates; logout keeps saved accounts and explicit removal deletes only the selected account', async () => {
+     const a = account('a'), b = account('b')
+     const h = authHarness({ session: { ...a }, accounts: { items: [a, b] } })
+     await h.auth.restore(); await h.auth.loginWithToken(a.token)
+@@ -83,6 +99,8 @@
+     // Restore creates a fresh context just like the page reload after reauthentication.
+     const loggedIn = authHarness(Object.fromEntries(h.data)); await loggedIn.auth.restore(); await loggedIn.auth.logout()
+     assert.equal(loggedIn.auth.state.status, 'guest')
++    assert.deepEqual(loggedIn.auth.state.savedAccounts.map(a => a.id).sort(), ['a', 'b'])
++    await loggedIn.auth.forgetAccount('a')
+     assert.deepEqual(loggedIn.data.get('accounts').items.map(a => a.id), ['b'])
+     assert.ok(!loggedIn.data.has('session'))
+   })
+--- /dev/null
++++ b/scripts/test-ui-accounts.mjs
+@@ -0,0 +1,36 @@
++import assert from 'node:assert/strict'
++import {createServer} from 'vite'
++import vue from '@vitejs/plugin-vue'
++import {readFile} from 'node:fs/promises'
++const {chromium}=await import(process.env.PLAYWRIGHT_MODULE||'playwright')
++const server=await createServer({configFile:false,plugins:[vue()],server:{host:'127.0.0.1',port:0},logLevel:'error'});await server.listen()
++const browser=await chromium.launch({executablePath:process.env.CHROMIUM_EXECUTABLE||undefined,args:['--no-sandbox','--disable-dev-shm-usage']})
++const page=await browser.newPage(),errors=[];page.on('pageerror',e=>errors.push(e.message))
++try {
++  await page.route('**/data/**',route=>route.fulfill({json:{}}))
++  const base=`http://127.0.0.1:${server.httpServer.address().port}/scripts/ui-fixture/accounts.html`
++  await page.goto(base)
++  await page.waitForFunction(()=>document.querySelectorAll('.saved-account').length===3)
++  assert.equal(await page.getByText('已保存账号（3）',{exact:true}).count(),1)
++  await page.locator('.saved-account').filter({hasText:'本地账号 b'}).getByRole('button',{name:'切换登录',exact:true}).click()
++  await page.waitForFunction(()=>window.__accounts.ctx.auth.state.user?.id==='b')
++  await page.evaluate(()=>window.__accounts.ctx.auth.logout())
++  assert.equal(await page.locator('.saved-account').count(),3)
++  assert.equal(await page.evaluate(()=>window.__accounts.ctx.auth.state.status),'guest')
++  await page.reload();await page.waitForFunction(()=>document.querySelectorAll('.saved-account').length===3)
++  await page.goto(base+'?deny')
++  await page.getByRole('alert').filter({hasText:'ACL'}).waitFor()
++  assert.equal(await page.getByText('暂无已保存账号，登录后会自动加入此列表。',{exact:true}).count(),0)
++  await page.evaluate(()=>window.__accounts.allow())
++  await page.getByRole('button',{name:'刷新账号',exact:true}).click()
++  await page.waitForFunction(()=>document.querySelectorAll('.saved-account').length===3)
++  assert.deepEqual(errors,[])
++  await page.evaluate(() => window.__accounts.vault.set('accounts', JSON.stringify({ items: Array.from({ length: 20 }, (_, i) => ({ id: 'local-' + i, token: 'fixture-local-' + i, user: { name: '本地账号 ' + i }, savedAt: i })) })))
++  await page.getByRole('button',{name:'刷新账号',exact:true}).click()
++  await page.waitForFunction(()=>document.querySelectorAll('.saved-account').length===20)
++  assert.ok(await page.locator('.login-saved').evaluate(el => el.scrollHeight > el.clientHeight))
++  const caps=JSON.parse(await readFile('src-tauri/capabilities/default.json','utf8'))
++  for(const name of ['read','write','delete'])assert.ok(caps.permissions.includes('allow-secure-'+name))
++  assert.ok(caps.windows.includes('main'));assert.ok(caps.remote.urls.includes('http://127.0.0.1:*/*'))
++  console.log('PASS: real login lists saved/expired accounts, logout retains them, ACL rejection is visible, refresh recovers, 20 accounts scroll, main-window vault commands and selected loopback ports are authorized')
++}finally{await browser.close();await server.close()}
+--- a/scripts/test-ui-features.mjs
++++ b/scripts/test-ui-features.mjs
+@@ -29,12 +29,12 @@
+   await body.hover(); await page.mouse.wheel(0, 380)
+   await page.waitForFunction(() => document.querySelector('.settings-content .settings-page > .k-layout > .k-body').scrollTop > 100)
+   assert.equal(await body.evaluate(el => getComputedStyle(el, '::-webkit-scrollbar').width), '8px')
+-  await page.getByRole('button', { name: '常规', exact: true }).click()
++  await page.getByRole('button', { name: '安全', exact: true }).click()
+   await page.getByLabel('最小化时锁定', { exact: true }).check()
+   await page.getByLabel('失去焦点后自动锁定', { exact: true }).check()
+   await page.getByLabel('失焦锁定等待分钟数', { exact: true }).fill('7')
+   await page.getByLabel('失焦锁定等待分钟数', { exact: true }).press('Tab')
+-  assert.deepEqual(await page.evaluate(() => JSON.parse(JSON.stringify(window.__qa.ctx.lock.state.preferences))), { minimize: true, blurMinutes: 7 })
++  assert.deepEqual(await page.evaluate(() => JSON.parse(JSON.stringify(window.__qa.ctx.lock.state.preferences))), { minimize: true, blurMinutes: 7, startup: false, captureProtection: false })
+   await page.evaluate(() => window.dispatchEvent(new CustomEvent('yh-window-minimized', { detail: true })))
+   await page.locator('.ls-mask').waitFor()
+   await page.evaluate(() => window.__qa.ctx.lock.unlock())
+@@ -148,5 +148,5 @@
+   await page.locator('.viewer-bar button[title="关闭"]').click()
+   assert.deepEqual(errors,[])
+   if(process.env.UI_QA_SCREENSHOTS) { await mkdir(process.env.UI_QA_SCREENSHOTS,{recursive:true});await page.screenshot({path:resolve(process.env.UI_QA_SCREENSHOTS,'features-complete.png')}) }
+-  console.log('PASS: viewer toolbar is icon-only, image/video pinch zoom and two-axis panning work, video clicks preserve playback; no browser exceptions')
++  console.log('PASS: viewer toolbar is icon-only, image/video plain-wheel and Ctrl-wheel zoom work, video clicks preserve playback; no browser exceptions')
+ } finally { await browser.close(); await server.close() }
+--- a/scripts/test-ui-regressions.mjs
++++ b/scripts/test-ui-regressions.mjs
+@@ -26,7 +26,12 @@
+   assert.equal(await page.locator('.has-unread .cname').count(), 2)
+   assert.equal(await page.locator('.convs .badge').count(), 2)
+   assert.equal(await page.locator('.convs .muted-unread').count(), 1)
+-  console.log('PASS: pinned-first layout, unread styling (including muted), pin icons')
++  assert.equal(await page.locator('.convs .badge.muted-unread').evaluate(el => getComputedStyle(el).backgroundColor), 'rgb(107, 114, 128)')
++  assert.equal(await page.locator('.convs .badge:not(.muted-unread)').evaluate(el => getComputedStyle(el).backgroundColor), 'rgb(217, 45, 69)')
++  await page.evaluate(async () => { const ctx = window.__qa.ctx; await ctx.chat.open(ctx.chat.state.conversations.find(c => c.id === 'other')) })
++  assert.deepEqual(await names(), ['另一个置顶', '云湖置顶', '其他会话', '云湖群'])
++  await page.evaluate(() => { window.__qa.ctx.chat.state.current = null; window.__qa.ctx.chat.state.messages = [] })
++  console.log('PASS: muted unread badges are grey, normal badges are red, active unpinned conversation follows all pins, no duplicate rows')
+ 
+   const settings = page.getByRole('button', { name: '账号与配置', exact: true })
+   const settingsY = (await settings.boundingBox()).y
+@@ -160,6 +165,15 @@
+   await page.getByRole('button', { name: '撤销', exact: true }).click()
+   await page.waitForFunction(pixel => document.querySelector('.ied-preview canvas').getContext('2d').getImageData(0, 0, 1, 1).data[0] === pixel[0], beforePixel)
+   if (process.env.UI_QA_SCREENSHOTS) { await page.evaluate(() => Promise.all(document.getAnimations().map(a => a.finished.catch(() => {})))); await page.screenshot({ path: resolve(process.env.UI_QA_SCREENSHOTS, 'image-editor.png') }) }
++  await page.evaluate(() => {
++    window.__editSwapFrames = []
++    let frames = 0
++    const sample = () => {
++      const viewer = document.querySelector('.viewer-img')
++      if (!document.querySelector('.ied-mask') && viewer) window.__editSwapFrames.push({ complete: viewer.complete, width: viewer.naturalWidth })
++      if (++frames < 180) requestAnimationFrame(sample)
++    }; requestAnimationFrame(sample)
++  })
+   const exported = page.waitForEvent('download')
+   await page.getByRole('button', { name: '保存副本', exact: true }).click()
+   const download = await exported
+@@ -168,7 +182,9 @@
+   assert.deepEqual([...bytes.subarray(0, 8)], [137,80,78,71,13,10,26,10])
+   assert.equal(bytes.readUInt32BE(16), 80); assert.equal(bytes.readUInt32BE(20), 120)
+   await page.locator('.ied-mask').waitFor({ state: 'detached' })
+-  assert.ok((await sticker.getAttribute('src')).startsWith('data:image/png'))
++  assert.ok((await page.evaluate(() => window.__qa.ctx.chat.state.messages.find(m => m.id === 'sticker-test').elements[0].attrs.src)).startsWith('data:image/png'))
++  await page.waitForFunction(() => window.__editSwapFrames.length > 0)
++  assert.ok((await page.evaluate(() => window.__editSwapFrames)).every(f => f.complete && f.width > 0), 'closing the editor must not expose an undecoded/blank preview')
+   await page.locator('.viewer-bar button[title="关闭"]').click()
+   console.log('PASS: ordinary/Ctrl sticker clicks remain distinct, actual image edits and undo work, exported PNG has correct rotated dimensions and leaves original message intact')
+ 
+--- /dev/null
++++ b/scripts/test-ui-upload-fixes.mjs
+@@ -0,0 +1,73 @@
++/** Real Composer -> multipart upload -> protobuf send -> image renderer, offline only. */
++import assert from 'node:assert/strict'
++import { readFile } from 'node:fs/promises'
++import { createServer } from 'vite'
++import vue from '@vitejs/plugin-vue'
++import * as pb from '../src/core/pb.ts'
++const {chromium}=await import(process.env.PLAYWRIGHT_MODULE||'playwright')
++const server=await createServer({configFile:false,plugins:[vue()],server:{host:'127.0.0.1',port:0},logLevel:'error'});await server.listen()
++const browser=await chromium.launch({executablePath:process.env.CHROMIUM_EXECUTABLE||undefined,args:['--no-sandbox','--disable-dev-shm-usage']})
++const page=await browser.newPage({viewport:{width:1280,height:820}}), errors=[], uploads=[], sent=[], objects=new Map(), records=[]
++page.on('pageerror',e=>errors.push(e.message))
++let failImage=true
++try {
++  await page.exposeFunction('__wireMessages',()=>records)
++  await page.route('**/qa-api/**',async route=>{
++    const request=route.request(),path=new URL(request.url()).pathname
++    if(path.endsWith('/qiniu-token')) return route.fulfill({json:{code:1,data:{token:'offline-upload-token'}}})
++    if(path.endsWith('/configure-distribution')) return route.fulfill({json:{code:1,data:{imageUrl:'https://chat-img.jwznb.com'}}})
++    if(path.endsWith('/send-message')) {
++      const body=pb.decode(request.postDataBuffer()),content=pb.msg(body,5),key=pb.str(content,3)
++      assert.equal(pb.num(body,6),2);assert.ok(objects.has(key));assert.ok(pb.num(content,33)>0);assert.ok(pb.num(content,34)>0)
++      sent.push({key,width:pb.num(content,33),height:pb.num(content,34)})
++      records.push({id:pb.str(body,2),chatId:'normal',chatType:2,type:2,senderId:'me',sender:'Me',right:true,ts:Date.now(),content:{image_url:key,width:pb.num(content,33),height:pb.num(content,34)}})
++      return route.fulfill({json:{code:1}})
++    }
++    throw new Error('Unexpected API '+path)
++  })
++  await page.route('**/up/**',async route=>{
++    const req=route.request(), fd=await new Response(req.postDataBuffer(),{headers:await req.allHeaders()}).formData()
++    const key=fd.get('key'),file=fd.get('file'),bytes=Buffer.from(await file.arrayBuffer())
++    uploads.push({key,bytes});objects.set(key,{bytes,mime:file.type})
++    return route.fulfill({json:{key}})
++  })
++  await page.route('**/res/chat-img.jwznb.com/**',route=>{
++    const key=new URL(route.request().url()).pathname.split('/').pop(),object=objects.get(key)
++    if(failImage){failImage=false;return route.fulfill({status:404,headers:{'cache-control':'no-store'},body:'not ready'})}
++    return object ? route.fulfill({contentType:object.mime,body:object.bytes}) : route.fulfill({status:404,body:'missing'})
++  })
++  await page.goto(`http://127.0.0.1:${server.httpServer.address().port}/scripts/ui-fixture/index.html`);await page.waitForFunction(()=>window.__qa)
++  await page.evaluate(async()=>{
++    const ctx=window.__qa.ctx;await ctx.chat.open(ctx.chat.state.conversations[0]);ctx.chat.state.messages=[];ctx.chat.state.hasMore=false
++    const {apiPlugin}=await import('/src/plugins/api.ts'), wire={set(k,v){this[k]=v}};apiPlugin.apply(wire,{base:'/qa-api'});wire.api.setToken('offline-only')
++    for(const k of ['uploadFile','uploadAndUrl','send'])ctx.api[k]=wire.api[k]
++    ctx.api.messages=()=>window.__wireMessages()
++  })
++  const images=await page.evaluate(()=>{
++    const c=document.createElement('canvas');c.width=96;c.height=64;const x=c.getContext('2d');x.fillStyle='#c34';x.fillRect(0,0,48,64);x.fillStyle='#48a';x.fillRect(48,0,48,64)
++    return ['image/png','image/jpeg','image/webp'].map(type=>({mime:type,base64:c.toDataURL(type).split(',')[1]}))
++  })
++  const gif=await readFile('scripts/ui-fixture/animated.gif')
++  const files=images.map((m,i)=>({name:'upload.'+['png','jpg','webp'][i],mimeType:i===2?'':m.mime,buffer:Buffer.from(m.base64,'base64')}));files.push({name:'upload.gif',mimeType:'image/gif',buffer:gif})
++  for(let i=0;i<files.length;i++) {
++    await page.locator('input[type=file][accept="image/*"]').setInputFiles(files[i])
++    await page.getByRole('button',{name:'发送',exact:true}).click()
++    await page.waitForFunction(n=>window.__qa.ctx.chat.state.messages.length>=n,i+1)
++    if(i===0){await page.getByRole('button',{name:'图片加载失败 · 点击重试',exact:true}).click()}
++    await page.waitForFunction(n=>[...document.querySelectorAll('img.media')].filter(e=>e.complete&&e.naturalWidth>0&&e.dataset.mediaState!=='released').length>=n,i+1)
++    assert.deepEqual(uploads[i].bytes,files[i].buffer)
++    assert.equal(sent[i].key,uploads[i].key)
++  }
++  assert.equal(uploads.length,4);assert.equal(sent.length,4)
++  const img=page.locator('img.media').last();await img.click();await page.locator('.viewer-mask').waitFor()
++  await page.locator('.viewer-img').hover();await page.mouse.wheel(0,-30)
++  await page.waitForFunction(()=>parseInt(document.querySelector('.viewer-zoom').textContent)>100)
++  const plain=await page.locator('.viewer-zoom').textContent()
++  await page.keyboard.down('Control');await page.mouse.wheel(0,-20);await page.keyboard.up('Control')
++  await page.waitForFunction(old=>parseInt(document.querySelector('.viewer-zoom').textContent)>parseInt(old),plain)
++  await page.locator('.viewer-bar button[title="关闭"]').click()
++  await page.locator('input[type=file][accept="image/*"]').setInputFiles({name:'empty.png',mimeType:'image/png',buffer:Buffer.alloc(0)})
++  await page.getByRole('button',{name:'发送',exact:true}).click();await page.locator('.pend-err').filter({hasText:'文件内容为空'}).waitFor()
++  assert.equal(uploads.length,4);assert.equal(sent.length,4);assert.deepEqual(errors,[])
++  console.log('PASS: PNG/JPEG/WebP/GIF upload bytes remain exact; real image messages carry key and dimensions, missing MIME is detected, 404 stays visible and retries, empty files do not send, plain/Ctrl wheel both zoom')
++}finally{await browser.close();await server.close()}
+--- a/scripts/test-userbot.mjs
++++ b/scripts/test-userbot.mjs
+@@ -632,3 +632,33 @@
+     assert.equal(h.pending.length,0)
+   } finally { h.dispose() }
+ })
++
++await test('recall falls back to the scoped recent list when positioning omits an existing message', async () => {
++  const h = await groupFixture({ review: false }); try {
++    h.ctx.api.messagesAround = async () => [{ id: 'neighbour', senderId: 'other' }]
++    h.ctx.api.messages = async (gid, type) => { assert.equal(gid, 'group'); assert.equal(type, 2); return [{ id: 'target-message', senderId: 'other', content: { text: 'still present' } }] }
++    await h.propose([{ type: 'recall', messageId: 'target-message', reason: 'test' }]); await waitFor(() => h.calls.length === 1)
++    assert.deepEqual(h.calls[0], ['recall', 'group', 2, 'target-message'])
++  } finally { h.dispose() }
++})
++await test('recall passes the real sequence of an older loaded message, then rechecks after review', async () => {
++  const h = await groupFixture(); try {
++    h.ctx.chat.state.current = { id: 'group', type: 2 }
++    h.ctx.chat.state.messages = [{ id: 'target-message', seq: 12345, senderId: 'other', content: { text: 'older' } }]
++    const calls=[]
++    h.ctx.api.messagesAround = async (gid, type, mid, count, seq) => { calls.push(seq); return seq === 12345 ? [{ id: mid, senderId: 'other', content: { text: 'older' } }] : [] }
++    await h.propose([{ type: 'recall', messageId: 'target-message', reason: 'test' }]); await waitFor(() => !!h.ctx.userbot.state.review)
++    h.ctx.userbot.resolveReview(h.ctx.userbot.state.review.id, true)
++    await waitFor(() => h.calls.length === 1)
++    assert.deepEqual(calls, [12345, 12345])
++  } finally { h.dispose() }
++})
++await test('a missing lookup target is not labelled recalled and never executes from a local cache alone', async () => {
++  const h = await groupFixture({ review: false }); try {
++    h.ctx.api.messagesAround = async () => []; h.ctx.api.messages = async () => []
++    h.ctx.chat.state.current = { id: 'group', type: 2 }; h.ctx.chat.state.messages = [{ id: 'target-message', seq: 7, senderId: 'other', content: { text: 'local only' } }]
++    await h.propose([{ type: 'recall', messageId: 'target-message', reason: 'test' }]); await sleep(50)
++    assert.equal(h.calls.length, 0)
++    assert.ok(h.ctx.userbot.state.logs.some(l => JSON.stringify(l).includes('未能从本群消息接口定位')))
++  } finally { h.dispose() }
++})
+--- /dev/null
++++ b/scripts/ui-fixture/accounts.html
+@@ -0,0 +1 @@
++<!doctype html><html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head><body><div id="app"></div><script type="module" src="/scripts/ui-fixture/accounts.ts"></script></body></html>
+--- /dev/null
++++ b/scripts/ui-fixture/accounts.ts
+@@ -0,0 +1,27 @@
++/** Real auth + storage + login UI with synthetic encrypted-vault responses. */
++import { createApp } from 'vue'
++import Login from '../../src/components/Login.vue'
++import { authPlugin } from '../../src/plugins/auth'
++import { storagePlugin } from '../../src/plugins/storage'
++import '../../src/styles.css'
++import '../../src/styles-m3.css'
++const items = ['a', 'b', 'expired'].map(id => ({ id, token: 'fixture-' + id, device: 'device-' + id, user: { id, name: '本地账号 ' + id, email: id + '@example.test' }, savedAt: 1, needsLogin: id === 'expired' }))
++const vault = new Map([['accounts', JSON.stringify({ items })]])
++let deny = new URLSearchParams(location.search).has('deny')
++;(window as any).__TAURI__ = { core: { async invoke(command: string, args: any) {
++  if (deny) throw 'secure_read not allowed by ACL'
++  if (command === 'secure_read') return vault.get(args.name) ?? null
++  if (command === 'secure_write') vault.set(args.name, args.data)
++  if (command === 'secure_delete') vault.delete(args.name)
++} } }
++const ctx: any = {
++  api: { token: '', base: '/offline', setToken(t: string) { this.token = t }, async self(token: string) {
++    const id = token.replace('fixture-', '')
++    if (id === 'expired') throw new Error('token expired')
++    return { id, name: '本地账号 ' + id, email: id + '@example.test' }
++  } }, ui: { confirm: async () => true }, on() {}, emit() {}, inject() {},
++  get(k: string) { return this[k] }, set(k: string, v: any) { this[k] = v },
++}
++storagePlugin.apply(ctx); authPlugin.apply(ctx)
++createApp(Login).provide('ctx', ctx).mount('#app')
++;(window as any).__accounts = { ctx, vault, allow() { deny = false } }
+--- a/server.ts
++++ b/server.ts
+@@ -13,7 +13,7 @@
+ import { stickerDirectory } from './sticker-directory.ts'
+ import https from 'node:https'
+ import { readFile, writeFile, unlink } from 'node:fs/promises'
+-import { execFileSync, execFile } from 'node:child_process'
++import { execFileSync, execFile, spawn } from 'node:child_process'
+ import { mkdirSync, readFileSync } from 'node:fs'
+ import { existsSync } from 'node:fs'
+ import { extname, join, normalize } from 'node:path'
+@@ -157,7 +157,8 @@
+      */
+     const h: Record<string, any> = {
+       'content-type': safeHeader(up.headers['content-type']) || 'application/octet-stream',
+-      'cache-control': cacheControl,
++      // Newly uploaded objects can briefly return 403/404. Never cache that failure for a day.
++      'cache-control': (up.statusCode || 502) >= 200 && (up.statusCode || 502) < 300 ? cacheControl : 'no-store',
+       'access-control-allow-origin': '*',
+       'access-control-expose-headers': 'content-range, content-length, accept-ranges',
+     }
+@@ -450,6 +451,7 @@
+  * 然后调系统资源管理器定位选中（Windows: explorer /select,xxx；其它平台打开目录）。
+  * url 限本站 /res 代理或云湖数据床域名，防任意下载。
+  */
++const localDownloads = new Map<string, string>()
+ async function handleLocalOpen(req: http.IncomingMessage, res: http.ServerResponse, search: string): Promise<void> {
+   if (req.method !== 'GET') { res.writeHead(405, JSON_HDR).end(JSON.stringify({ ok: false, msg: 'use GET with ?url=&name=' })); return }
+   const q0 = new URLSearchParams(search || '')
+@@ -459,28 +461,44 @@
+     const u = new URL(url, 'http://localhost')
+     const allowed = u.pathname.startsWith('/res/') || RES_HOST_RE.test(u.hostname) || u.hostname === 'localhost' || u.hostname === '127.0.0.1'
+     if (!allowed) { res.writeHead(403, JSON_HDR).end(JSON.stringify({ ok: false, msg: 'url not allowed' })); return }
+-    mkdirSync(FILE_DIR, { recursive: true })
+-    const dest = join(FILE_DIR, name)
+-    // 下载（http/https 都支持：/res 走本站代理）
+-    const target = u.hostname === 'localhost' || u.hostname === '127.0.0.1'
+-      ? `http://127.0.0.1:${PORT}${u.pathname}${u.search}`
+-      : url
+-    const data = await new Promise<Buffer>((resolve, reject) => {
+-      const mod = target.startsWith('https') ? https : http
+-      mod.get(target, { headers: u.pathname.startsWith('/res/') ? { referer: RES_REFERER } : {} }, (up) => {
+-        if ((up.statusCode || 0) >= 400) { up.resume(); reject(new Error('HTTP ' + up.statusCode)); return }
+-        const chunks: Buffer[] = []
+-        up.on('data', (c) => chunks.push(c))
+-        up.on('end', () => resolve(Buffer.concat(chunks)))
+-        up.on('error', reject)
+-      }).on('error', reject)
+-    })
+-    await writeFile(dest, data)
++    const directory = FILE_DIR, cacheKey = directory + '\n' + url
++    mkdirSync(directory, { recursive: true })
++    let dest = localDownloads.get(cacheKey) || ''
++    if (!dest || !existsSync(dest)) {
++      // 下载（http/https 都支持：/res 走本站代理）
++      const target = u.hostname === 'localhost' || u.hostname === '127.0.0.1'
++        ? `http://127.0.0.1:${PORT}${u.pathname}${u.search}`
++        : url
++      const data = await new Promise<Buffer>((resolve, reject) => {
++        const mod = target.startsWith('https') ? https : http
++        const download = mod.get(target, { headers: { referer: RES_REFERER } }, (up) => {
++          if ((up.statusCode || 0) < 200 || (up.statusCode || 0) >= 300) { up.resume(); reject(new Error('下载失败 HTTP ' + up.statusCode)); return }
++          const chunks: Buffer[] = []
++          up.on('data', (c) => chunks.push(c))
++          up.on('end', () => resolve(Buffer.concat(chunks)))
++          up.on('error', reject)
++        }).on('error', reject)
++        download.setTimeout(30000, () => download.destroy(new Error('文件下载超时')))
++      })
++      const extension = extname(name), base = name.slice(0, name.length - extension.length)
++      for (let attempt = 0; attempt < 20; attempt++) {
++        dest = join(directory, attempt ? `${base}-${Date.now()}-${attempt}${extension}` : name)
++        try { await writeFile(dest, data, { flag: 'wx' }); break }
++        catch (error: any) { if (error.code !== 'EEXIST' || attempt === 19) throw error }
++      }
++      localDownloads.set(cacheKey, dest)
++      if (localDownloads.size > 200) localDownloads.delete(localDownloads.keys().next().value)
++    }
+     // 系统资源管理器定位（⚠️ 不能加 windowsHide：会把资源管理器窗口一起藏掉）
+     if (process.platform === 'win32') {
+-      try { execFileSync('explorer.exe', ['/select,' + dest], { stdio: 'ignore' }) } catch { /* Explorer can return nonzero after opening; the file is already saved. */ }
++      await new Promise<void>((resolve, reject) => {
++        // A file-manager window may outlive this request; never wait for it or kill it on a timeout.
++        const explorer = spawn('explorer.exe', ['/select,' + dest], { detached: true, stdio: 'ignore' })
++        explorer.once('error', reject)
++        explorer.once('spawn', () => { explorer.unref(); resolve() })
++      })
+     } else {
+-      execFileSync(process.platform === 'darwin' ? 'open' : 'xdg-open', [FILE_DIR], { stdio: 'ignore' })
++      await new Promise<void>((resolve, reject) => execFile(process.platform === 'darwin' ? 'open' : 'xdg-open', [directory], { timeout: 10000 }, error => error ? reject(error) : resolve()))
+     }
+     res.writeHead(200, JSON_HDR).end(JSON.stringify({ ok: true, path: dest }))
+   } catch (e: any) {
+--- a/src/components/Composer.vue
++++ b/src/components/Composer.vue
+@@ -1,5 +1,5 @@
+ <script setup lang="ts">
+-import { mediaMetadata } from '../core/media'
++import { decodedImageUrl, imageMetadata, mediaMetadata } from '../core/media'
+ import { inject, ref, nextTick, computed, onUnmounted, toRefs, defineAsyncComponent, watch } from 'vue'
+ import QuoteBar from './QuoteBar.vue'
+ import AiInstructionDialog from './AiInstructionDialog.vue'
+@@ -218,7 +218,7 @@
+ let pendingSeq = Math.max(Date.now(), ...pending.value.map((p) => p.id))
+ 
+ function classify(f: File): Pending['kind'] {
+-  if (f.type.startsWith('image/')) return 'image'
++  if (f.type.startsWith('image/') || /\.(png|jpe?g|gif|webp|bmp|avif|heic|heif)$/i.test(f.name)) return 'image'
+   if (f.type.startsWith('video/') || /\.(mp4|webm|mov|m4v|mkv|avi)$/i.test(f.name)) return 'video'
+   if (f.type.startsWith('audio/')) return 'audio'
+   return 'file'
+@@ -298,16 +298,23 @@
+ 
+ /* ---- 发送前图片编辑（裁剪/旋转/翻转） ---- */
+ const editing = ref<Pending | null>(null)
++const applyingEdit = ref(false)
+ function openEditor(p: Pending) { if (!uploading.value && !p.sent && p.kind === 'image') editing.value = p }
+-function onEdited(f: File) {
++async function onEdited(f: File) {
+   const p = editing.value
+-  editing.value = null
+-  if (!p || uploading.value || p.sent) return
+-  p.elements = undefined
+-  if (p.url) URL.revokeObjectURL(p.url)
+-  p.file = f
+-  p.url = URL.createObjectURL(f)
+-  p.error = ''
++  if (!p || uploading.value || p.sent || applyingEdit.value) return
++  applyingEdit.value = true
++  let url = ''
++  try {
++    url = await decodedImageUrl(f)
++    if (!isCurrent() || editing.value !== p || !pending.value.includes(p)) return
++    const previous = p.url
++    p.elements = undefined; p.file = f; p.url = url; url = ''; p.error = ''
++    await nextTick()
++    editing.value = null
++    if (previous) URL.revokeObjectURL(previous)
++  } catch (e: any) { ctx.ui?.toast?.('编辑图片预览失败：' + (e?.message || String(e)), 'error') }
++  finally { if (url) URL.revokeObjectURL(url); applyingEdit.value = false }
+ }
+ 
+ const dragOver = ref(false)
+@@ -355,7 +362,7 @@
+       const onProg = progressOf(p)
+       if (p.kind === 'image') {
+         const { url } = await ctx.api.uploadAndUrl(p.file, 'image', onProg)
+-        p.elements = [h.image(url)]
++        p.elements = [h.image(url, await imageMetadata(p.file))]
+       } else if (p.kind === 'video') {
+         const { key } = await ctx.api.uploadFile(p.file, 'video', onProg)
+         const meta = await mediaMetadata(p.file, 'video')
+@@ -623,7 +630,7 @@
+       </div>
+     </div>
+ 
+-    <ImageEditor v-if="editing" :file="editing.file" :url="editing.url"
++    <ImageEditor v-if="editing" :file="editing.file" :url="editing.url" :saving="applyingEdit"
+                  @done="onEdited" @close="editing = null" />
+   </div>
+ </template>
+--- a/src/components/ConversationItem.vue
++++ b/src/components/ConversationItem.vue
+@@ -13,7 +13,7 @@
+ </script>
+ 
+ <template>
+-  <li :class="{ active: chat.state.current?.id === c.id, 'has-unread': !!c.unread }"
++  <li :class="{ active: chat.state.current?.id === c.id && chat.state.current?.type === c.type, 'has-unread': !!c.unread, muted: chat.isMuted(c.id) }"
+       @click="emit('open', c)" @contextmenu.prevent="emit('menu', c, $event)">
+     <img :src="c.avatar ? resUrl(c.avatar) : fallbackAvatar(c.name)" alt=""
+          @error="(e: any) => (e.target.src = fallbackAvatar(c.name))" />
+--- a/src/components/EditDialog.vue
++++ b/src/components/EditDialog.vue
+@@ -29,9 +29,10 @@
+   const v = text.value.trim()
+   if (!v || busy.value) return
+   busy.value = true
++  const id = ma.value.state.editingId
+   try {
+-    await chat.value.edit(ma.value.state.editingId, v)
+-    close()
++    await chat.value.edit(id, v)
++    if (ma.value.state.editingId === id) close()
+   } catch (e: any) {
+     ctx.ui?.toast?.('编辑失败：' + e.message, 'error')
+   } finally { busy.value = false }
+--- a/src/components/Login.vue
++++ b/src/components/Login.vue
+@@ -1,7 +1,7 @@
+ <script setup lang="ts">
+ /**
+  * 登录页（邮箱登录 / Token 登录）
+- * 成功后会写 localStorage（yh.token），由 auth 插件负责持久化与自动恢复。
++ * 凭据由 auth/storage 服务持久化；Windows 使用系统安全存储。
+  * 页面上显示的 API 基址来自 api 服务，方便换部署环境时确认走的是哪条链路。
+  */
+ import { inject, ref } from 'vue'
+@@ -65,7 +65,7 @@
+ </template>
+ 
+ <style scoped>
+-.login-saved { margin-top: 20px; }
++.login-saved { margin-top: 20px; max-height: min(38vh, 320px); overflow-y: auto; scrollbar-gutter: stable; padding-right: 4px; }
+ .login-card.embedded { width: 100%; max-width: 520px; padding: 20px; background: var(--card); box-shadow: none; margin: 0; }
+ .embedded h1 { font-size: 20px; margin-top: 0; }
+ </style>
+--- a/src/components/MessageElements.vue
++++ b/src/components/MessageElements.vue
+@@ -1,6 +1,6 @@
+ <script setup lang="ts">
+ import { vResourceMedia } from '../core/resource-media'
+-import { downloadMedia } from '../core/media'
++import { decodedImageUrl, downloadMedia } from '../core/media'
+ /**
+  * Satori 元素树渲染器（消息正文的统一出口）。
+  *
+@@ -34,6 +34,23 @@
+ 
+ const ctx = inject<any>('ctx')
+ const body = ref<HTMLElement | null>(null)
++const failedImages = ref(new Set<string>())
++const retryingImages = ref(new Set<string>())
++function imageFailed(src: string, event: Event) {
++  // Transparent offscreen placeholders are not upstream image failures.
++  if ((event.target as HTMLImageElement).dataset.mediaState === 'source') failedImages.value.add(src)
++}
++async function retryImage(src: string) {
++  if (retryingImages.value.has(src)) return
++  retryingImages.value.add(src)
++  try {
++    const response = await fetch(resUrl(src), { cache: 'reload' })
++    if (!response.ok) throw new Error('HTTP ' + response.status)
++    await response.blob()
++    failedImages.value.delete(src)
++  } catch (e: any) { ctx.ui?.toast?.('图片重试失败：' + (e?.message || String(e)), 'error') }
++  finally { retryingImages.value.delete(src) }
++}
+ 
+ /**
+  * 自定义气泡渲染器（消息气泡插件化的落点）
+@@ -218,16 +235,20 @@
+   if (savingEdited.value) return
+   savingEdited.value = true
+   const target = viewer.value
++  let nextPreview = ''
+   try {
++    nextPreview = await decodedImageUrl(file)
+     const path = await saveImageCopy(file, ctx.api?.token || '')
+     if (viewer.value !== target) return
++    const previousPreview = editedPreview
++    editedPreview = nextPreview; nextPreview = ''
++    viewer.value = { kind: 'image', url: editedPreview }; zoom.value = 1; pan.value = { x: 0, y: 0 }
++    await nextTick()
+     editingImage.value = null
+-    if (editedPreview) URL.revokeObjectURL(editedPreview)
+-    editedPreview = URL.createObjectURL(file)
+-    viewer.value = { kind: 'image', url: editedPreview }; zoom.value = 1; pan.value = { x: 0, y: 0 }
++    if (previousPreview) URL.revokeObjectURL(previousPreview)
+     ctx.ui?.toast?.(path ? '图片副本已保存：' + path : '已导出图片副本', 'success', 5000)
+   } catch (e: any) { if (e.name !== 'AbortError') ctx.ui?.toast?.('图片保存失败：' + e.message, 'error') }
+-  finally { savingEdited.value = false }
++  finally { if (nextPreview) URL.revokeObjectURL(nextPreview); savingEdited.value = false }
+ }
+ function viewerKey(e: KeyboardEvent) { if (e.key === 'Escape' && !editingImage.value && !ctx.lock?.isLocked) closeViewer() }
+ watch(viewer, value => { window.removeEventListener('keydown', viewerKey); if (value) window.addEventListener('keydown', viewerKey) })
+@@ -255,12 +276,8 @@
+ function onWheel(e: WheelEvent) {
+   if (!viewer.value || (e.target as HTMLElement)?.closest('.viewer-bar')) return
+   e.preventDefault()
+-  if (e.ctrlKey || e.metaKey || e.deltaMode !== 0) {
+-    setMediaZoom(zoom.value * Math.exp(-e.deltaY * (e.deltaMode === 1 ? .08 : .01)), e.clientX, e.clientY)
+-  } else {
+-    // Precision touchpads send pixel deltas on both axes. Preserve them instead of stepping the zoom.
+-    pan.value = { x: pan.value.x - e.deltaX, y: pan.value.y - e.deltaY }
+-  }
++  // Mouse wheels commonly report pixel deltas too; plain wheel must zoom as requested.
++  setMediaZoom(zoom.value * Math.exp(-e.deltaY * (e.deltaMode === 1 ? .08 : e.deltaMode === 2 ? .8 : .01)), e.clientX, e.clientY)
+ }
+ /** 拖拽平移（放大后看局部）。
+  *  ⚠️ 拖完松手的 click 会命中 mask/img 的关闭逻辑——用户报「按住图片滑动松鼠标把灯箱关了」。
+@@ -417,9 +434,11 @@
+ 
+       <!-- 媒体 -->
+       <!-- Shared viewport observation loads nearby media explicitly and releases offscreen decoders. -->
+-      <img v-else-if="el.type === 'img'" class="media" v-resource-media="{ src: resUrl(el.attrs.src), animated: /(?:\.gif|\.webp)(?:[?#]|$)|^data:image\/(?:gif|webp)/i.test(el.attrs.src || ''), width: Number(el.attrs.width), height: Number(el.attrs.height) }" decoding="async"
+-           :style="ratioOf(el)" alt="[图片]" @click="openRaw(el.attrs.src)"
+-           @error="(e: any) => (e.target.style.display = 'none')" />
++      <template v-else-if="el.type === 'img'">
++        <img v-if="!failedImages.has(el.attrs.src)" class="media" v-resource-media="{ src: resUrl(el.attrs.src), animated: /(?:\.gif|\.webp)(?:[?#]|$)|^data:image\/(?:gif|webp)/i.test(el.attrs.src || ''), width: Number(el.attrs.width), height: Number(el.attrs.height) }" decoding="async"
++             :style="ratioOf(el)" alt="[图片]" @click="openRaw(el.attrs.src)" @error="imageFailed(el.attrs.src, $event)" />
++        <button v-else class="media-retry ghost" :disabled="retryingImages.has(el.attrs.src)" @click.stop="retryImage(el.attrs.src)"><Icon name="image" :size="22" /><span>{{ retryingImages.has(el.attrs.src) ? '正在重试…' : '图片加载失败 · 点击重试' }}</span></button>
++      </template>
+       <img v-else-if="el.type === 'sticker'" class="sticker" v-resource-media="{ src: resUrl(el.attrs.src), animated: true, width: 96, height: 96 }" decoding="async" alt="[表情]"
+            title="点击查看所属合集 · Ctrl + 左键查看图片" style="cursor:pointer" @click.stop="openStickerPack(el, $event)" />
+       <div v-else-if="el.type === 'video'" class="video-wrap">
+@@ -575,6 +594,7 @@
+ .rich :deep(img) { max-width: 100%; border-radius: 8px; }
+ .rich :deep(blockquote) { padding-left: 8px; border-left: 3px solid var(--line); opacity: .85; }
+ .media { max-width: min(320px, 100%); max-height: 460px; border-radius: 10px; display: block; object-fit: contain; cursor: zoom-in; background: var(--card2); }
++.media-retry { display: flex; align-items: center; gap: 10px; min-height: 72px; max-width: 100%; padding: 16px; white-space: normal; text-align: left; border: 1px solid var(--line); border-radius: 10px; }
+ /* 两个 HTML 尺寸属性不能各自被 max-width/max-height 截断成固定黑框。 */
+ img.media { width: min(320px, 100%, var(--media-natural-width, 320px), var(--media-fit-width, 320px)); height: auto; max-height: none; }
+ /* 文件气泡旁的保存按钮 */
+--- a/src/components/SavedAccounts.vue
++++ b/src/components/SavedAccounts.vue
+@@ -7,7 +7,12 @@
+ const emit = defineEmits<{ (e: 'reauth', email: string): void }>()
+ const pending = ref(''), error = ref('')
+ const accounts = computed(() => auth.state.savedAccounts || [])
+-onMounted(() => { auth.loadAccounts?.()?.catch?.((e: any) => { error.value = '读取本地账号失败：' + (e?.message || String(e)) }) })
++async function reload(refresh = false) {
++  error.value = ''
++  try { await auth.loadAccounts?.(refresh) }
++  catch (e: any) { error.value = '读取本地账号失败：' + (e?.message || String(e)) }
++}
++onMounted(() => { void reload() })
+ async function choose(account: any) {
+   if (pending.value) return
+   if (account.needsLogin) { emit('reauth', account.email || ''); return }
+@@ -25,8 +30,9 @@
+ 
+ <template>
+   <div class="saved-accounts" aria-label="本地已保存账号">
++    <div class="saved-heading"><strong>已保存账号<span v-if="accounts.length">（{{ accounts.length }}）</span></strong><button class="ghost small" :disabled="auth.state.accountsLoading || !!pending" @click="reload(true)"><Icon name="refresh" :size="14" /> 刷新账号</button></div>
+     <div v-if="auth.state.accountsLoading" class="dim small" role="status">正在识别本地账号…</div>
+-    <p v-else-if="!accounts.length" class="dim small">暂无其他已保存账号，登录后会自动加入此列表。</p>
++    <p v-else-if="!error && !accounts.length" class="dim small">暂无已保存账号，登录后会自动加入此列表。</p>
+     <div v-for="account in accounts" :key="account.id" class="saved-account" :class="{ current: String(auth.state.user?.id) === account.id }">
+       <img :src="account.avatar ? resUrl(account.avatar) : fallbackAvatar(account.name)" alt="" />
+       <div class="saved-account-info"><strong>{{ account.name }}</strong><span>ID {{ account.id }}<template v-if="account.email"> · {{ account.email }}</template></span></div>
+@@ -37,12 +43,13 @@
+       </template>
+     </div>
+     <p v-if="error" class="err small" role="alert">{{ error }}</p>
+-    <p v-if="accounts.length" class="dim small saved-hint">只记住登录凭据，不保存邮箱密码。切换账号会重新连接，聊天缓存按账号分开。</p>
++    <p v-if="accounts.length" class="dim small saved-hint">退出登录会保留已保存账号；点击移除可删除本机凭据。不保存邮箱密码，聊天缓存按账号分开。</p>
+   </div>
+ </template>
+ 
+ <style scoped>
+ .saved-accounts { display: grid; gap: 8px; }
++.saved-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 13px; }
+ .saved-account { display: flex; align-items: center; gap: 12px; padding: 12px; border: 1px solid var(--line); border-radius: 14px; transition: background .18s, border-color .18s; }
+ .saved-account:hover, .saved-account.current { background: var(--card2); }
+ .saved-account img { width: 40px; height: 40px; border-radius: 50%; object-fit: cover; }
+--- a/src/components/Sidebar.vue
++++ b/src/components/Sidebar.vue
+@@ -60,7 +60,7 @@
+ const pinTab = ref<'unpinned' | 'pinned'>('unpinned')
+ const searching = computed(() => !!chat.state.keyword.trim())
+ const sections = computed(() => chat.sections(list.value, pinTab.value))
+-const visibleCount = computed(() => sections.value.pinned.length + sections.value.ungrouped.length +
++const visibleCount = computed(() => sections.value.pinned.length + sections.value.active.length + sections.value.ungrouped.length +
+   sections.value.groups.reduce((sum: number, g: any) => sum + g.items.length, 0))
+ const pinnedCount = computed(() => list.value.filter((c: any) => chat.isPinned(c.id)).length)
+ 
+@@ -237,6 +237,8 @@
+     <ul id="conversation-list" class="convs">
+       <ConversationItem v-for="c in sections.pinned" :key="'pin:' + c.type + ':' + c.id" :c="c"
+                         @open="open" @menu="openMenu" />
++      <ConversationItem v-for="c in sections.active" :key="'active:' + c.type + ':' + c.id" :c="c"
++                        @open="open" @menu="openMenu" />
+       <template v-for="g in sections.groups" :key="g.id">
+         <li class="grp-head" @click="chat.toggleCollapse(g.id)">
+           <span class="tri">{{ chat.isCollapsed(g.id) ? '▸' : '▾' }}</span>{{ g.name }}
+--- a/src/core/media.ts
++++ b/src/core/media.ts
+@@ -1,4 +1,22 @@
+ import { mediaUrl } from './res'
++
++/** Decode only for dimensions; release the local URL on every completion path. */
++export function imageMetadata(file: File): Promise<{ width: number; height: number }> {
++  if (typeof Image !== 'function') return Promise.resolve({ width: 0, height: 0 })
++  return new Promise(resolve => {
++    const url = URL.createObjectURL(file), image = new Image()
++    let finished = false
++    const done = () => {
++      if (finished) return
++      finished = true; clearTimeout(timer)
++      const width = image.naturalWidth || 0, height = image.naturalHeight || 0
++      image.onload = image.onerror = null; image.removeAttribute('src'); URL.revokeObjectURL(url)
++      resolve({ width, height })
++    }
++    const timer = setTimeout(done, 5000)
++    image.onload = image.onerror = done; image.src = url
++  })
++}
+ 
+ export function mediaMetadata(file: File, kind: 'audio' | 'video'): Promise<{ time: number; width?: number; height?: number }> {
+   return new Promise(resolve => {
+@@ -24,13 +42,34 @@
+   })
+ }
+ 
+-export async function downloadMedia(el: any) {
+-  const kind = el.type === 'video' ? 'video' : el.type === 'audio' ? 'audio' : 'file'
++/** Warm the decoded bitmap before closing the editor or releasing the old preview. */
++export async function decodedImageUrl(file: File): Promise<string> {
++  const url = URL.createObjectURL(file), image = new Image()
++  try { image.src = url; await image.decode(); return url }
++  catch (error) { URL.revokeObjectURL(url); throw error }
++  finally { image.removeAttribute('src') }
++}
++
++function mediaDownload(el: any) {
++  const kind = el.type === 'video' ? 'video' : el.type === 'audio' ? 'audio' : el.type === 'img' || el.type === 'sticker' ? 'image' : 'file'
+   const url = mediaUrl(el.attrs.src, kind)
+   if (!url) throw new Error('消息没有可下载的地址')
+   let basename = String(el.attrs.name || url.split('?')[0].split('/').pop() || kind)
+   try { basename = decodeURIComponent(basename) } catch { /* malformed remote filename */ }
+   const name = basename.replace(/[\\/:*?"<>|]/g, '_')
++  return { url, name }
++}
++
++/** Always use the local service: a browser save picker cannot reveal a file in Explorer. */
++export async function revealMedia(el: any) {
++  const { url, name } = mediaDownload(el)
++  const response = await fetch('/local-open?url=' + encodeURIComponent(url) + '&name=' + encodeURIComponent(name))
++  const result = await response.json().catch(() => null)
++  if (!response.ok || !result?.ok) throw new Error(result?.msg || '打开文件位置失败 HTTP ' + response.status)
++}
++
++export async function downloadMedia(el: any) {
++  const { url, name } = mediaDownload(el)
+   const w = window as any
+   if (typeof w.showSaveFilePicker === 'function') {
+     // The picker requires the original click gesture; fetch must happen after it opens.
+@@ -42,7 +81,5 @@
+     catch (error) { await writer.abort().catch(() => {}); throw error }
+     return
+   }
+-  const response = await fetch('/local-open?url=' + encodeURIComponent(url) + '&name=' + encodeURIComponent(name))
+-  const result = await response.json().catch(() => null)
+-  if (!response.ok || !result?.ok) throw new Error(result?.msg || '下载失败 HTTP ' + response.status)
++  await revealMedia(el)
+ }
+--- a/src/plugins/api.ts
++++ b/src/plugins/api.ts
+@@ -99,7 +99,7 @@
+           const text = new TextDecoder().decode(buf).trimStart()
+           const isJson = /json/i.test(res.headers.get('content-type') || '') || text.startsWith('{')
+           const json = isJson ? JSON.parse(text) : undefined
+-          if (!res.ok) throw new Error(json?.msg || json?.message || `请求失败（HTTP ${res.status}）`)
++          if (!res.ok) throw Object.assign(new Error(json?.msg || json?.message || `请求失败（HTTP ${res.status}）`), { status: res.status })
+           if (json) return { json, http: res.status }
+           if (text.startsWith('<')) throw new Error('服务器未返回有效的 API 数据')
+           return { pb: pb.decode(buf), raw: buf, http: res.status }
+@@ -916,6 +916,7 @@
+         // 官方上传大小限制：用户定死 40MB 上限（所有类型统一，超出直接拒绝不浪费流量）
+         const LIMITS: Record<string, number> = { image: 40 * 1024 * 1024, video: 40 * 1024 * 1024, audio: 40 * 1024 * 1024, file: 40 * 1024 * 1024, sticker: 40 * 1024 * 1024 }
+         const lim = LIMITS[kind] || 40 * 1024 * 1024
++        if (!file.size) throw new Error('文件内容为空，请重新选择文件')
+         if (file.size > lim) {
+           throw new Error(`文件超过 40MB 上传限制（当前 ${(file.size / 1024 / 1024).toFixed(1)}MB）`)
+         }
+@@ -982,7 +983,7 @@
+           const text = result.text
+           let json: any = {}
+           try { json = JSON.parse(text) } catch { /* 非 JSON */ }
+-          if (result.status >= 200 && result.status < 300 && json.key) {
++          if (result.status >= 200 && result.status < 300 && typeof json.key === 'string' && json.key.trim()) {
+             try { localStorage.setItem(cacheKey, host) } catch { /* successful upload remains successful */ }
+             return { key: json.key as string, host }
+           }
+@@ -1005,7 +1006,7 @@
+           : kind === 'audio' ? (routes.audioUrl || 'https://chat-audio1.jwznb.com/')
+             : kind === 'video' ? (routes.videoUrl || 'https://chat-video1.jwznb.com/')
+               : (routes.fileUrl || 'https://chat-file.jwznb.com/')
+-        return { key, url: base + key }
++        return { key, url: new URL(key.replace(/^\/+/, ''), base.replace(/\/*$/, '/')).href }
+       },
+ 
+       /* ================= 群设置 ================= */
+--- a/src/plugins/auth.ts
++++ b/src/plugins/auth.ts
+@@ -15,25 +15,29 @@
+     let operations = Promise.resolve<any>(undefined)
+     let restoration: Promise<any> | undefined
+     const newDevice = () => 'web-' + crypto.randomUUID()
+-    const invalidCredential = (error: any) => /token|credential|expired|unauthori[sz]ed|未登录|登录.{0,8}(失效|过期)|401|403/i.test(error?.message || '')
++    // A permission/ACL failure (403) does not establish that saved credentials expired.
++    const invalidCredential = (error: any) => error?.status === 401 || /(?:token|credential).{0,20}(?:invalid|expired)|(?:invalid|expired).{0,20}(?:token|credential)|unauthori[sz]ed|未登录|(?:登录|凭证|令牌|token).{0,8}(?:失效|过期|无效)|HTTP\s*401/i.test(error?.message || String(error || ''))
+     const publicUser = (u: any) => ({ id: String(u.id), name: u.name || String(u.id), avatar: u.avatar || '', email: u.email || '' })
+     function publish() {
+       state.savedAccounts = accounts.map(a => ({ ...a.user, id: a.id, savedAt: a.savedAt, needsLogin: !!a.needsLogin }))
+         .sort((a, b) => b.savedAt - a.savedAt)
+     }
+-    async function loadAccounts() {
++    async function loadAccounts(refresh = false) {
++      if (refresh && !state.accountsLoading) loaded = undefined
+       if (!loaded) loaded = (async () => {
+         state.accountsLoading = true
+         try {
+-          const data = await storage.load('accounts')
++          const read = (name: string) => refresh && storage.refresh ? storage.refresh(name) : storage.load(name)
++          const data = await read('accounts')
+           accounts = Array.isArray(data.items) ? [...new Map<string, any>(data.items.filter(a => a?.id && typeof a.token === 'string' && a.token)
+             .map(a => [String(a.id), { id: String(a.id), token: a.token, device: a.device || '', user: publicUser({ ...a.user, id: a.id }), savedAt: Number(a.savedAt) || 0, needsLogin: !!a.needsLogin }])).values()] : []
+-          const session = await storage.load('session')
++          const session = await read('session')
+           if (session.token && session.user?.id && !accounts.some(a => a.id === String(session.user.id))) {
+             accounts.push({ id: String(session.user.id), token: session.token, device: session.device,
+               user: publicUser(session.user), savedAt: 0 })
+           }
+           publish()
++          state.error = ''
+         } finally { state.accountsLoading = false }
+       })().catch((error: any) => { loaded = undefined; state.error = error?.message || String(error); throw error })
+       return loaded
+@@ -121,13 +125,12 @@
+         if (busy) return
+         busy = true
+         try {
+-          const id = String(state.user?.id || '')
+-          const dev = deviceId
+-          if (dev) void api.logoutDevice?.(dev)?.catch(() => {})
++          // End the local session; saved accounts are removed explicitly in the account list.
++          // Revoking the upstream device here would invalidate the remembered login too.
++          await loadAccounts()
+           state.status = 'guest'; state.user = null; api.setToken('')
+           ctx.emit('auth/logout')
+-          await loadAccounts()
+-          accounts = accounts.filter(a => a.id !== id); await persistAccounts()
++          publish()
+           for (const name of ['session', 'cache', 'recall', 'pin', 'lock', 'relay']) await storage.remove(name).catch(() => {})
+           storage.setAccount?.('')
+           deviceId = ''
+--- a/src/plugins/chat.ts
++++ b/src/plugins/chat.ts
+@@ -303,12 +303,14 @@
+     /** 未读优先，同一阅读状态内置顶优先，再按时间倒序。 */
+     function sortConvs(list: any[]) {
+       return [...list].sort((a: any, b: any) => {
++        const pa = isPinned(a.id) ? 1 : 0
++        const pb = isPinned(b.id) ? 1 : 0
++        if (pa !== pb) return pb - pa
++        const current = (c: any) => state.current?.id === c.id && state.current?.type === c.type ? 1 : 0
++        if (!pa && current(a) !== current(b)) return current(b) - current(a)
+         const ua = a.unread > 0 || convGroups.marked.includes(a.id) ? 1 : 0
+         const ub = b.unread > 0 || convGroups.marked.includes(b.id) ? 1 : 0
+         if (ua !== ub) return ub - ua
+-        const pa = isPinned(a.id) ? 1 : 0
+-        const pb = isPinned(b.id) ? 1 : 0
+-        if (pa !== pb) return pb - pa
+         return (b.ts || 0) - (a.ts || 0)
+       })
+     }
+@@ -362,8 +364,9 @@
+       /** 侧栏渲染用：分组 + 未分组 */
+       sections(list: any[], tab: 'unpinned' | 'pinned' = 'unpinned') {
+         // 搜索按相关度呈现全部命中，不被分组、折叠或当前置顶 Tab 隐藏。
+-        if (state.keyword.trim()) return { groups: [], ungrouped: list, pinned: [] }
++        if (state.keyword.trim()) return { groups: [], ungrouped: list, pinned: [], active: [] }
+         const pinned: any[] = []
++        const active: any[] = []
+         const byGroup: Record<string, any[]> = {}
+         const rest: any[] = []
+         for (const c of list) {
+@@ -374,6 +377,10 @@
+             pinned.push(c)
+             continue
+           }
++          if (!pinnedConversation && state.current?.id === c.id && state.current?.type === c.type) {
++            active.push(c)
++            continue
++          }
+           const g = convGroups.assign[c.id]
+           if (g && convGroups.groups.some((x) => x.id === g)) (byGroup[g] = byGroup[g] || []).push(c)
+           else rest.push(c)
+@@ -382,6 +389,7 @@
+           groups: convGroups.groups.map((g) => ({ ...g, items: byGroup[g.id] || [] })),
+           ungrouped: rest,
+           pinned,
++          active,
+         }
+       },
+     }
+@@ -983,11 +991,19 @@
+      */
+     async function edit(msgId: string, text: string) {
+       const cur = state.current
++      const version = viewVersion
+       if (!cur || !text.trim()) return
+       const m = state.messages.find((x: any) => x.id === msgId)
+       const ct = m?.type === 3 ? 3 : m?.type === 8 ? 8 : 1
+       await api.editMessage(cur.id, cur.type, msgId, ct, { text: text.trim() })
+-      if (m) { m.content = { ...(m.content || {}), text: text.trim() }; m.edited = true; m.elements = null }
++      if (inView(cur, version)) {
++        const index = state.messages.findIndex((x: any) => x.id === msgId)
++        if (index >= 0) {
++          const current = state.messages[index]
++          liveRevisions.set(`${cur.type}:${cur.id}:${msgId}`, ++liveVersion)
++          state.messages[index] = mergeMessage({ ...current, content: { ...(current.content || {}), text: text.trim() }, edited: true, elements: null }, cur)
++        }
++      }
+       ctx.emit('ui/toast', { text: '已修改并同步', type: 'success' })
+     }
+ 
+@@ -1054,7 +1070,8 @@
+         type: msg.type || existing?.type,
+         content,
+         elements,
+-        ts: session.timestamp || existing?.ts,
++        // An edit notification's timestamp is not a new send time; preserve the row's position.
++        ts: kind === 'updated' && existing?.ts ? existing.ts : session.timestamp || existing?.ts,
+         seq: msg.seq || existing?.seq,
+         right: mine,
+         recalled: kind === 'recalled' || !!session.recalled || !!msg.recalled || !!msg.recallTs,
+--- a/src/plugins/message-actions.ts
++++ b/src/plugins/message-actions.ts
+@@ -7,7 +7,7 @@
+  *   chat.action(id, { action })    实现动作
+  * 卸载本插件，所有菜单条目与动作会一起消失（副作用绑定在调用方上下文）。
+  */
+-import { downloadMedia } from '../core/media'
++import { downloadMedia, revealMedia } from '../core/media'
+ import { reactive } from 'vue'
+ import type { Context } from '../core/context'
+ import ForwardDialog from '../components/ForwardDialog.vue'
+@@ -84,7 +84,7 @@
+       },
+       { id: 'msg.select', label: '多选', icon: 'check', order: 40 },
+       {
+-        // 非文本消息（文件/视频/音频）：去群文件面板定位高亮（「在文件夹中打开」）
++        // Reveal the attachment using the system file manager.
+         id: 'msg.locate', label: '在文件夹中打开', icon: 'folder', order: 45,
+         when: (p: any) => !!p?.msg && ['file', 'video', 'audio'].some((t) =>
+           (p.msg.elements || []).some((e: any) => e.type === t)),
+@@ -115,7 +115,7 @@
+       action: ({ msg }: any) => { state.editingId = msg.id },
+     }, ctx)
+ 
+-    /** 在文件夹中打开：非文本消息 → 群文件面板定位高亮 */
++    /** Save-as and reveal are distinct operations. */
+     chat.menu('message', [{ id: 'msg.save', label: '下载文件 / 视频', icon: 'download', order: 65,
+       when: (p: any) => !!p?.msg?.elements?.some((e: any) => ['file', 'video', 'audio'].includes(e.type)) }], ctx)
+     chat.action('msg.save', { action: async ({ msg }: any) => {
+@@ -125,14 +125,11 @@
+     } }, ctx)
+ 
+     chat.action('msg.locate', {
+-      action: ({ msg }: any) => {
++      action: async ({ msg }: any) => {
+         const el = (msg.elements || []).find((e: any) => ['file', 'video', 'audio'].includes(e.type))
+         if (!el) return
+-        const name = el.attrs?.name || String(el.attrs?.src || '').split('/').pop() || ''
+-        const g = (ctx as any).group
+-        if (!g) return ui.toast('群文件面板不可用', 'warn')
+-        g.setDockTab('disk')
+-        g.locateFile?.(name)
++        try { await revealMedia(el) }
++        catch (e: any) { ui.toast('打开文件位置失败：' + (e?.message || String(e)), 'error') }
+       },
+     }, ctx)
+ 
+@@ -146,7 +143,7 @@
+           ui.toast('已复制到剪贴板', 'success')
+         } catch {
+           // 非安全上下文没有 clipboard API，退化成 prompt
+-          await navigator.clipboard.writeText(text).then(() => ui.toast('已复制到剪贴板', 'success')).catch(() => ui.toast('复制失败', 'error'))
++          ui.toast('复制失败，请检查系统剪贴板权限', 'error')
+         }
+       },
+     }, ctx)
+--- a/src/plugins/storage.ts
++++ b/src/plugins/storage.ts
+@@ -187,6 +187,12 @@
+       await removeRaw(name)
+     }
+     ctx.set('storage', { load, save, remove, probe,
++      async refresh(name: string) {
++        await rawWrites.get(name)?.catch(() => {})
++        await loads.get(name)?.catch(() => {})
++        mem.delete(name)
++        return load(name)
++      },
+       setAccount(id: string, migrate = false) { accountId = String(id || ''); adoptLegacy = migrate },
+     })
+   },
+--- a/src/plugins/userbot.ts
++++ b/src/plugins/userbot.ts
+@@ -197,19 +197,20 @@
+       const { k, setting, persona, bot } = resolve(channel)
+       return composePrompt(state.config, { ...setting, workMode: managesGroup(bot, setting) ? 'management' : 'conversation' }, persona, k)
+     }
+-    async function history(channel: any, count: number, incoming: any[]): Promise<MemoryTurn[]> {
++    async function history(channel: any, count: number, incoming: any[], management = false): Promise<MemoryTurn[]> {
+       const selected = chat.state.current?.id === channel.id && chat.state.current?.type === channel.type
+       let messages: any[] = selected ? [...chat.state.messages] : []
+       if (messages.length < Math.min(5, count)) messages = await api.messages(channel.id, channel.type, Math.max(1, Math.min(100, count)))
+       const ids = new Set(messages.filter(m => m.content?.text).map(m => String(m.id)))
+       for (const s of incoming) if (!ids.has(String(s.id))) {
+         messages = messages.filter(m => String(m.id) !== String(s.id))
+-        messages.push({ id: s.id, senderId: s.user?.id, sender: s.user?.name, content: { text: s.content }, ts: s.timestamp, type: s.raw?.type || 1 }); ids.add(String(s.id))
++        messages.push({ ...s.raw, id: s.id, senderId: s.user?.id, sender: s.user?.name, content: { text: s.content }, ts: s.timestamp, type: s.raw?.type || 1 }); ids.add(String(s.id))
+       }
+       messages.sort((a, b) => messageTime(a.ts) - messageTime(b.ts))
+-      return messages.filter(m => !m.recalled && !m.recallTs && (m.type === undefined || [1, 3, 8].includes(Number(m.type)))).map(m => {
+-        const text = String(m.content?.text ?? (typeof m.content === 'string' ? m.content : '')).trim()
+-        return { id: String(m.id || ''), senderId: String(m.senderId || ''), ts: messageTime(m.ts), role: String(m.senderId) === account() || m.right ? 'assistant' : 'user', content: text && channel.type === 2 && String(m.senderId) !== account() ? `${m.sender || m.senderId || '群成员'}：${text}` : text } as MemoryTurn
++      return messages.filter(m => !m.recalled && !m.recallTs && (m.type === undefined || (management ? [1, 2, 3, 4, 7, 8, 10, 11] : [1, 3, 8]).includes(Number(m.type)))).map(m => {
++        const labels = { 2: '图片', 4: '文件', 7: '表情', 10: '视频', 11: '语音' }
++        const text = String(m.content?.text ?? (typeof m.content === 'string' ? m.content : '')).trim() || (management && labels[m.type] ? `[${labels[m.type]}消息]` : '')
++        return { id: String(m.id || ''), seq: Number(m.seq) || 0, senderId: String(m.senderId || ''), ts: messageTime(m.ts), role: String(m.senderId) === account() || m.right ? 'assistant' : 'user', content: text && channel.type === 2 && String(m.senderId) !== account() ? `${m.sender || m.senderId || '群成员'}：${text}` : text } as MemoryTurn
+       }).filter(m => m.content.trim())
+     }
+     function valid(version: number, owner: string, controller: AbortController) { return !disposed && !controller.signal.aborted && version === epoch && owner === account() && state.ready }
+@@ -234,6 +235,12 @@
+       const controller = new AbortController(); controllers.set(k, controller); activeBatches.set(k, incoming); state.busy[k] = true; state.started[k] = Date.now(); delete state.queued[k]
+       if (state.context[k]) state.context[k].stage = '正在读取上下文'
+       const stillValid = () => valid(version, owner, controller)
++      let historyHints: Array<{ id: string; seq?: number }> = []
++      const messageHints = () => {
++        const selected = String(chat.state.current?.id) === String(channel.id) && Number(chat.state.current?.type) === Number(channel.type)
++        return [...(selected ? chat.state.messages : []), ...historyHints, ...incoming.filter(s => String(s.channel?.id) === String(channel.id) && Number(s.channel?.type) === Number(channel.type)).map(s => ({ ...s.raw, id: s.id }))]
++          .filter(m => m?.id).map(m => ({ id: String(m.id), seq: Number(m.seq) || 0 }))
++      }
+       try {
+         let management: Awaited<ReturnType<typeof loadActionScope>> = null
+         let result: { text: string; usage?: AiUsage }, reply: ReturnType<typeof parseActionReply>
+@@ -254,7 +261,8 @@
+           const limit = Math.round(clampNumber(snapshot.setting.tokenLimit, 4000, 128, 100000))
+           const count = Math.round(clampNumber(snapshot.setting.contextCount, 20, 1, 100))
+           const memId = memoryKey(k, snapshot.persona?.id || '')
+-          let turns = await history(channel, count, incoming)
++          let turns = await history(channel, count, incoming, snapshot.setting.workMode === 'management')
++          historyHints = turns.map(m => ({ id: m.id, seq: m.seq }))
+           if (snapshot.setting.memoryEnabled) turns = afterMemory(turns, frozenConfig.memoryCursors[memId])
+           turns = turns.slice(-count)
+           let managementSuffix = ''
+@@ -335,6 +343,7 @@
+           state.context[k].stage = '正在核对群管理操作'
+           const planningScope = await loadActionScope(api, channel, owner, snapshot.bot.management, stillValid)
+           if (!planningScope) throw new ActionError('当前账号已失去群管理权限')
++          planningScope.messageHints = messageHints()
+           const previews: ActionPreview[] = []
+           for (const action of reply.actions) {
+             previews.push(await previewAction(api, planningScope, action))
+@@ -359,6 +368,7 @@
+                 const current = resolve(channel)
+                 const scope = await loadActionScope(api, channel, owner, current.bot.management, stillValid)
+                 if (!scope) throw new ActionError('当前账号已失去群管理权限')
++                scope.messageHints = messageHints()
+                 const fresh = await previewAction(api, scope, preview.action)
+                 if (!stillValid()) throw new DOMException('任务已取消', 'AbortError')
+                 if (fresh.before !== preview.before) throw new ActionError('目标或原设置已变化，请重新生成并审核')
+--- a/src/satori/element.ts
++++ b/src/satori/element.ts
+@@ -158,7 +158,7 @@
+   // 单元素直通（保留平台原生消息类型）
+   if (only) {
+     switch (only.type) {
+-      case 'img': return { contentType: ContentType.image, content: { image_url: bareKey(only.attrs.src) } }
++      case 'img': return { contentType: ContentType.image, content: { image_url: bareKey(only.attrs.src), ...(Number(only.attrs.width) > 0 && Number(only.attrs.height) > 0 ? { width: only.attrs.width, height: only.attrs.height } : {}) } }
+       case 'sticker': return {
+         contentType: ContentType.sticker,
+         // 官方手机端真实消息对照（2026-10-24 dump）：f9 image=相对 key、f3 image_url=完整 URL、
+--- a/src/styles.css
++++ b/src/styles.css
+@@ -342,9 +342,13 @@
+   font-size: 10.5px; line-height: 16px; min-width: 16px; text-align: center;
+   padding: 0 5px; font-weight: 600;
+ }
+-.convs li.active .badge { background: var(--acc); }
+-.convs .badge.muted-unread { outline: 1px solid color-mix(in srgb, var(--fg2) 30%, transparent); }
++.convs .badge, .convs li.active .badge { background: #d92d45; color: #fff; font-weight: 750; box-shadow: 0 0 0 2px rgb(217 45 69 / .14); }
++.convs li .badge.muted-unread { background: #6b7280; color: #fff; font-weight: 600; box-shadow: none; }
++.convs li.muted.has-unread .cname { color: var(--fg2); font-weight: 600; }
++.convs li.muted.has-unread .prev, .convs li.muted.has-unread .time { color: var(--fg2); font-weight: 400; }
+ .rail-badge.unread-dot { width: 9px; height: 9px; min-width: 9px; padding: 0; border-radius: 50%; }
++.rail-badge.unread-dot { background: #6b7280; }
++.rail-badge:not(.unread-dot) { background: #d92d45; }
+ .settings-fade-enter-active, .settings-fade-leave-active { transition: opacity .12s ease, transform .12s ease; }
+ .settings-fade-enter-from, .settings-fade-leave-to { opacity: 0; transform: translateY(4px); }
+ @media(prefers-reduced-motion: reduce) { .settings-fade-enter-active, .settings-fade-leave-active { transition: none; } }
+--- a/src/userbot/actions.ts
++++ b/src/userbot/actions.ts
+@@ -12,7 +12,7 @@
+ export interface ActionPolicy { enabled: boolean; requireConfirmation: boolean; allowed: ActionType[] }
+ export interface ManagementAction { type: ActionType; reason: string; userId?: string; messageId?: string; seconds?: number; tagId?: number; tag?: string; color?: string; desc?: string; remove?: boolean; name?: string; introduction?: string; types?: number[] }
+ export interface ActionPreview { action: ManagementAction; title: string; details: string[]; before: string }
+-export interface ActionScope { groupId: string; selfId: string; info: any; role: 'owner' | 'admin'; allowed: ActionType[]; members: any[]; tags: any[] }
++export interface ActionScope { groupId: string; selfId: string; info: any; role: 'owner' | 'admin'; allowed: ActionType[]; members: any[]; tags: any[]; messageHints?: Array<{ id: string; seq?: number }> }
+ export const newActionPolicy = (): ActionPolicy => ({ enabled: false, requireConfirmation: true, allowed: ACTION_TYPES.map(x => x.id) })
+ const LABEL = Object.fromEntries(ACTION_TYPES.map(x => [x.id, x.label]))
+ export class ActionError extends Error { constructor(message: string) { super(message); this.name = 'ActionError' } }
+@@ -132,9 +132,24 @@
+     details.push(`受邀用户：${user.name || a.userId}（${a.userId}）`)
+   }
+   if (a.type === 'recall') {
+-    const messages = await api.messagesAround(gid, 2, a.messageId, 20)
+-    const m = messages.find(m => String(m.id) === a.messageId)
+-    if (!m || m.recalled || m.recallTs || (m.chatId && String(m.chatId) !== gid)) FAIL('目标消息不在本群或已撤回')
++    // The positioning API can return only neighbours without a valid sequence.
++    // A local hint is a cursor, never proof that the target is still recallable.
++    const hint = scope.messageHints?.find(m => String(m.id) === a.messageId)
++    let lookupError: unknown
++    let messages: any[] = []
++    try { messages = await api.messagesAround(gid, 2, a.messageId, 20, hint?.seq || 0) }
++    catch (error) { lookupError = error }
++    let m = messages.find(m => String(m.id) === a.messageId)
++    if (!m) {
++      try { m = (await api.messages(gid, 2, 100, { timeout: 8000 })).find(m => String(m.id) === a.messageId) }
++      catch (error) { lookupError = error }
++    }
++    if (!m) {
++      if (lookupError) throw lookupError
++      FAIL('未能从本群消息接口定位目标消息，请加载该条历史消息后重试')
++    }
++    if ((m.chatId && String(m.chatId) !== gid) || (m.chatType && Number(m.chatType) !== 2)) FAIL('目标消息不属于本群')
++    if (m.recalled || m.recallTs) FAIL('目标消息已撤回')
+     const sender = String(m.senderId || '')
+     if (!sender) FAIL('无法核实消息发送者')
+     if (sender !== scope.selfId) {
+--- a/src/userbot/memory.ts
++++ b/src/userbot/memory.ts
+@@ -1,6 +1,6 @@
+ import { estimate, type Turn } from './providers'
+ 
+-export interface MemoryTurn extends Turn { id: string; ts: number; senderId?: string }
++export interface MemoryTurn extends Turn { id: string; ts: number; senderId?: string; seq?: number }
+ export interface MemoryCursor { id: string; ts: number; updatedAt: number }
+ export const contextCost = (system: string, turns: Turn[]) => estimate(system) + turns.reduce((n, t) => n + estimate(t.content) + 6, 0) + 12
+ export const clampNumber = (value: any, fallback: number, min: number, max: number) => Math.max(min, Math.min(max, Number.isFinite(Number(value)) ? Number(value) : fallback))
+--- a/src-tauri/Cargo.lock
++++ b/src-tauri/Cargo.lock
+@@ -4833,7 +4833,7 @@
+ 
+ [[package]]
+ name = "yunhulaoda-desktop"
+-version = "1.0.21"
++version = "1.0.22"
+ dependencies = [
+  "base64 0.22.1",
+  "serde",
+--- a/src-tauri/Cargo.toml
++++ b/src-tauri/Cargo.toml
+@@ -1,6 +1,6 @@
+ [package]
+ name = "yunhulaoda-desktop"
+-version = "1.0.21"
++version = "1.0.22"
+ description = "云湖牢大版桌面客户端（Tauri 壳 + Node sidecar 服务）"
+ authors = ["yibanm"]
+ edition = "2021"
+--- a/src-tauri/tauri.conf.json
++++ b/src-tauri/tauri.conf.json
+@@ -1,7 +1,7 @@
+ {
+   "$schema": "https://schema.tauri.app/config/2",
+   "productName": "YunhuLaoda",
+-  "version": "1.0.21",
++  "version": "1.0.22",
+   "identifier": "com.richkobe.yunhulaoda",
+   "build": {
+     "beforeBuildCommand": "",

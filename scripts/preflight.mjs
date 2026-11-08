@@ -85,12 +85,16 @@ const KNOWN_SERVICES = new Set([
   'api', 'auth', 'chat', 'ws', 'ui', 'theme', 'console', 'cfg', 'logs', 'group', 'bots', 'satori',
   'adapter', 'messageActions', 'quickreply', 'charbg', 'session', 'event', 'social', 'botconsole',
   'community', 'stickers', 'commands', 'http', 'app', 'logger',
+  // 本仓库插件自己 provide 的服务（注释/文档里会提到 ctx.xxx）
+  'storage', 'lock', 'market',
   // cordis / vue / 全局
   'on', 'off', 'once', 'emit', 'effect', 'plugin', 'inject', 'set', 'get', 'provide', 'extend',
   'scope', 'isolate', 'setTimeout', 'setInterval', 'throttle', 'debounce', 'parallel', 'bail', 'serial',
   'nextTick', 'watch', 'watchEffect', 'computed', 'reactive', 'ref', 'h', 'dispose', 'isActive',
 ])
-for (const f of files.filter((x) => x.endsWith('.ts') && x.includes('/plugins/'))) {
+// 路径判断要跨平台：Windows 下 join 出反斜杠，之前 includes('/plugins/') 恒 false，
+// 导致这条规则在本地（Windows）从未真正跑过，只在 Linux CI 上爆出来
+for (const f of files.filter((x) => x.endsWith('.ts') && /[/\\]plugins[/\\]/.test(x))) {
   const text = readFileSync(f, 'utf8')
   const injectMatch = text.match(/inject:\s*(\[[^\]]*\]|\{[^}]*\})/)
   const declared = injectMatch ? injectMatch[1] : ''

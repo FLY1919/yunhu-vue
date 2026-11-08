@@ -57,7 +57,7 @@ export const h = Object.assign(_h, {
   pre: (content: string, lang = ''): Element => h('pre', { content, lang }),
   markdown: (content: string): Element => h('markdown', { content }),
   html: (content: string): Element => h('html', { content }),
-  sticker: (src: string, itemId = 0, packId = 0): Element => h('sticker', { src, itemId, packId }),
+  sticker: (src: string, itemId = 0, packId = 0, expressionId = 0, width = 0, height = 0, imageUrl = ''): Element => h('sticker', { src, itemId, packId, expressionId, width, height, imageUrl }),
   a2ui: (data: any): Element => h('a2ui', { data }),
   form: (data: any): Element => h('form', { data }),
   post: (title: string, content = '', id = ''): Element => h('post', { title, content, id }),
@@ -70,7 +70,7 @@ export const h = Object.assign(_h, {
 /** 云湖 content_type 枚举 */
 export const ContentType = {
   text: 1, image: 2, markdown: 3, file: 4, form: 5, post: 6,
-  sticker: 7, html: 8, tip: 9, video: 10, audio: 11, call: 13, a2ui: 14,
+  sticker: 7, html: 8, tip: 9, video: 10, audio: 11, videoCall: 12, call: 13, a2ui: 14,
 } as const
 
 /** 云湖消息 -> 元素树 */
@@ -82,18 +82,43 @@ export function parse(content: any = {}, contentType: number = ContentType.text,
     case ContentType.html: out.push(h.html(content.text ?? '')); break
     case ContentType.image: out.push(h.img(content.image_url || content.image || '', { width: content.width, height: content.height })); break
     // 表情：content.image 往往是相对 key，优先用带域名的 image_url
-    case ContentType.sticker: out.push(h.sticker(content.image_url || content.image || '', content.sticker_item_id, content.sticker_pack_id)); break
+    case ContentType.sticker: out.push(h.sticker(content.image || content.image_url || '', content.sticker_item_id, content.sticker_pack_id, content.expression_id, content.width, content.height, content.image_url)); break
     case ContentType.file: out.push(h.file(content.file_url, content.file_name, content.file_size)); break
-    case ContentType.video: out.push(h.video(content.video_url || content.video, content.video_time)); break
+    case ContentType.video: out.push(h('video', { src: content.video_url || content.video, poster: content.video_cover_url || content.video_thumbnail_url, time: content.video_time, name: content.file_name, size: content.file_size, width: content.width, height: content.height })); break
     case ContentType.audio: out.push(h.audio(content.audio_url, content.audio_time)); break
-    case ContentType.call: out.push(h.call(content.call_status_text || '')); break
+    case ContentType.videoCall: out.push(h.call(content.call_status_text ? `视频通话 · ${content.call_status_text}` : '视频通话')); break
+    case ContentType.call: out.push(h.call(content.call_status_text || '语音通话')); break
     case ContentType.tip: out.push(h.tip(content.tip || content.text || '')); break
     case ContentType.form: out.push(h.form(content.form)); break
-    case ContentType.post: out.push(h.post(content.post_title, content.post_content, content.post_id)); break
+    case ContentType.post: out.push(h('post', { title: content.post_title, content: content.post_content, id: content.post_id, contentType: content.post_content_type })); break
     case ContentType.a2ui: out.push(h.a2ui(content.text ?? content.form ?? '')); break
     default: out.push(h('unknown', { contentType, content }))
   }
   const el = out[0]
+  // 云湖 buttons 是二维数组：每个子数组是一行，不能把数组转成 "[object Object]"。
+  if (content.buttons) {
+    let raw: any = content.buttons
+    try {
+      if (typeof raw === 'string') raw = JSON.parse(raw)
+    } catch {
+      raw = String(content.buttons).split('\n').filter(Boolean)
+    }
+    const values: any[] = Array.isArray(raw) ? raw : []
+    const rows: any[][] = values.some(Array.isArray) ? values.map(row => Array.isArray(row) ? row : [row]) : [values]
+    const str = (v: any) => typeof v === 'string' || typeof v === 'number' ? String(v) : ''
+    for (let rowIndex = 0; rowIndex < rows.length; rowIndex++) {
+      for (const item of rows[rowIndex]) {
+        const b = item && typeof item === 'object' && !Array.isArray(item) ? item : { text: str(item) }
+        const label = str(b.text) || str(b.label) || str(b.name)
+        if (!label || label.includes('[object Object]')) continue
+        const action = b.actionType ?? b.action_type
+        out.push(h('button', {
+          text: label, id: str(b.id ?? b.buttonId ?? b.button_id), value: str(b.value),
+          url: str(b.url), actionType: action === undefined || action === null ? null : Number(action), rowIndex,
+        }))
+      }
+    }
+  }
   if (el && quote) el.attrs = { ...el.attrs, quote }
   return out
 }
@@ -106,8 +131,9 @@ export function toText(elements: Element[] = []): string {
       case 'markdown': case 'html': return el.attrs.content ?? ''
       case 'at': return `@${el.attrs.name || el.attrs.id}`
       case 'a': return toText(el.children) || el.attrs.href || ''
-      case 'img': return el.attrs.src || ''
-      case 'audio': case 'video': return el.attrs.src || ''
+      case 'img': return '[图片]'
+      case 'audio': return '[语音]'
+      case 'video': return '[视频]'
       case 'file': return el.attrs.name || el.attrs.src || ''
       case 'sticker': return '[表情]'
       case 'br': return '\n'
@@ -120,6 +146,11 @@ export function toText(elements: Element[] = []): string {
   }).join('')
 }
 
+/** url 类 content 字段（image_url/file_url/video_url/sticker 的 image_url）服务端会**自动补域名**：
+ *  发完整 URL 会被二次拼接成 域名/https://域名/key 的坏地址（2026-10-25 复现实验证实：
+ *  file 发全 URL → 回读双拼；发裸 key → 回读单层完整）。统一剥成裸 key 再发。 */
+const bareKey = (u: string) => String(u || '').replace(/^https?:\/\/[^/]+\//, '')
+
 /** 元素树 -> 云湖 { contentType, content } */
 export function render(elements: Element[] = []): { contentType: number; content: Attrs } {
   const els = elements.filter(Boolean)
@@ -128,13 +159,18 @@ export function render(elements: Element[] = []): { contentType: number; content
   // 单元素直通（保留平台原生消息类型）
   if (only) {
     switch (only.type) {
-      case 'img': return { contentType: ContentType.image, content: { image_url: only.attrs.src } }
+      case 'img': return { contentType: ContentType.image, content: { image_url: bareKey(only.attrs.src), ...(Number(only.attrs.width) > 0 && Number(only.attrs.height) > 0 ? { width: only.attrs.width, height: only.attrs.height } : {}) } }
       case 'sticker': return {
         contentType: ContentType.sticker,
-        content: { image: only.attrs.src, sticker_item_id: only.attrs.itemId, sticker_pack_id: only.attrs.packId },
+        // 官方手机端真实消息对照（2026-10-24 dump）：f9 image=相对 key、f3 image_url=完整 URL、
+        // f15=收藏 id、f25/26=item/pack id、f33/34=宽高。桌面显示用 attrs.src（相对 key 走 /res 代理）。
+        content: { image: only.attrs.src, image_url: only.attrs.imageUrl || '', sticker_item_id: only.attrs.itemId, sticker_pack_id: only.attrs.packId, expression_id: only.attrs.expressionId ? String(only.attrs.expressionId) : '', width: only.attrs.width || 0, height: only.attrs.height || 0 },
       }
-      case 'file': return { contentType: ContentType.file, content: { file_url: only.attrs.src, file_name: only.attrs.name, file_size: only.attrs.size } }
+      case 'file': return { contentType: ContentType.file, content: { file_url: bareKey(only.attrs.src), file_name: only.attrs.name, file_size: only.attrs.size } }
       case 'audio': return { contentType: ContentType.audio, content: { audio_url: only.attrs.src, audio_time: only.attrs.time } }
+      // ⚠️ video 分支曾缺失：视频元素落 default 被当文本发（content=裸 key 文件名），
+      //    接收方只见文件名文本气泡（用户截图实锤）。video_url 发裸 key（服务端补域名，同族规则）。
+      case 'video': return { contentType: ContentType.video, content: { video_url: bareKey(only.attrs.src), video_time: Math.max(1, Math.ceil(Number(only.attrs.time) || 1)), file_name: only.attrs.name, file_size: only.attrs.size, width: only.attrs.width, height: only.attrs.height } }
       case 'markdown': return { contentType: ContentType.markdown, content: { text: only.attrs.content } }
       case 'html': return { contentType: ContentType.html, content: { text: only.attrs.content } }
       case 'a2ui': return { contentType: ContentType.a2ui, content: { text: typeof only.attrs.data === 'string' ? only.attrs.data : JSON.stringify(only.attrs.data) } }

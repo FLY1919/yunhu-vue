@@ -25,6 +25,7 @@ export function apply(ctx: Context) {
   })
 
   async function load() {
+      if (api.token === '' && !(ctx as any).auth?.state?.user?.id) return
     state.loading = true
     try { state.list = await api.chatBackgroundList() }
     catch (e: any) { ui.toast('背景列表加载失败：' + e.message, 'error') }
@@ -108,10 +109,10 @@ export function apply(ctx: Context) {
 
   // 插件装载时可能还没登录完，列表会拿到空 —— 所以会话一打开就补一次
   ctx.on('chat/open', () => { if (!state.list.length) load() })
-  ctx.on('auth/ready', () => load())
+  ctx.on('auth/login', () => load())
   load()
   // 兜底：3 秒后再补一次（覆盖登录慢的情况）
-  setTimeout(() => { if (!state.list.length) load() }, 3000)
+  // Login event replaces the unmanaged startup retry timer.
 
   ctx.logger?.info('charbg 插件已加载（聊天背景）')
 }

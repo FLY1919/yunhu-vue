@@ -1,0 +1,725 @@
+--- /dev/null
++++ b/RELEASE_NOTES_1.0.14.md
+@@ -0,0 +1,14 @@
++# YH LaoDa 1.0.14
++
++基于最新 1.0.13 完整源码修复本地账号读取失败与桌面阻塞风险。
++
++- 桌面客户端优先使用空闲的 8902 端口；若被占用则选择其他空闲本机端口，启动并管理自己的 Node 服务，不再复用旧版本或其他进程的服务，并记住所选端口供下次启动使用，减少本地界面偏好的变化。
++- 窗口加载与凭据校验使用同一运行端口，并验证服务身份。主窗口导航限定到本实例的本地地址，保留安全存储保护。
++- DPAPI 读写、服务身份校验与手动重启服务改为后台任务，避免在 Tauri 主线程等待网络或进程退出。
++- 服务启动与监控共享进程句柄锁，避免同时启动多个子进程；修正连续重启失败计数。
++- 本地数据请求增加超时，避免连接无响应时永久占用保存队列。
++- 兼容桌面命令返回的字符串错误，修正“读取本地账号失败：undefined”。未登录时不再主动请求通讯录、收藏、表情包、机器人列表和背景；登录成功后再加载。
++
++升级不会主动清除账号凭据。Windows DPAPI 数据仍按当前 Windows 用户读取，旧版 accounts/session 本地文件仍按原迁移逻辑读取，成功安全保存后清理旧副本。
++
++验证范围：自动化回归、模拟本地服务及跨平台运行的端口分配/身份验证测试；Windows 安装程序交叉编译并解包核对。未在用户的 Windows 实机上验证长时间运行，因此不声称覆盖所有可能的卡死原因。
+--- a/docs/userbot.md
++++ b/docs/userbot.md
+@@ -1,4 +1,4 @@
+-# 用户 Bot 使用说明（1.0.13）
++# 用户 Bot 使用说明（1.0.14）
+ 
+ 用户 Bot 随客户端运行，退出客户端或电脑休眠、关机后不会工作。自动处理依赖客户端收到云湖实时推送；实时连接断开期间不保证处理所有消息，也不会自动补回所有离线消息。
+ 
+@@ -22,6 +22,6 @@
+ 
+ Windows 桌面版使用当前 Windows 用户的 DPAPI 保护云湖账号凭据、API Key、用户 Bot 配置和记忆。旧版账号凭据在成功写入安全存储后清除旧本地文件；迁移或读取失败时请先解决错误，不会把失败当成空账号保存。与 Windows 用户配置相关的 DPAPI 数据不能直接复制到其他系统账号使用。网页环境沿用原有账号存储机制，不具备该 Windows 保护；用户 Bot 的 AI 调用与密钥保存仅在 Windows 桌面端启用。
+ 
+-桌面 AI 网络请求通过本机服务发出，使用每次运行生成的随机凭据保护该接口，并校验服务端身份；若端口 8902 被其他程序占用，安全存储会停用并提示。接口禁止自动跟随服务重定向。API Key 和对话内容会发送给用户配置的服务商；使用 HTTP 而非 HTTPS 时连接内容可能被读取。使用兼容服务时，实际支持的模型、参数和认证方式以该服务为准。
++桌面 AI 网络请求通过本机服务发出，使用每次运行生成的随机凭据保护该接口，并校验服务端身份；桌面程序优先使用 8902；被占用时自动选择空闲本机端口并启动自己的服务。窗口与凭据校验使用同一端口。接口禁止自动跟随服务重定向。API Key 和对话内容会发送给用户配置的服务商；使用 HTTP 而非 HTTPS 时连接内容可能被读取。使用兼容服务时，实际支持的模型、参数和认证方式以该服务为准。
+ 
+ 配置只在当前客户端中有效；本版本不提供关机后运行、远程托管、多设备同步或图片理解。请先在测试会话验证服务、模型及触发方式，再在需要的会话中启用自动回复。
+--- a/package-lock.json
++++ b/package-lock.json
+@@ -1,12 +1,12 @@
+ {
+   "name": "yunhu-vue",
+-  "version": "1.0.13",
++  "version": "1.0.14",
+   "lockfileVersion": 3,
+   "requires": true,
+   "packages": {
+     "": {
+       "name": "yunhu-vue",
+-      "version": "1.0.13",
++      "version": "1.0.14",
+       "dependencies": {
+         "@capacitor/core": "^8.5.2",
+         "@jodit/image-editor": "0.2.5",
+--- a/package.json
++++ b/package.json
+@@ -1,7 +1,7 @@
+ {
+   "name": "yunhu-vue",
+   "private": true,
+-  "version": "1.0.13",
++  "version": "1.0.14",
+   "type": "module",
+   "description": "云湖牢大版 · Vue3 + 真 cordis 插件内核 + Satori 协议 + WebDAV 网关（仅供学习交流）",
+   "scripts": {
+--- a/scripts/test-chat-regressions.mjs
++++ b/scripts/test-chat-regressions.mjs
+@@ -351,7 +351,9 @@
+       assert.ok(cap.permissions.includes('allow-' + command.replaceAll('_', '-')), `missing capability ${command}`)
+     }
+     assert.deepEqual(cap.windows, ['main'])
+-    assert.deepEqual(cap.remote.urls, ['http://127.0.0.1:8902/*'])
++    assert.deepEqual(cap.remote.urls, ['http://127.0.0.1:*/*'])
++    assert.match(mainRs, /on_navigation/)
++    assert.ok(mainRs.includes('url.port_or_known_default() == Some(app_port())'))
+   })
+   await test('search relevance beats recency, pinning and grouping; normalization handles full-width names and numeric IDs', () => {
+     const h = harness()
+--- a/scripts/test-features-regressions.mjs
++++ b/scripts/test-features-regressions.mjs
+@@ -8,13 +8,13 @@
+ import gifenc from 'gifenc'
+ const { GIFEncoder } = gifenc
+ const temp = await mkdtemp(join(process.cwd(), 'node_modules', '.features-regression-'))
+-await build({ stdin: { contents: `export { apiPlugin } from './src/plugins/api'; export { storagePlugin } from './src/plugins/storage';
++await build({ stdin: { contents: `export { socialPlugin } from './src/plugins/social'; export { stickersPlugin } from './src/plugins/stickers'; export { botConsolePlugin } from './src/plugins/botconsole'; export { apply as backgroundApply } from './src/plugins/charbg'; export { apiPlugin } from './src/plugins/api'; export { storagePlugin } from './src/plugins/storage';
+   export { authPlugin } from './src/plugins/auth'; export { groupAdminPlugin } from './src/plugins/group-admin'; export * as pb from './src/core/pb'; export { createAutoLock } from './src/core/auto-lock';
+   export { decodeGif, encodeGif } from './src/core/gif-edit'; export { stickerDirectory } from './sticker-directory';`, resolveDir: process.cwd() },
+   outfile: join(temp, 'test.mjs'), bundle: true, platform: 'node', format: 'esm', packages: 'external',
+   plugins: [{ name: 'components', setup(b) { b.onLoad({ filter: /\.vue$/ }, () => ({ contents: 'export default {}', loader: 'js' })) } }],
+ })
+-const { apiPlugin, storagePlugin, authPlugin, groupAdminPlugin, pb, createAutoLock, decodeGif, encodeGif, stickerDirectory } = await import(pathToFileURL(join(temp, 'test.mjs')))
++const { socialPlugin, stickersPlugin, botConsolePlugin, backgroundApply, apiPlugin, storagePlugin, authPlugin, groupAdminPlugin, pb, createAutoLock, decodeGif, encodeGif, stickerDirectory } = await import(pathToFileURL(join(temp, 'test.mjs')))
+ class LocalStorage {
+   values = new Map()
+   getItem(k) { return this.values.get(k) ?? null }
+@@ -24,6 +24,45 @@
+ const deferred = () => { let resolve; const promise = new Promise(r => { resolve = r }); return { promise, resolve } }
+ const apiHarness = () => { const ctx = { set(k, v) { this[k] = v } }; apiPlugin.apply(ctx, { base: '/test' }); return ctx.api }
+ try {
++  await test('guest startup skips authenticated lists, then login loads each list', async () => {
++    const calls = [], listeners = new Map(), deferredTimers = []
++    globalThis.localStorage = new LocalStorage()
++    const ctx = { api: { token: '',
++      async addressBook() { calls.push('contacts'); return { users: [], groups: [], bots: [] } },
++      async friendRequests() { calls.push('requests'); return [] },
++      async expressionList() { calls.push('favorites'); return [] },
++      async stickerPacks() { calls.push('packs'); return [] },
++      async myBots() { calls.push('bots'); return { list: [], total: 0 } },
++      async chatBackgroundList() { calls.push('backgrounds'); return [] },
++    }, auth: { state: { user: null } }, ui: { toast() { throw new Error('guest startup must not toast') } },
++      chat: { composer() {}, slot() {} }, console: { addEntry(fn) { fn({ page() {}, slot() {} }) } }, logger: { info() {} },
++      get(k) { return this[k] }, set(k,v) { this[k] = v }, effect(fn) { fn() },
++      setTimeout(fn) { deferredTimers.push(fn) }, on(name,fn) { const a=listeners.get(name)||[];a.push(fn);listeners.set(name,a) } }
++    socialPlugin.apply(ctx); stickersPlugin.apply(ctx); botConsolePlugin.apply(ctx); backgroundApply(ctx)
++    for (const fn of deferredTimers) fn()
++    await nextTick(); assert.deepEqual(calls, [])
++    ctx.api.token = 'test'; ctx.auth.state.user = { id: 'me' }
++    for (const fn of listeners.get('auth/login') || []) fn()
++    await nextTick(); await Promise.resolve()
++    for (const name of ['contacts','requests','favorites','packs','bots','backgrounds']) assert.equal(calls.filter(x=>x===name).length,1,name)
++  })
++  await test('a stalled local service times out without permanently holding the save queue', async () => {
++    const oldFetch=globalThis.fetch, oldSet=globalThis.setTimeout, oldClear=globalThis.clearTimeout
++    globalThis.localStorage=new LocalStorage(); let abort, online=false
++    globalThis.setTimeout=(fn,ms)=>{ if(ms===8000){abort=fn;return 12345} return oldSet(fn,ms) }
++    globalThis.clearTimeout=id=>{ if(id!==12345) oldClear(id) }
++    globalThis.fetch=async (_url,init={})=>{
++      if(online) return new Response('{}')
++      return new Promise((_,reject)=>init.signal.addEventListener('abort',()=>reject(new Error('timeout')),{once:true}))
++    }
++    try {
++      const ctx={set(k,v){this[k]=v}};storagePlugin.apply(ctx)
++      const first=ctx.storage.save('lock',{locked:true}); await Promise.resolve();await Promise.resolve()
++      assert.equal(typeof abort,'function');abort();assert.equal(await first,false)
++      online=true;assert.equal(await ctx.storage.save('lock',{locked:false}),true)
++      assert.deepEqual(await ctx.storage.load('lock'),{locked:false})
++    } finally {globalThis.fetch=oldFetch;globalThis.setTimeout=oldSet;globalThis.clearTimeout=oldClear}
++  })
+   await test('video HTTP 400 region hint retries the same token/file/key in the correct region and caches by bucket', async () => {
+     globalThis.localStorage = new LocalStorage()
+     const api = apiHarness(), oldFetch = globalThis.fetch, oldXHR = globalThis.XMLHttpRequest, uploads = []
+--- /dev/null
++++ b/scripts/test-ui-credential-recovery.mjs
+@@ -0,0 +1,29 @@
++import assert from 'node:assert/strict'
++import { createServer } from 'vite'
++import vue from '@vitejs/plugin-vue'
++import { resolve } from 'node:path'
++const { chromium } = await import(process.env.PLAYWRIGHT_MODULE || 'playwright')
++const server = await createServer({ root: resolve(import.meta.dirname, '..'), configFile: false, plugins: [vue()], server: { host: '127.0.0.1', port: 0 }, logLevel: 'error' })
++await server.listen()
++const browser = await chromium.launch({ headless: true, executablePath: process.env.CHROMIUM_EXECUTABLE, args: ['--no-sandbox', '--disable-dev-shm-usage', '--disable-gpu'] })
++const page = await browser.newPage(), errors = []
++page.on('pageerror', e => errors.push(e.message))
++try {
++  await page.goto(`http://127.0.0.1:${server.httpServer.address().port}/scripts/ui-fixture/index.html`)
++  await page.waitForFunction(() => window.__qa)
++  await page.evaluate(() => { window.__qa.ctx.auth.loadAccounts = async () => { throw '本地安全服务临时不可用' } })
++  await page.getByRole('button', { name: '账号与配置', exact: true }).click()
++  await page.getByLabel('搜索设置与功能').fill('账号 切换')
++  await page.locator('.settings-result').filter({ hasText: '多账号切换与登录' }).click()
++  await page.getByRole('alert').filter({ hasText: '读取本地账号失败：本地安全服务临时不可用' }).waitFor()
++  assert.doesNotMatch(await page.locator('.saved-accounts').innerText(), /undefined/)
++  await page.getByRole('button', { name: '添加账号', exact: true }).click()
++  await page.evaluate(() => { window.__qa.ctx.auth.loginWithToken = async () => { throw '安全凭据读取失败' } })
++  await page.getByRole('button', { name: 'Token 登录', exact: true }).click()
++  await page.getByPlaceholder('粘贴 token').fill('test-only')
++  await page.getByRole('button', { name: '进入', exact: true }).click()
++  await page.locator('.login-card .err').filter({ hasText: '安全凭据读取失败' }).waitFor()
++  await page.getByRole('button', { name: '取消添加', exact: true }).click()
++  assert.deepEqual(errors, [])
++  console.log('PASS: native string rejections show readable credential errors; the settings interface remains usable after failure')
++} finally { await browser.close(); await server.close() }
+--- a/src-tauri/Cargo.lock
++++ b/src-tauri/Cargo.lock
+@@ -4833,7 +4833,7 @@
+ 
+ [[package]]
+ name = "yunhulaoda-desktop"
+-version = "1.0.13"
++version = "1.0.14"
+ dependencies = [
+  "base64 0.22.1",
+  "serde",
+--- a/src-tauri/Cargo.toml
++++ b/src-tauri/Cargo.toml
+@@ -1,6 +1,6 @@
+ [package]
+ name = "yunhulaoda-desktop"
+-version = "1.0.13"
++version = "1.0.14"
+ description = "云湖牢大版桌面客户端（Tauri 壳 + Node sidecar 服务）"
+ authors = ["yibanm"]
+ edition = "2021"
+--- a/src-tauri/capabilities/default.json
++++ b/src-tauri/capabilities/default.json
+@@ -3,7 +3,7 @@
+   "identifier": "default",
+   "description": "云湖牢大版桌面端默认权限",
+   "windows": ["main"],
+-  "remote": { "urls": ["http://127.0.0.1:8902/*"] },
++  "remote": { "urls": ["http://127.0.0.1:*/*"] },
+   "permissions": [
+     "core:default", "core:window:default", "core:webview:default", "opener:default",
+     "allow-restart-sidecar", "allow-open-external-url",
+--- /dev/null
++++ b/src-tauri/src/desktop_endpoint.rs
+@@ -0,0 +1,36 @@
++//! Loopback endpoint allocation. Never reuse a listener owned by another process.
++use std::net::TcpListener;
++pub fn select_port(preferred: u16) -> std::io::Result<u16> {
++    for port in preferred..=preferred.saturating_add(32) {
++        if let Ok(listener) = TcpListener::bind(("127.0.0.1", port)) { return Ok(listener.local_addr()?.port()); }
++    }
++    Ok(TcpListener::bind(("127.0.0.1", 0))?.local_addr()?.port())
++}
++pub fn proof_request(port: u16, nonce: &str) -> String {
++    format!("GET /bot-ai/proof?nonce={nonce} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n")
++}
++pub fn proof_matches(response: &str, expected: &str) -> bool {
++    let Some((head, body)) = response.split_once("\r\n\r\n") else { return false };
++    (head.starts_with("HTTP/1.1 200 ") || head.starts_with("HTTP/1.0 200 ")) && body.trim() == expected
++}
++#[cfg(test)]
++mod tests {
++    use super::*;
++    #[test] fn proof_uses_the_selected_port() {
++        let request = proof_request(54321, "nonce");
++        assert!(request.contains("Host: 127.0.0.1:54321\r\n"));
++    }
++    #[test] fn occupied_port_is_never_reused() {
++        let occupied = TcpListener::bind(("127.0.0.1", 0)).unwrap();
++        let port = occupied.local_addr().unwrap().port();
++        let chosen = select_port(port).unwrap();
++        assert_ne!(port, chosen);
++        assert!(TcpListener::bind(("127.0.0.1", chosen)).is_ok());
++    }
++    #[test] fn identity_proof_rejects_wrong_or_incomplete_server() {
++        assert!(proof_matches("HTTP/1.1 200 OK\r\nContent-Length: 3\r\n\r\nabc", "abc"));
++        assert!(!proof_matches("HTTP/1.1 200 OK\r\n\r\nold-secret", "new-secret"));
++        assert!(!proof_matches("HTTP/1.1 403 Forbidden\r\n\r\nabc", "abc"));
++        assert!(!proof_matches("HTTP/1.1 200 OK", "abc"));
++    }
++}
+--- a/src-tauri/src/main.rs
++++ b/src-tauri/src/main.rs
+@@ -10,6 +10,7 @@
+ #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+ 
+ mod notifications;
++mod desktop_endpoint;
+ mod userbot_security;
+ 
+ use std::net::TcpStream;
+@@ -31,7 +32,24 @@
+     AppHandle, Manager, Url, WebviewUrl, WebviewWindowBuilder,
+ };
+ 
+-const PORT: u16 = 8902;
++fn app_port() -> u16 {
++    static VALUE: std::sync::OnceLock<u16> = std::sync::OnceLock::new();
++    *VALUE.get_or_init(|| {
++        // Keep the same WebView origin on later launches, preserving local preferences.
++        #[cfg(windows)]
++        let registry = winreg::RegKey::predef(winreg::enums::HKEY_CURRENT_USER)
++            .create_subkey(r"Software\YunhuLaoda").ok().map(|(key, _)| key);
++        #[cfg(windows)]
++        let preferred = registry.as_ref().and_then(|key| key.get_value::<u32, _>("DesktopPort").ok())
++            .filter(|port| (1024..=65535).contains(port)).unwrap_or(8902) as u16;
++        #[cfg(not(windows))]
++        let preferred = 8902;
++        let selected = desktop_endpoint::select_port(preferred).unwrap_or(preferred);
++        #[cfg(windows)]
++        if let Some(key) = registry { let _ = key.set_value("DesktopPort", &(selected as u32)); }
++        selected
++    })
++}
+ 
+ /// sidecar 子进程句柄：用全局 static 持有，避开 Tauri State 在
+ /// on_window_event 闭包里的生命周期问题（E0597）
+@@ -75,12 +93,16 @@
+ 
+ /// 前端 invoke('restart_sidecar')：杀旧 sidecar 重新拉起，返回是否已持有新句柄
+ #[tauri::command]
+-fn restart_sidecar() -> bool {
++async fn restart_sidecar() -> bool {
++    tauri::async_runtime::spawn_blocking(restart_sidecar_impl).await.unwrap_or(false)
++}
++
++fn restart_sidecar_impl() -> bool {
+     kill_sidecar();
+     let res = RES_DIR.get().cloned().unwrap_or_else(|| PathBuf::from("."));
+     // 端口可能还被旧进程占着：先等它释放（最多 3s）
+     for _ in 0..15 {
+-        if TcpStream::connect(("127.0.0.1", PORT)).is_err() {
++        if TcpStream::connect(("127.0.0.1", app_port())).is_err() {
+             break;
+         }
+         std::thread::sleep(Duration::from_millis(200));
+@@ -104,6 +126,11 @@
+ ///    全部重定向到 %TEMP%/yunhulaoda-sidecar.log（追加），崩溃时能看死因。
+ ///    首行额外写一条壳侧启动记录（node/bundle/YH_ROOT 实际路径），路径类崩溃可直接对账。
+ fn spawn_sidecar(res: &std::path::Path) -> bool {
++    let Ok(mut slot) = sidecar_slot().lock() else { return false };
++    if let Some(child) = slot.as_mut() {
++        if matches!(child.try_wait(), Ok(None)) { return true; }
++    }
++    *slot = None;
+     let node = res.join("node.exe");
+     let bundle = res.join("server-bundle.mjs");
+     if !node.exists() || !bundle.exists() {
+@@ -128,7 +155,9 @@
+         (Ok(f), Ok(f2)) => match Command::new(&node)
+             .arg(&bundle)
+             .env("YH_ROOT", res)
+-            .env("PORT", PORT.to_string())
++            .env("PORT", app_port().to_string())
++            .env("HOST", "127.0.0.1")
++            .env("HTTPS_PORT", "0")
+             .env("YH_BOT_BRIDGE_SECRET", userbot_security::bridge_secret())
+             .stdout(f)
+             .stderr(f2)
+@@ -136,9 +165,7 @@
+             .spawn()
+         {
+             Ok(child) => {
+-                if let Ok(mut guard) = sidecar_slot().lock() {
+-                    *guard = Some(child);
+-                }
++                *slot = Some(child);
+                 true
+             }
+             Err(e) => {
+@@ -149,7 +176,9 @@
+         _ => match Command::new(&node)
+             .arg(&bundle)
+             .env("YH_ROOT", res)
+-            .env("PORT", PORT.to_string())
++            .env("PORT", app_port().to_string())
++            .env("HOST", "127.0.0.1")
++            .env("HTTPS_PORT", "0")
+             .env("YH_BOT_BRIDGE_SECRET", userbot_security::bridge_secret())
+             .stdout(Stdio::null())
+             .stderr(Stdio::null())
+@@ -157,9 +186,7 @@
+             .spawn()
+         {
+             Ok(child) => {
+-                if let Ok(mut guard) = sidecar_slot().lock() {
+-                    *guard = Some(child);
+-                }
++                *slot = Some(child);
+                 true
+             }
+             Err(e) => {
+@@ -220,7 +247,7 @@
+ </body>
+ </html>"#,
+         msg = html_escape(msg),
+-        port = PORT
++        port = app_port()
+     )
+ }
+ 
+@@ -262,7 +289,7 @@
+                             true
+                         }
+                         // 无子进程：复用外部实例的场景——端口还通就继续观察，不通则补拉起
+-                        None => !wait_port(PORT, Duration::from_millis(400)),
++                        None => true,
+                     }
+                 }
+                 Err(_) => return, // 锁中毒：panic=abort 下几乎不会发生，保守停止
+@@ -272,15 +299,10 @@
+                 continue;
+             }
+             eprintln!("[tauri] 监控发现后端不在，自动补拉起 sidecar");
+-            if spawn_sidecar(&res) {
++            if spawn_sidecar(&res) && wait_port(app_port(), Duration::from_secs(20))
++                && userbot_security::verify_sidecar().is_ok() {
+                 respawn_fail = 0;
+-                // 等新实例就绪（最多 20s），就绪则继续观察
+-                if !wait_port(PORT, Duration::from_secs(20)) {
+-                    respawn_fail += 1;
+-                }
+-            } else {
+-                respawn_fail += 1;
+-            }
++            } else { respawn_fail += 1; }
+             if respawn_fail >= 3 {
+                 let app2 = app.clone();
+                 let _ = app.run_on_main_thread(move || {
+@@ -332,19 +354,9 @@
+             let bundle = res.join("server-bundle.mjs");
+             let resources_ok = node.exists() && bundle.exists();
+ 
+-            // 拉起 sidecar（端口已被占用时复用现有实例，避免双开冲突）
+-            if !wait_port(PORT, Duration::from_millis(300)) {
+-                if resources_ok {
+-                    spawn_sidecar(&res);
+-                } else {
+-                    eprintln!(
+-                        "[tauri] 缺少运行文件：node={} bundle={}（存在={}）",
+-                        node.display(),
+-                        bundle.display(),
+-                        resources_ok
+-                    );
+-                }
+-            }
++            // Allocate our own free loopback port; an older sidecar is never reused.
++            let _ = app_port();
++            if resources_ok { spawn_sidecar(&res); }
+             // 监控无条件启动：既管「自己拉的子进程中途退出」，也管「复用了外部实例、
+             // 外部实例后来死了」——后者端口不通时自动补拉起自己的 sidecar
+             spawn_sidecar_monitor(handle.clone(), res.clone());
+@@ -355,17 +367,17 @@
+             // 重试拉起一次 sidecar 再等 20s → 仍失败才显示错误页（带真实原因）。
+             let win_handle = handle.clone();
+             std::thread::spawn(move || {
+-                let mut ready = wait_port(PORT, Duration::from_secs(45));
++                let mut ready = wait_port(app_port(), Duration::from_secs(45)) && userbot_security::verify_sidecar().is_ok();
+                 if !ready && resources_ok {
+                     eprintln!("[tauri] sidecar 45s 未就绪，重试拉起一次");
+                     spawn_sidecar(&res);
+-                    ready = wait_port(PORT, Duration::from_secs(20));
++                    ready = wait_port(app_port(), Duration::from_secs(20)) && userbot_security::verify_sidecar().is_ok();
+                 }
+                 let inner = win_handle.clone();
+                 let _ = win_handle.run_on_main_thread(move || {
+                     // 就绪→加载 sidecar；未就绪→about:blank（都是必然可解析的字面量）。
+                     let target = if ready {
+-                        format!("http://127.0.0.1:{PORT}").parse::<Url>().ok()
++                        format!("http://127.0.0.1:{}", app_port()).parse::<Url>().ok()
+                     } else {
+                         "about:blank".parse::<Url>().ok()
+                     };
+@@ -384,6 +396,10 @@
+                         "main",
+                         WebviewUrl::External(target),
+                     )
++                    .on_navigation(|url| {
++                        url.as_str() == "about:blank" || (url.scheme() == "http"
++                            && url.host_str() == Some("127.0.0.1") && url.port_or_known_default() == Some(app_port()))
++                    })
+                     .title(title)
+                     .zoom_hotkeys_enabled(true)
+                     .inner_size(1280.0, 820.0)
+@@ -396,8 +412,8 @@
+                             if !ready {
+                                 let msg = if resources_ok {
+                                     format!(
+-                                        "后端服务未能在 65 秒内启动（端口 {PORT}，已自动重试一次）。\
+-                                         可能是首次启动较慢、端口被占用或被安全软件拦截，请点击重试。"
++                                        "后端服务未能在 65 秒内启动（端口 {}，已自动重试一次）。\
++                                         可能是首次启动较慢、端口被占用或被安全软件拦截，请点击重试。", app_port()
+                                     )
+                                 } else {
+                                     format!(
+--- a/src-tauri/src/userbot_security.rs
++++ b/src-tauri/src/userbot_security.rs
+@@ -76,47 +76,56 @@
+ // A different process occupying port 8902 must not gain access to the vault via
+ // the WebView's remote-page permissions. Prove the sidecar knows our secret
+ // without revealing it to the process serving the page.
+-fn verify_sidecar() -> Result<(), String> {
++pub(crate) fn verify_sidecar() -> Result<(), String> {
+     #[cfg(not(windows))] { return Err("本平台暂不支持安全存储".into()); }
+     #[cfg(windows)] {
+         let secret = bridge_secret();
+         let nonce = win::random();
+         if secret.is_empty() || nonce.is_empty() { return Err("无法建立安全连接".into()); }
+-        let mut stream = std::net::TcpStream::connect_timeout(&"127.0.0.1:8902".parse().unwrap(), std::time::Duration::from_secs(2))
++        let mut stream = std::net::TcpStream::connect_timeout(&std::net::SocketAddr::from(([127, 0, 0, 1], crate::app_port())), std::time::Duration::from_secs(2))
+             .map_err(|_| "本地安全服务不可用")?;
+         let _ = stream.set_read_timeout(Some(std::time::Duration::from_secs(2)));
+         let _ = stream.set_write_timeout(Some(std::time::Duration::from_secs(2)));
+-        let request = format!("GET /bot-ai/proof?nonce={nonce} HTTP/1.1\r\nHost: 127.0.0.1:8902\r\nConnection: close\r\n\r\n");
++        let request = crate::desktop_endpoint::proof_request(crate::app_port(), &nonce);
+         stream.write_all(request.as_bytes()).map_err(|_| "本地安全连接失败")?;
+         let mut response = String::new();
+         stream.take(4096).read_to_string(&mut response).map_err(|_| "本地安全连接失败")?;
+         let expected = Sha256::digest(format!("{nonce}{secret}").as_bytes()).iter().map(|b| format!("{b:02x}")).collect::<String>();
+-        let (head, body) = response.split_once("\r\n\r\n").ok_or("本地安全校验失败")?;
+-        if !head.starts_with("HTTP/1.1 200 ") || body.trim() != expected { return Err("端口被其他程序占用，安全存储已停用，请退出占用程序并重启".into()); }
++        if !crate::desktop_endpoint::proof_matches(&response, &expected) {
++            return Err("本地服务身份校验失败，请重启客户端后重试".into());
++        }
+         Ok(())
+     }
+ }
+ #[tauri::command]
+-pub fn ai_bridge_token() -> Result<String, String> {
+-    verify_sidecar()?;
+-    let token = bridge_secret();
+-    if token.is_empty() { Err("安全网络桥接不可用".into()) } else { Ok(token.to_owned()) }
++pub async fn ai_bridge_token() -> Result<String, String> {
++    tauri::async_runtime::spawn_blocking(|| {
++        verify_sidecar()?;
++        let token = bridge_secret();
++        if token.is_empty() { Err("安全网络桥接不可用".into()) } else { Ok(token.to_owned()) }
++    }).await.map_err(|_| "安全服务任务未完成".to_string())?
+ }
+ #[tauri::command]
+-pub fn secure_read(name: String) -> Result<Option<String>, String> {
+-    verify_sidecar()?;
+-    #[cfg(windows)] { win::read(&name) }
+-    #[cfg(not(windows))] { let _ = name; Err("本平台暂不支持系统安全存储".into()) }
++pub async fn secure_read(name: String) -> Result<Option<String>, String> {
++    tauri::async_runtime::spawn_blocking(move || {
++        verify_sidecar()?;
++        #[cfg(windows)] { win::read(&name) }
++        #[cfg(not(windows))] { let _ = name; Err("本平台暂不支持系统安全存储".into()) }
++    }).await.map_err(|_| "安全存储任务未完成".to_string())?
+ }
+ #[tauri::command]
+-pub fn secure_write(name: String, data: String) -> Result<(), String> {
+-    verify_sidecar()?;
+-    #[cfg(windows)] { win::write(&name, &data) }
+-    #[cfg(not(windows))] { let _ = (name, data); Err("本平台暂不支持系统安全存储".into()) }
++pub async fn secure_write(name: String, data: String) -> Result<(), String> {
++    tauri::async_runtime::spawn_blocking(move || {
++        verify_sidecar()?;
++        #[cfg(windows)] { win::write(&name, &data) }
++        #[cfg(not(windows))] { let _ = (name, data); Err("本平台暂不支持系统安全存储".into()) }
++    }).await.map_err(|_| "安全存储任务未完成".to_string())?
+ }
+ #[tauri::command]
+-pub fn secure_delete(name: String) -> Result<(), String> {
+-    verify_sidecar()?;
+-    #[cfg(windows)] { win::delete(&name) }
+-    #[cfg(not(windows))] { let _ = name; Err("本平台暂不支持系统安全存储".into()) }
++pub async fn secure_delete(name: String) -> Result<(), String> {
++    tauri::async_runtime::spawn_blocking(move || {
++        verify_sidecar()?;
++        #[cfg(windows)] { win::delete(&name) }
++        #[cfg(not(windows))] { let _ = name; Err("本平台暂不支持系统安全存储".into()) }
++    }).await.map_err(|_| "安全存储任务未完成".to_string())?
+ }
+--- a/src-tauri/tauri.conf.json
++++ b/src-tauri/tauri.conf.json
+@@ -1,7 +1,7 @@
+ {
+   "$schema": "https://schema.tauri.app/config/2",
+   "productName": "YunhuLaoda",
+-  "version": "1.0.13",
++  "version": "1.0.14",
+   "identifier": "com.richkobe.yunhulaoda",
+   "build": {
+     "beforeBuildCommand": "",
+--- a/src/components/Login.vue
++++ b/src/components/Login.vue
+@@ -25,7 +25,7 @@
+   if (busy.value) return
+   err.value = ''
+   busy.value = true
+-  try { await fn(); password.value = ''; token.value = ''; emit('done') } catch (e) { err.value = e.message || String(e) } finally { busy.value = false }
++  try { await fn(); password.value = ''; token.value = ''; emit('done') } catch (e) { err.value = (e?.message || String(e)) || String(e) } finally { busy.value = false }
+ }
+ 
+ const doLogin = () => withBusy(() => auth.login(email.value.trim(), password.value))
+--- a/src/components/SavedAccounts.vue
++++ b/src/components/SavedAccounts.vue
+@@ -7,19 +7,19 @@
+ const emit = defineEmits<{ (e: 'reauth', email: string): void }>()
+ const pending = ref(''), error = ref('')
+ const accounts = computed(() => auth.state.savedAccounts || [])
+-onMounted(() => { auth.loadAccounts?.()?.catch?.((e: any) => { error.value = '读取本地账号失败：' + e.message }) })
++onMounted(() => { auth.loadAccounts?.()?.catch?.((e: any) => { error.value = '读取本地账号失败：' + (e?.message || String(e)) }) })
+ async function choose(account: any) {
+   if (pending.value) return
+   if (account.needsLogin) { emit('reauth', account.email || ''); return }
+   pending.value = account.id; error.value = ''
+   try { await auth.switchAccount(account.id) }
+-  catch (e: any) { error.value = '切换登录失败：' + e.message + '，可重试或重新登录。' }
++  catch (e: any) { error.value = '切换登录失败：' + (e?.message || String(e)) + '，可重试或重新登录。' }
+   finally { pending.value = '' }
+ }
+ async function forget(account: any) {
+   if (!await ctx.ui.confirm('移除本地账号', `移除 ${account.name} 的已保存登录凭据？`, { okText: '移除' })) return
+   try { await auth.forgetAccount(account.id) }
+-  catch (e: any) { error.value = e.message }
++  catch (e: any) { error.value = (e?.message || String(e)) }
+ }
+ </script>
+ 
+--- a/src/plugins/botconsole.ts
++++ b/src/plugins/botconsole.ts
+@@ -45,6 +45,7 @@
+     })
+ 
+     async function load() {
++      if (api.token === '' && !(ctx as any).auth?.state?.user?.id) return
+       state.loading = true
+       try {
+         const r = await api.myBots()
+@@ -95,6 +96,7 @@
+ 
+     ctx.set('botconsole', { state, load, create, edit, resetToken, loadInstructions })
+ 
++    ctx.on('auth/login', () => { load() })
+     load()
+     ctx.logger?.info('botconsole 插件已加载（机器人控制台）')
+ 
+--- a/src/plugins/charbg.ts
++++ b/src/plugins/charbg.ts
+@@ -25,6 +25,7 @@
+   })
+ 
+   async function load() {
++      if (api.token === '' && !(ctx as any).auth?.state?.user?.id) return
+     state.loading = true
+     try { state.list = await api.chatBackgroundList() }
+     catch (e: any) { ui.toast('背景列表加载失败：' + e.message, 'error') }
+@@ -108,10 +109,10 @@
+ 
+   // 插件装载时可能还没登录完，列表会拿到空 —— 所以会话一打开就补一次
+   ctx.on('chat/open', () => { if (!state.list.length) load() })
+-  ctx.on('auth/ready', () => load())
++  ctx.on('auth/login', () => load())
+   load()
+   // 兜底：3 秒后再补一次（覆盖登录慢的情况）
+-  setTimeout(() => { if (!state.list.length) load() }, 3000)
++  // Login event replaces the unmanaged startup retry timer.
+ 
+   ctx.logger?.info('charbg 插件已加载（聊天背景）')
+ }
+--- a/src/plugins/social.ts
++++ b/src/plugins/social.ts
+@@ -48,6 +48,7 @@
+     })
+ 
+     async function loadBook() {
++      if (api.token === '' && !(ctx as any).auth?.state?.user?.id) return
+       const version = generation
+       state.loading = true
+       try {
+@@ -59,6 +60,7 @@
+     }
+ 
+     async function loadRequests() {
++      if (api.token === '' && !(ctx as any).auth?.state?.user?.id) return
+       const version = generation
+       try { const requests = await api.friendRequests({ size: 30, page: 1 }); if (version === generation) state.requests = requests }
+       catch { if (version === generation) state.requests = [] }
+--- a/src/plugins/stickers.ts
++++ b/src/plugins/stickers.ts
+@@ -67,6 +67,7 @@
+     /* ---------------- 表情收藏 ---------------- */
+ 
+     async function load(silent = false) {
++      if (api.token === '' && !(ctx as any).auth?.state?.user?.id) return
+       state.loading = true
+       try { state.list = await api.expressionList() }
+       catch (e: any) { if (!silent) ui.toast('表情收藏加载失败：' + e.message, 'error') }
+@@ -317,6 +318,7 @@
+     /* ---------------- 表情包管理 ---------------- */
+ 
+     async function loadPacks() {
++      if (api.token === '' && !(ctx as any).auth?.state?.user?.id) return
+       state.packsLoading = true
+       try { state.packs = await api.stickerPacks() }
+       catch (e: any) { ui.toast('表情包加载失败：' + e.message, 'error') }
+@@ -429,6 +431,7 @@
+     // 同上：走聊天插槽，浮层只在聊天区域内
+     ctx.effect(() => chat.slot({ type: 'global', component: StickerPanel, order: 60 }, ctx))
+ 
++    ctx.on('auth/login', () => { load(); loadPacks() })
+     load()
+     loadPacks()
+     ctx.logger?.info('stickers 插件已加载（表情收藏 / 表情包 / 语音 / 视频）')
+--- a/src/plugins/storage.ts
++++ b/src/plugins/storage.ts
+@@ -23,10 +23,18 @@
+     let adoptLegacy = false
+     let ok: boolean | null = null   // 仅缓存「可用」，失败下次仍重试（dev 时 server 可能后起）
+ 
++    // A stalled sidecar must release the write queue and let the interface recover.
++    async function localRequest(url: string, options: RequestInit = {}): Promise<Response> {
++      const controller = new AbortController()
++      const timer = setTimeout(() => controller.abort(), 8000)
++      try { return await fetch(url, { ...options, signal: controller.signal }) }
++      finally { clearTimeout(timer) }
++    }
++
+     async function probe(): Promise<boolean> {
+       if (ok === true) return true
+       try {
+-        const r = await fetch('/data/session', { method: 'GET' })
++        const r = await localRequest('/data/session', { method: 'GET' })
+         ok = r.ok
+       } catch { ok = false }        // 本次不可用，下次调用再探
+       return ok === true
+@@ -67,7 +75,7 @@
+       const version = revisions.get(name) || 0
+       if (await probe()) {
+         try {
+-          const r = await fetch('/data/' + name)
++          const r = await localRequest('/data/' + name)
+           if (r.ok) {
+             const j = await r.json()
+             if (version !== (revisions.get(name) || 0)) return mem.get(name) || {}
+@@ -119,7 +127,7 @@
+       }
+       if (await probe()) {
+         try {
+-          const r = await fetch('/data/' + name, {
++          const r = await localRequest('/data/' + name, {
+             method: 'PUT',
+             headers: { 'content-type': 'application/json' },
+             body: raw,
+@@ -132,7 +140,7 @@
+     }
+     async function eraseLegacy(name: string): Promise<void> {
+       if (!await probe()) throw new Error('本地服务不可用，无法确认旧凭据已清理')
+-      const response = await fetch('/data/' + name, { method: 'DELETE' })
++      const response = await localRequest('/data/' + name, { method: 'DELETE' })
+       if (!response.ok) throw new Error('无法清理旧的本地凭据')
+       localStorage.removeItem('yh.data.' + name)
+     }
+@@ -145,7 +153,7 @@
+       const invoke = secure()
+       if (invoke && privateNames.has(name)) await invoke('secure_delete', { name })
+       if (await probe()) {
+-        try { await fetch('/data/' + name, { method: 'DELETE' }) } catch { /* 忽略 */ }
++        try { await localRequest('/data/' + name, { method: 'DELETE' }) } catch { /* 忽略 */ }
+       }
+       try { localStorage.removeItem('yh.data.' + name) } catch { /* 忽略 */ }
+     }

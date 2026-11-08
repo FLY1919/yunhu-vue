@@ -1,0 +1,117 @@
+/* ===================================================================
+   M3 质感层（Kazumi 式 Material 3 观感）
+   -------------------------------------------------------------------
+   只改「颜色 / 圆角 / 层级面 / 按钮形态」，不动布局、定位、z-index 梯度，
+   避免回归已修好的层叠与居中问题。
+   所有容器色由 --acc（当前主题强调色）派生 → 换主题时按钮/气泡/面板全联动；
+   页面底色（--bg/--rail/--card）仍由各主题预设决定，保持深色基调不动。
+   =================================================================== */
+
+:root {
+  /* 由强调色派生的 M3 容器色：任何主题下都跟着变 */
+  --m3-primary-container: color-mix(in srgb, var(--acc) 18%, var(--card));   /* 己方气泡：淡紫（用户要求再淡一点） */
+  --m3-on-primary-container: var(--fg);
+  --m3-secondary-container: color-mix(in srgb, var(--acc) 18%, var(--card2));
+  --m3-on-secondary-container: var(--fg);
+  --m3-surface-highest: color-mix(in srgb, var(--acc) 10%, var(--card2));
+  --radius: 16px;
+}
+:root[data-theme='dark'] {
+  --shadow: 0 4px 16px rgba(0, 0, 0, .4);
+}
+:root[data-theme='light'] {
+  --shadow: 0 2px 10px rgba(60, 40, 90, .12);
+}
+
+/* ---------- M3 圆角体系 ---------- */
+button, input, textarea, select { border-radius: 12px; }
+.rail-btn { border-radius: 999px; }                 /* rail 指示 pill */
+.rail-btn.on { background: var(--m3-secondary-container); color: var(--m3-on-secondary-container); }
+.qr-chip { border-radius: 8px; }                     /* assist chip */
+.pend, .mp-cell, .dlg-box, .cf-box, .mp-box, .ied-box { border-radius: 16px; }
+.post-box, .viewer-mask img { border-radius: 12px; }
+.gp { border-radius: 28px 0 0 28px; }                /* 右侧面板大圆角（M3 sheet） */
+.dock { border-radius: 28px; }
+
+/* ---------- M3 按钮形态 ---------- */
+button.ghost {
+  background: transparent; border: 1px solid var(--line); color: var(--fg);
+}
+button.ghost:hover { background: color-mix(in srgb, var(--fg) 8%, transparent); }
+/* 质感层是覆盖层：组件 scoped 的 .on 规则特异性更高，这里用 !important 保证 M3 容器色生效 */
+button.ghost.on, button.ghost.small.on, .bar-row .on, .gp-chips .on {
+  background: var(--m3-secondary-container) !important;
+  border-color: transparent !important;
+  color: var(--m3-on-secondary-container) !important;
+}
+/* 主按钮（filled） */
+.line > button, .dlg-foot .primary, .cf-btn.ok, .up-btn.ok, .gp-row button:not(.ghost) {
+  background: var(--acc); color: var(--on-acc); border: none; font-weight: 600;
+}
+.line > button:hover, .dlg-foot .primary:hover, .cf-btn.ok:hover { filter: brightness(1.06); }
+.line > button:disabled { background: var(--m3-surface-highest); color: var(--fg2); }
+
+/* ---------- 气泡 M3 化（随主题变色；双方圆角一致 12px；宽度随文本） ---------- */
+.bubble { border-radius: 12px; background: var(--bubble); }
+.row.right .bubble { background: var(--m3-primary-container); color: var(--m3-on-primary-container); }
+/* 媒体消息（图 t2 / 表情 t7 / 视频 t10）不要容器底色，否则一大块色板裹着图；文件卡片保留容器色 */
+.bubble.t2, .bubble.t7, .bubble.t10 { background: transparent; }
+.row.right .bubble.t2, .row.right .bubble.t7, .row.right .bubble.t10 { background: transparent; color: var(--fg); }
+
+/* ---------- 卡片面层级 ---------- */
+.k-card, .ab-card, .mp-cell, .fn-chip { background: var(--card); border: 1px solid transparent; }
+.k-card:hover, .mp-cell:hover { background: var(--card2); }
+
+/* ---------- 会话列表圆角：只要一点点（用户指定） ---------- */
+.convs li { border-radius: 8px; margin: 1px 6px; padding: 9px 8px; }
+.convs li.active { background: var(--m3-secondary-container); }
+.convs li.active .cname { color: var(--m3-on-secondary-container); }
+.convs li.active.has-unread .cname { color: var(--link, var(--acc)); }
+
+/* ---------- 关闭类按钮统一：正圆 + 内容居中 ---------- */
+.gp-x, .sp-x, .post-x, .viewer-x, .pend-x, .mp-x, .dock-x {
+  width: 28px; height: 28px; border-radius: 50%; border: none;
+  background: color-mix(in srgb, var(--fg) 10%, transparent); color: var(--fg);
+  display: inline-grid; place-items: center; padding: 0; line-height: 1; font-size: 15px; cursor: pointer;
+}
+.gp-x:hover, .sp-x:hover, .post-x:hover, .viewer-x:hover, .pend-x:hover, .mp-x:hover, .dock-x:hover {
+  background: color-mix(in srgb, var(--err) 25%, transparent); color: var(--err);
+}
+
+/* ---------- 回最新：中性色正圆悬浮按钮（不用紫色底） ---------- */
+.jump-latest {
+  position: sticky; top: calc(100% - 60px); align-self: flex-end; margin-right: 14px;
+  width: 40px; height: 40px; aspect-ratio: 1; border-radius: 50%; border: 1px solid var(--line);
+  background: var(--card); color: var(--fg2);
+  display: grid; place-items: center; padding: 0; flex: 0 0 auto;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, .35); z-index: 5; cursor: pointer;
+}
+.jump-latest:hover { color: var(--acc); border-color: var(--acc); background: var(--card); filter: none; }
+
+/* ---------- 多行输入至少 3 行（群简介/备注/验证消息等） ---------- */
+textarea, .dlg-input:not(input), .gp-row textarea, .m-form textarea { min-height: 72px; resize: vertical; }
+.gp-notice { display: block; -webkit-line-clamp: unset; white-space: pre-wrap; max-height: 9em; overflow: auto; }
+
+/* ---------- 输入区 ---------- */
+.composer { background: var(--rail); border-top: none; }
+.composer textarea {
+  background: var(--card2); border: 1px solid transparent; border-radius: 12px;
+  padding: 12px 16px 38px;
+}
+.composer textarea:focus { border-color: var(--acc); }
+
+/* ---------- 标题栏 ---------- */
+.chat-header { background: var(--rail); border-bottom: none; }
+
+/* ---------- 滚动条：常规形态（8px 宽、小圆角，不做细椭圆） ---------- */
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-thumb { background: color-mix(in srgb, var(--fg2) 65%, var(--card)); border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: color-mix(in srgb, var(--acc) 45%, var(--line2)); }
+
+/* 面板只做短距离淡入；减少动态效果时停止非必要动画。 */
+.cf-box, .dlg-box, .pf { animation: panel-appear 140ms ease-out; }
+@keyframes panel-appear { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important; scroll-behavior: auto !important; }
+}

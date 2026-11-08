@@ -4,6 +4,7 @@
  */
 import { ConsoleService } from '../console/service'
 import PluginsPage from '../console/pages/PluginsPage.vue'
+import AboutPage from '../console/pages/AboutPage.vue'
 
 export const consolePlugin = {
   name: 'console',
@@ -28,6 +29,13 @@ export const consolePlugin = {
         icon: 'puzzle',
         order: 900,
         component: PluginsPage,
+      })
+      cc.page({
+        name: '关于',
+        path: '/about',
+        icon: 'help',
+        order: 960,
+        component: AboutPage,
       })
     })
 

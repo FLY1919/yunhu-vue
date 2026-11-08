@@ -1,3 +1,4 @@
+import { handleAiBridge, handleAiProof } from './ai-bridge'
 /**
  * 云湖客户端服务端（Node 24 可直接运行 TS：node server.ts）
  *   · 托管 ./dist 静态资源（SPA fallback）
@@ -9,23 +10,87 @@
  * 运行： HOST=:: PORT=8902 node server.ts
  */
 import http from 'node:http'
+import { stickerDirectory } from './sticker-directory.ts'
 import https from 'node:https'
-import { readFile, writeFile } from 'node:fs/promises'
-import { execFileSync } from 'node:child_process'
+import { copyFile, link, mkdir, mkdtemp, readFile, rm, writeFile, unlink } from 'node:fs/promises'
+import { constants, createWriteStream } from 'node:fs'
+import { Transform } from 'node:stream'
+import { pipeline } from 'node:stream/promises'
+import { execFileSync, execFile, spawn } from 'node:child_process'
 import { mkdirSync, readFileSync } from 'node:fs'
 import { existsSync } from 'node:fs'
-import { extname, join, normalize } from 'node:path'
+import { dirname, extname, isAbsolute, join, normalize } from 'node:path'
+import { homedir } from 'node:os'
 import { fileURLToPath } from 'node:url'
 import { handleWebdav, handleMountJson } from './webdav.ts'
 import { handleSatori } from './satori.ts'
 import { SatoriSocket, acceptKey, isSatoriWs } from './satori-ws.ts'
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url))
+/* Tauri sidecar 场景：资源目录与代码目录分离，用 YH_ROOT 指定 dist/config/certs 所在目录；
+   未设置时保持原行为（__dirname），Electron/裸 node 运行不受影响 */
+const BASE: string = process.env.YH_ROOT || __dirname
 const PORT: number = Number(process.env.PORT || 8902)
 const HOST: string = process.env.HOST || '0.0.0.0'
 const UPSTREAM: string = process.env.UPSTREAM || 'https://chat-go.jwzhd.com'
-const ROOT: string = join(__dirname, 'dist')
-const CONFIG_FILE: string = join(__dirname, 'yunhu.config.yml')
+const ROOT: string = join(BASE, 'dist')
+const CONFIG_FILE: string = join(BASE, 'yunhu.config.yml')
+
+/* ============ 用户数据目录（登录态/会话缓存/锁屏 PIN/扫码中继） ============
+ * 解析顺序：YH_DATA_DIR 环境变量 → 用户自定义（~/.yhchat-dir 文件）→ 默认「文档/yhchat」。
+ * 自定义目录经 GET/PUT /data-dir 读写；PUT 时把旧目录里的数据文件搬过去（尽力而为）。
+ * 只允许白名单内的文件名，防止路径穿越写到任意位置。
+ */
+const DATA_DIR_FILE = join(homedir(), '.yhchat-dir')
+const DATA_ALLOW = new Set(['session', 'accounts', 'cache', 'pin', 'lock', 'relay', 'recall'])
+const DATA_MAX_BYTES = 2 * 1024 * 1024   // 会话快照可能较大，限 2MB 足够且防滥用
+const JSON_HDR = { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' }
+
+function defaultDataDir(): string { return join(homedir(), 'Documents', 'yhchat') }
+function resolveDataDir(): string {
+  if (process.env.YH_DATA_DIR) return process.env.YH_DATA_DIR
+  try {
+    const custom = readFileSync(DATA_DIR_FILE, 'utf8').trim()
+    if (custom) return custom
+  } catch { /* 没有自定义就用默认 */ }
+  return defaultDataDir()
+}
+let DATA_DIR = resolveDataDir()
+try { mkdirSync(DATA_DIR, { recursive: true }) } catch { /* 目录建不起来时 /data 请求会各自报错，不影响其他路由 */ }
+
+/** PUT /data-dir：改自定义目录并搬迁已有数据文件 */
+async function handleDataDir(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+  if (req.method === 'GET') {
+    res.writeHead(200, JSON_HDR)
+    res.end(JSON.stringify({ dir: DATA_DIR, custom: existsSync(DATA_DIR_FILE), default: defaultDataDir() }))
+    return
+  }
+  if (req.method === 'PUT' || req.method === 'POST') {
+    try {
+      const body = JSON.parse(await readBody(req))
+      const dir = String(body.dir || '').trim()
+      if (!dir || dir.length > 260) { res.writeHead(400, JSON_HDR).end(JSON.stringify({ ok: false, msg: '目录路径不合法' })); return }
+      mkdirSync(dir, { recursive: true })
+      // 搬迁旧目录数据（同名覆盖跳过，失败不阻断）
+      for (const name of [...DATA_ALLOW, 'download-settings']) {
+        const from = join(DATA_DIR, name + '.json')
+        const to = join(dir, name + '.json')
+        if (existsSync(from) && !existsSync(to)) {
+          await writeFile(to, await readFile(from, 'utf8'), 'utf8').catch(() => {})
+        }
+      }
+      await writeFile(DATA_DIR_FILE, dir, 'utf8')
+      DATA_DIR = dir
+      res.writeHead(200, JSON_HDR)
+      res.end(JSON.stringify({ ok: true, dir }))
+    } catch (e: any) {
+      res.writeHead(500, JSON_HDR)
+      res.end(JSON.stringify({ ok: false, msg: e.message }))
+    }
+    return
+  }
+  res.writeHead(405).end('method not allowed')
+}
 
 const DEFAULT_CONFIG = `# 云湖第三方客户端配置
 app:
@@ -35,7 +100,7 @@ app:
 plugins:
   config: {}
   theme:
-    preset: yunhu
+    preset: kobe
     accent: ''
     wallpaper: ''
     radius: 10
@@ -52,7 +117,7 @@ plugins:
   ws:
     heartbeat: 25000
   quickreply:
-    enabled: true
+    enabled: false
     items:
       - 收到 ✅
       - 稍等一下
@@ -89,25 +154,50 @@ function follow(target: string, req: http.IncomingMessage, res: http.ServerRespo
      *   浏览器是发 Range 请求（分片）拿媒体的，上游回 206 + Content-Range，
      *   如果代理只透传 content-type，把 content-range/accept-ranges/content-length 丢了，
      *   浏览器就认为响应残缺 → **视频根本播不了**（之前就是这个原因）。
+     * ⚠️⚠️ 透传头必须净化：上游 content-disposition 带中文文件名时是裸非 ASCII，
+     *   Node writeHead 直接抛 ERR_INVALID_CHAR 且无 catch → **整个 sidecar 进程崩溃**
+     *   （用户报「点开板块就停止」「闪退」的真根因）。非 ASCII 头值一律丢弃该头。
      */
     const h: Record<string, any> = {
-      'content-type': up.headers['content-type'] || 'application/octet-stream',
-      'cache-control': cacheControl,
+      'content-type': safeHeader(up.headers['content-type']) || 'application/octet-stream',
+      // Newly uploaded objects can briefly return 403/404. Never cache that failure for a day.
+      'cache-control': (up.statusCode || 502) >= 200 && (up.statusCode || 502) < 300 ? cacheControl : 'no-store',
       'access-control-allow-origin': '*',
       'access-control-expose-headers': 'content-range, content-length, accept-ranges',
     }
     for (const k of ['content-length', 'content-range', 'accept-ranges', 'etag', 'last-modified', 'content-disposition']) {
-      if (up.headers[k] !== undefined) h[k] = up.headers[k]
+      const v = safeHeader(up.headers[k])
+      if (v !== undefined) h[k] = v
     }
-    res.writeHead(up.statusCode || 502, h)
+    try {
+      res.writeHead(up.statusCode || 502, h)
+    } catch {
+      // 兜底：任何残留非法头都不许再炸进程——只发安全子集
+      res.writeHead(up.statusCode || 502, { 'content-type': 'application/octet-stream', 'cache-control': cacheControl })
+    }
+    up.once('error', error => { if (!res.destroyed) res.destroy(error) })
     up.pipe(res)
   })
+  const abortUpstream = () => { if (!res.writableFinished) r.destroy() }
+  res.once('close', abortUpstream)
+  r.once('close', () => res.off('close', abortUpstream))
   r.on('error', (e: Error) => {
+    if (res.destroyed) return
+    if (res.headersSent) { res.destroy(e); return }
     res.writeHead(502, { 'content-type': 'application/json; charset=utf-8' })
     res.end(JSON.stringify({ code: -1, msg: 'proxy error: ' + e.message }))
   })
   if (req.method === 'GET' || req.method === 'HEAD') r.end()
   else req.pipe(r)
+}
+
+/** 上游响应头透传前的净化：Node 的 writeHead 拒绝非 ASCII 头值（ERR_INVALID_CHAR 会炸进程）。
+ *  中文文件名常见于 content-disposition；这类头对浏览器非必需，直接丢弃比炸服务安全。 */
+function safeHeader(v: string | string[] | undefined): string | undefined {
+  if (v === undefined) return undefined
+  const s = Array.isArray(v) ? v.join(', ') : String(v)
+  // eslint-disable-next-line no-control-regex
+  return /^[\x09\x20-\x7e]*$/.test(s) ? s : undefined
 }
 
 function resProxy(req: http.IncomingMessage, res: http.ServerResponse, pathname: string, search: string): void {
@@ -132,7 +222,7 @@ function upProxy(req: http.IncomingMessage, res: http.ServerResponse, pathname: 
     hostname: url.hostname, port: 443, method: req.method, path: url.pathname + url.search, headers,
   }, up => {
     res.writeHead(up.statusCode || 502, {
-      'content-type': up.headers['content-type'] || 'application/octet-stream',
+      'content-type': safeHeader(up.headers['content-type']) || 'application/octet-stream',
       'access-control-allow-origin': '*',
     })
     up.pipe(res)
@@ -170,6 +260,389 @@ async function handleConfig(req: http.IncomingMessage, res: http.ServerResponse)
   res.writeHead(405).end('method not allowed')
 }
 
+/** GET/PUT/DELETE /data/<name> —— 用户数据落盘（文档/yhchat） */
+async function handleData(req: http.IncomingMessage, res: http.ServerResponse, name: string): Promise<void> {
+  if (!DATA_ALLOW.has(name)) { res.writeHead(404, JSON_HDR).end(JSON.stringify({ ok: false, msg: 'unknown data key' })); return }
+  const file = join(DATA_DIR, name + '.json')
+  if (req.method === 'GET') {
+    try {
+      const text = existsSync(file) ? await readFile(file, 'utf8') : ''
+      res.writeHead(200, JSON_HDR).end(text || '{}')
+    } catch (e: any) { res.writeHead(500, JSON_HDR).end(JSON.stringify({ ok: false, msg: e.message })) }
+    return
+  }
+  if (req.method === 'PUT' || req.method === 'POST') {
+    const body = await readBody(req)
+    if (body.length > DATA_MAX_BYTES) { res.writeHead(413, JSON_HDR).end(JSON.stringify({ ok: false, msg: 'too large' })); return }
+    try {
+      JSON.parse(body)                       // 只收合法 JSON，坏数据不落盘
+      await writeFile(file, body, 'utf8')
+      res.writeHead(200, JSON_HDR).end(JSON.stringify({ ok: true }))
+    } catch (e: any) { res.writeHead(400, JSON_HDR).end(JSON.stringify({ ok: false, msg: 'bad json: ' + e.message })) }
+    return
+  }
+  if (req.method === 'DELETE') {
+    try { await unlink(file) } catch { /* 不存在也视为成功（幂等） */ }
+    res.writeHead(200, JSON_HDR).end(JSON.stringify({ ok: true }))
+    return
+  }
+  res.writeHead(405, JSON_HDR).end(JSON.stringify({ ok: false, msg: 'method not allowed' }))
+}
+
+/** GET /update-check —— 代理 GitHub Releases 最新版本（检查更新用，避免前端直连被墙/CORS） */
+async function handleUpdateCheck(res: http.ServerResponse): Promise<void> {
+  // GitHub API 直连在国内不稳：依次试直连 → 加速镜像
+  const bases = [
+    'https://api.github.com',
+    'https://ghfast.top/https://api.github.com',
+    'https://ghproxy.net/https://api.github.com',
+  ]
+  const path = '/repos/yibanm/yunhu-richkobe/releases'
+  let payload = ''
+  let okStatus = 0
+  for (const base of bases) {
+    const r = await new Promise<{ status: number; body: string }>((resolve) => {
+      const req = https.get(base + path, { headers: { 'user-agent': 'yunhu-client', accept: 'application/vnd.github+json' } }, up => {
+        const chunks: Buffer[] = []
+        up.on('data', c => chunks.push(c))
+        up.on('end', () => resolve({ status: up.statusCode || 502, body: Buffer.concat(chunks).toString('utf8') }))
+      })
+      req.on('error', e => resolve({ status: 502, body: JSON.stringify({ message: e.message }) }))
+      req.setTimeout(8000, () => { req.destroy(); resolve({ status: 504, body: '{"message":"timeout"}' }) })
+    })
+    if (r.status === 200) { okStatus = 200; payload = r.body; break }
+  }
+  if (okStatus !== 200) { res.writeHead(502, JSON_HDR).end(JSON.stringify({ ok: false, msg: 'github 不可达（直连与镜像均失败）' })); return }
+  try {
+    // 取版本号最高的 v-tag release（desktop-latest 等非版本 tag 不参与比较）
+    const list = JSON.parse(payload) as any[]
+    const ver = (t: string) => t.replace(/^v/, '').split('.').map(Number)
+    const cands = list.filter((x: any) => /^v?\d+\.\d+\.\d+$/.test(x.tag_name || ''))
+    if (!cands.length) { res.writeHead(200, JSON_HDR).end(JSON.stringify({ ok: false, msg: 'no versioned release' })); return }
+    cands.sort((a: any, b: any) => {
+      const pa = ver(a.tag_name), pb = ver(b.tag_name)
+      for (let i = 0; i < 3; i++) if ((pa[i] || 0) !== (pb[i] || 0)) return (pb[i] || 0) - (pa[i] || 0)
+      return 0
+    })
+    const j = cands[0]
+    const direct = j.html_url || ''
+    res.writeHead(200, JSON_HDR).end(JSON.stringify({
+      ok: true,
+      tag: j.tag_name || '',
+      name: j.name || j.tag_name || '',
+      notes: j.body || '',
+      url: direct,
+      urlFast: direct ? `https://ghfast.top/${direct}` : '',
+      assets: (j.assets || []).map((a: any) => ({
+        name: a.name, url: a.browser_download_url,
+        urlFast: a.browser_download_url ? `https://ghfast.top/${a.browser_download_url}` : '',
+        size: a.size,
+      })),
+    }))
+  } catch { res.writeHead(502, JSON_HDR).end(JSON.stringify({ ok: false, msg: 'bad github payload' })) }
+}
+
+/** GET/PUT /file-dir：文件保存目录，默认系统下载目录。 */
+const FILE_DIR_FILE = join(homedir(), '.yhchat-filedir')
+function defaultFileDir(): string { return process.env.YH_DOWNLOADS_DIR || join(homedir(), 'Downloads') }
+function resolveFileDir(): string {
+  if (process.env.YH_FILE_DIR) return process.env.YH_FILE_DIR
+  try {
+    const custom = readFileSync(FILE_DIR_FILE, 'utf8').trim()
+    if (isAbsolute(custom)) return custom
+  } catch { /* 用默认 */ }
+  return defaultFileDir()
+}
+let FILE_DIR = resolveFileDir()
+function downloadSettingsPath() { return join(DATA_DIR, 'download-settings.json') }
+function resolveDownloadMode(): 'direct' | 'ask' {
+  try { if (JSON.parse(readFileSync(downloadSettingsPath(), 'utf8')).mode === 'ask') return 'ask' }
+  catch { /* 默认沿用直接保存。 */ }
+  return 'direct'
+}
+let downloadMode = resolveDownloadMode()
+function fileDirectorySettings() {
+  return { dir: FILE_DIR, custom: FILE_DIR !== defaultFileDir(), default: defaultFileDir(), mode: downloadMode }
+}
+try { mkdirSync(FILE_DIR, { recursive: true }) } catch { /* 忽略 */ }
+
+async function handleFileDir(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+  if (req.method === 'GET') {
+    res.writeHead(200, JSON_HDR)
+    res.end(JSON.stringify(fileDirectorySettings()))
+    return
+  }
+  if (req.method === 'PUT' || req.method === 'POST') {
+    try {
+      const body = JSON.parse(await readBody(req))
+      if (Object.hasOwn(body, 'mode')) {
+        const { mode } = body
+        if ((mode !== 'ask' && mode !== 'direct') || Object.hasOwn(body, 'dir') || Object.hasOwn(body, 'reset')) {
+          res.writeHead(400, JSON_HDR).end(JSON.stringify({ ok: false, msg: '下载位置选项不合法' })); return
+        }
+        await mkdir(DATA_DIR, { recursive: true })
+        await writeFile(downloadSettingsPath(), JSON.stringify({ mode }), 'utf8')
+        downloadMode = mode
+        res.writeHead(200, JSON_HDR).end(JSON.stringify({ ok: true, ...fileDirectorySettings() }))
+        return
+      }
+      const dir = body.reset === true ? defaultFileDir() : String(body.dir || '').trim()
+      if (!isAbsolute(dir) || dir.length > 32767 || dir.includes('\0')) { res.writeHead(400, JSON_HDR).end(JSON.stringify({ ok: false, msg: '请输入有效的绝对目录路径' })); return }
+      await mkdir(dir, { recursive: true })
+      if (body.reset === true) await rm(FILE_DIR_FILE, { force: true })
+      else await writeFile(FILE_DIR_FILE, dir, 'utf8')
+      FILE_DIR = process.env.YH_FILE_DIR || dir
+      res.writeHead(200, JSON_HDR)
+      res.end(JSON.stringify({ ok: true, ...fileDirectorySettings() }))
+    } catch (e: any) {
+      res.writeHead(500, JSON_HDR)
+      res.end(JSON.stringify({ ok: false, msg: e.message }))
+    }
+    return
+  }
+  res.writeHead(405).end('method not allowed')
+}
+
+/** Save the editor's raster export as a new copy. */
+async function handleSaveImage(req: http.IncomingMessage, res: http.ServerResponse, search: string): Promise<void> {
+  if (req.method !== 'POST') { res.writeHead(405, JSON_HDR).end(JSON.stringify({ ok: false, msg: '需要 POST 请求' })); return }
+  const origin = req.headers.origin
+  if (!req.headers.token || (origin && new URL(origin).host !== req.headers.host)) {
+    res.writeHead(403, JSON_HDR).end(JSON.stringify({ ok: false, msg: '仅允许客户端保存图片' })); return
+  }
+  const type = String(req.headers['content-type'] || '').split(';')[0]
+  if (!['image/png', 'image/jpeg', 'image/gif'].includes(type)) { res.writeHead(415, JSON_HDR).end(JSON.stringify({ ok: false, msg: '仅支持 PNG、JPG 或 GIF 图片' })); return }
+  const chunks: Buffer[] = []; let length = 0
+  for await (const chunk of req) {
+    length += chunk.length
+    if (length > 40 * 1024 * 1024) { res.writeHead(413, JSON_HDR).end(JSON.stringify({ ok: false, msg: '图片超过 40 MB' })); return }
+    chunks.push(chunk)
+  }
+  const data = Buffer.concat(chunks)
+  const valid = type === 'image/png' ? data.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))
+    : type === 'image/gif' ? /^GIF8[79]a$/.test(data.subarray(0, 6).toString('ascii'))
+      : data.length >= 3 && data[0] === 255 && data[1] === 216 && data[2] === 255
+  if (!valid) { res.writeHead(415, JSON_HDR).end(JSON.stringify({ ok: false, msg: '图片内容格式不正确' })); return }
+  const requested = new URLSearchParams(search).get('name') || 'image_edited'
+  const base = requested.split(/[\\/]/).pop()!.replace(/[<>:"|?*\x00-\x1f]/g, '_').replace(/\.[^.]*$/, '').slice(0, 120) || 'image_edited'
+  const extension = type === 'image/png' ? '.png' : type === 'image/gif' ? '.gif' : '.jpg'
+  const controller = new AbortController()
+  res.once('close', () => controller.abort())
+  const directory = await downloadDirectory(controller.signal)
+  if (!directory) { res.writeHead(200, JSON_HDR).end(JSON.stringify({ ok: true, cancelled: true })); return }
+  await mkdir(directory, { recursive: true })
+  controller.signal.throwIfAborted()
+  let dest = ''
+  for (let attempt = 0; attempt < 20; attempt++) {
+    dest = join(directory, base + (attempt ? '-' + Date.now() + '-' + attempt : '') + extension)
+    try { await writeFile(dest, data, { flag: 'wx' }); break }
+    catch (error: any) { if (error.code !== 'EEXIST' || attempt === 19) throw error }
+  }
+  res.writeHead(200, JSON_HDR).end(JSON.stringify({ ok: true, path: dest }))
+}
+
+/** The system picker runs asynchronously so messages and other downloads can continue. */
+async function selectDirectory(initialDir = '', signal?: AbortSignal): Promise<string | null> {
+  const prompt = initialDir ? '选择下载保存位置' : '选择目录'
+  const run = (cmd: string, args: string[]) => new Promise<{ out: string; code: string | number }>(resolve => {
+    execFile(cmd, args, { encoding: 'utf8', timeout: 600000, windowsHide: true, signal,
+      env: { ...process.env, YH_PICK_DIR_INITIAL: initialDir, YH_PICK_DIR_PROMPT: prompt } },
+    (error, stdout) => resolve({ out: stdout.trim(), code: error ? error.code ?? 'FAILED' : 0 }))
+  })
+
+  let result
+  if (process.platform === 'win32') {
+    const script = "[Console]::OutputEncoding=[System.Text.UTF8Encoding]::new($false);" +
+      "Add-Type -AssemblyName System.Windows.Forms;" +
+      "$f=New-Object System.Windows.Forms.FolderBrowserDialog;" +
+      "$f.Description=$env:YH_PICK_DIR_PROMPT;" +
+      "if($env:YH_PICK_DIR_INITIAL){$f.SelectedPath=$env:YH_PICK_DIR_INITIAL};" +
+      "if($f.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK){Write-Output $f.SelectedPath}"
+    result = await run('powershell.exe', ['-NoProfile', '-STA', '-Command', script])
+  } else if (process.platform === 'darwin') {
+    const script = 'on run argv\ntry\n' +
+      'if item 1 of argv is "" then\nreturn POSIX path of (choose folder with prompt (item 2 of argv))\n' +
+      'else\nreturn POSIX path of (choose folder with prompt (item 2 of argv) default location (POSIX file (item 1 of argv)))\nend if\n' +
+      'on error number -128\nreturn ""\nend try\nend run'
+    result = await run('osascript', ['-e', script, initialDir, prompt])
+  } else {
+    const args = ['--file-selection', '--directory', '--title=' + prompt]
+    if (initialDir) args.push('--filename=' + initialDir.replace(/\/$/, '') + '/')
+    result = await run('zenity', args)
+    signal?.throwIfAborted()
+    if (result.code !== 0 && result.code !== 1) result = await run('kdialog', ['--getexistingdirectory', initialDir, '--title', prompt])
+    if (result.code === 1) return null
+  }
+  signal?.throwIfAborted()
+  if (result.code !== 0 || (result.out && !isAbsolute(result.out))) throw new Error('无法打开保存位置选择窗口')
+  return result.out || null
+}
+
+async function handlePickDir(_req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+  const controller = new AbortController()
+  res.once('close', () => controller.abort())
+  try {
+    const dir = await selectDirectory('', controller.signal)
+    res.writeHead(200, JSON_HDR).end(JSON.stringify({ ok: true, dir: dir || '' }))
+  } catch (error: any) {
+    if (!res.destroyed) res.writeHead(200, JSON_HDR).end(JSON.stringify({ ok: true, dir: '', note: error.message }))
+  }
+}
+
+function downloadDirectory(signal: AbortSignal) {
+  return downloadMode === 'ask' ? selectDirectory(FILE_DIR, signal) : FILE_DIR
+}
+
+const localDownloads = new Map<string, string>()
+function localDownloadTarget(input: string, requestHost: string | undefined) {
+  const base = `http://127.0.0.1:${PORT}`
+  const url = new URL(input, base)
+  if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) return ''
+  if (RES_HOST_RE.test(url.host)) return base + '/res/' + url.host + url.pathname + url.search
+  const sameHost = url.origin === base || url.host === requestHost
+  if (sameHost && /^\/(?:res|webdav)\//.test(url.pathname)) return base + url.pathname + url.search
+  return ''
+}
+function localFileName(input: string) {
+  let name = input.replace(/[\\/:*?"<>|\x00-\x1f]/g, '_').trim().replace(/[. ]+$/, '').slice(0, 140).replace(/[. ]+$/, '') || 'file'
+  if (/^(con|prn|aux|nul|com[1-9¹²³]|lpt[1-9¹²³])(?:\.|$)/i.test(name)) name = '_' + name
+  return name
+}
+async function storeDownload(
+  target: string, directory: string, name: string, signal: AbortSignal,
+  progress?: (received: number, total: number) => void,
+) {
+  const cacheKey = directory + '\n' + target + '\n' + name
+  const saved = localDownloads.get(cacheKey)
+  if (saved && existsSync(saved)) return saved
+  await mkdir(directory, { recursive: true })
+  const scratch = await mkdtemp(join(directory, '.yh-download-'))
+  const part = join(scratch, 'data.part')
+  try {
+    const source = await new Promise<http.IncomingMessage>((resolve, reject) => {
+      const request = http.get(target, { signal }, resolve)
+      request.on('error', reject)
+      request.setTimeout(30_000, () => request.destroy(new Error('文件下载超时')))
+    })
+    if (source.statusCode !== 200) { source.destroy(); throw new Error('下载失败 HTTP ' + source.statusCode) }
+    const total = Number(source.headers['content-length']) || 0
+    let received = 0
+    let last = Date.now()
+    progress?.(received, total)
+    const meter = new Transform({
+      transform(chunk, _encoding, done) {
+        received += chunk.length
+        const now = Date.now()
+        if (now - last >= 150) { last = now; progress?.(received, total) }
+        done(null, chunk)
+      },
+    })
+    await pipeline(source, meter, createWriteStream(part), { signal })
+    if (total && received !== total) throw new Error('文件下载不完整')
+    progress?.(received, total)
+    const extension = extname(name)
+    const base = name.slice(0, name.length - extension.length)
+    for (let attempt = 0; attempt < 100; attempt++) {
+      signal.throwIfAborted()
+      const dest = join(directory, attempt ? `${base} (${attempt})${extension}` : name)
+      try {
+        try { await link(part, dest) }
+        catch (error: any) {
+          if (!['EPERM', 'ENOTSUP', 'EXDEV', 'EOPNOTSUPP', 'ENOSYS'].includes(error.code)) throw error
+          await copyFile(part, dest, constants.COPYFILE_EXCL)
+        }
+        localDownloads.set(cacheKey, dest)
+        if (localDownloads.size > 200) {
+          const oldest = localDownloads.keys().next().value
+          if (oldest !== undefined) localDownloads.delete(oldest)
+        }
+        return dest
+      } catch (error: any) {
+        if (error.code !== 'EEXIST') throw error
+      }
+    }
+    throw new Error('同名文件过多')
+  } finally { await rm(scratch, { recursive: true, force: true }).catch(() => {}) }
+}
+
+async function handleLocalDownload(req: http.IncomingMessage, res: http.ServerResponse, search: string) {
+  if (req.method !== 'POST') { res.writeHead(405, JSON_HDR).end(JSON.stringify({ msg: '需要 POST 请求' })); return }
+  if (!req.headers.token || (req.headers.origin && new URL(req.headers.origin).host !== req.headers.host)) {
+    res.writeHead(403, JSON_HDR).end(JSON.stringify({ msg: '仅允许客户端发起下载' })); return
+  }
+  const q = new URLSearchParams(search)
+  const target = localDownloadTarget(q.get('url') || '', req.headers.host)
+  if (!target) { res.writeHead(403, JSON_HDR).end(JSON.stringify({ msg: '文件地址不受支持' })); return }
+  const controller = new AbortController()
+  res.once('close', () => controller.abort())
+  res.writeHead(200, { ...JSON_HDR, 'content-type': 'application/x-ndjson; charset=utf-8' })
+  const report = (data: object) => { if (!res.destroyed) res.write(JSON.stringify(data) + '\n') }
+  try {
+    if (downloadMode === 'ask') report({ choosing: true })
+    const directory = await downloadDirectory(controller.signal)
+    if (!directory) report({ ok: true, cancelled: true })
+    else {
+      const path = await storeDownload(target, directory, localFileName(q.get('name') || ''), controller.signal,
+        (received, total) => { if (!res.writableNeedDrain) report({ received, total }) })
+      report({ ok: true, path })
+    }
+  } catch (error: any) { report({ ok: false, msg: error.message }) }
+  res.end()
+}
+
+/** 保存文件并在系统文件管理器中定位，供显式「在文件夹中打开」使用。 */
+async function handleLocalOpen(req: http.IncomingMessage, res: http.ServerResponse, search: string): Promise<void> {
+  const query = new URLSearchParams(search)
+  const controller = new AbortController()
+  res.once('close', () => controller.abort())
+  try {
+    const target = localDownloadTarget(query.get('url') || '', req.headers.host)
+    if (!target) { res.writeHead(403, JSON_HDR).end(JSON.stringify({ ok: false, msg: '文件地址不受支持' })); return }
+    const name = localFileName(query.get('name') || '')
+    const keySuffix = '\n' + target + '\n' + name
+    let dest = [...localDownloads].reverse().find(([key, path]) => key.endsWith(keySuffix) && existsSync(path))?.[1]
+    if (!dest) {
+      const directory = await downloadDirectory(controller.signal)
+      if (!directory) { res.writeHead(200, JSON_HDR).end(JSON.stringify({ ok: true, cancelled: true })); return }
+      dest = await storeDownload(target, directory, name, controller.signal)
+    }
+    if (res.destroyed) return
+    // 系统资源管理器定位（⚠️ 不能加 windowsHide：会把资源管理器窗口一起藏掉）
+    if (process.platform === 'win32') {
+      await new Promise<void>((resolve, reject) => {
+        // A file-manager window may outlive this request; never wait for it or kill it on a timeout.
+        const explorer = spawn('explorer.exe', ['/select,' + dest], { detached: true, stdio: 'ignore' })
+        explorer.once('error', reject)
+        explorer.once('spawn', () => { explorer.unref(); resolve() })
+      })
+    } else {
+      await new Promise<void>((resolve, reject) => execFile(process.platform === 'darwin' ? 'open' : 'xdg-open', [dirname(dest)], { timeout: 10000 }, error => error ? reject(error) : resolve()))
+    }
+    res.writeHead(200, JSON_HDR).end(JSON.stringify({ ok: true, path: dest }))
+  } catch (e: any) {
+    res.writeHead(500, JSON_HDR).end(JSON.stringify({ ok: false, msg: e.message }))
+  }
+}
+
+/** GET /local-read?path=... —— Tauri 拖放文件读取：把本地文件以流形式返回给前端转 File。
+ *  需带 token 头（与 /api 同源凭据），防本地其它进程/网页滥用读任意文件。 */
+async function handleLocalRead(req: http.IncomingMessage, res: http.ServerResponse, search: string): Promise<void> {
+  const tok = String(req.headers.token || '').trim()
+  if (!tok) { res.writeHead(401, JSON_HDR).end(JSON.stringify({ ok: false, msg: 'token required' })); return }
+  const q = new URLSearchParams(search || '')
+  const p = String(q.get('path') || '')
+  if (!p || !existsSync(p)) { res.writeHead(404, JSON_HDR).end(JSON.stringify({ ok: false, msg: 'file not found' })); return }
+  try {
+    const data = await readFile(p)
+    res.writeHead(200, {
+      'content-type': 'application/octet-stream',
+      'x-file-name': encodeURIComponent(extname(p) ? p.slice(0, -extname(p).length).split(/[\\/]/).pop() + extname(p) : p.split(/[\\/]/).pop()),
+      'access-control-allow-origin': '*',
+    })
+    res.end(data)
+  } catch (e: any) { res.writeHead(500, JSON_HDR).end(JSON.stringify({ ok: false, msg: e.message })) }
+}
+
 async function staticFile(res: http.ServerResponse, pathname: string): Promise<void> {
   let rel = pathname === '/' ? '/index.html' : pathname
   rel = normalize(rel).replace(/^(\.\.[/\\])+/, '')
@@ -177,7 +650,10 @@ async function staticFile(res: http.ServerResponse, pathname: string): Promise<v
   if (!file.startsWith(ROOT) || !existsSync(file)) file = join(ROOT, 'index.html')
   try {
     const data = await readFile(file)
-    res.writeHead(200, { 'content-type': MIME[extname(file)] || 'application/octet-stream' })
+    // ⚠️ index.html 必须 no-store：否则浏览器缓存旧 html → 永远加载旧 hash 的 JS bundle，
+    //    表现为「服务端已修但用户界面不变」（多轮误判的根因）
+    const cc = extname(file) === '.html' ? 'no-store' : 'public, max-age=86400'
+    res.writeHead(200, { 'content-type': MIME[extname(file)] || 'application/octet-stream', 'cache-control': cc })
     res.end(data)
   } catch { res.writeHead(404).end('404') }
 }
@@ -191,7 +667,21 @@ function serverApp(req: any, res: any) {
     }).end()
     return
   }
+  if (pathname === '/bot-ai/request') { void handleAiBridge(req, res, process.env.YH_BOT_BRIDGE_SECRET || ''); return }
+  if (pathname === '/bot-ai/proof') { handleAiProof(req, res, process.env.YH_BOT_BRIDGE_SECRET || '', new URLSearchParams(search).get('nonce') || ''); return }
   if (pathname === '/config') { handleConfig(req, res); return }
+  // 用户数据落盘（登录态/会话缓存/PIN/锁/扫码中继）
+  const dataM = pathname.match(/^\/data\/([a-z]+)$/)
+  if (dataM) { handleData(req, res, dataM[1]); return }
+  if (pathname === '/data-dir') { handleDataDir(req, res).catch(e => { res.writeHead(500, JSON_HDR).end(JSON.stringify({ ok: false, msg: e.message })) }); return }
+  if (pathname === '/update-check' && req.method === 'GET') { handleUpdateCheck(res).catch(e => { res.writeHead(502, JSON_HDR).end(JSON.stringify({ ok: false, msg: e.message })) }); return }
+  if (pathname === '/local-download') { void handleLocalDownload(req, res, search).catch(e => { if (!res.headersSent) res.writeHead(400, JSON_HDR); res.end(JSON.stringify({ ok: false, msg: e.message })) }); return }
+  if (pathname === '/local-open' && req.method === 'GET') { handleLocalOpen(req, res, search).catch(e => { res.writeHead(500, JSON_HDR).end(JSON.stringify({ ok: false, msg: e.message })) }); return }
+  if (pathname === '/sticker-directory') { void stickerDirectory(req, res, search); return }
+  if (pathname === '/local-save-image') { handleSaveImage(req, res, search).catch(e => { res.writeHead(500, JSON_HDR).end(JSON.stringify({ ok: false, msg: e.message })) }); return }
+  if (pathname === '/file-dir') { handleFileDir(req, res).catch(e => { res.writeHead(500, JSON_HDR).end(JSON.stringify({ ok: false, msg: e.message })) }); return }
+  if (pathname === '/pick-dir' && req.method === 'GET') { handlePickDir(req, res); return }
+  if (pathname === '/local-read' && req.method === 'GET') { handleLocalRead(req, res, search).catch(e => { res.writeHead(500, JSON_HDR).end(JSON.stringify({ ok: false, msg: e.message })) }); return }
   // 标准 Satori 协议端点
   if (pathname.startsWith('/satori/')) {
     handleSatori(req, res, pathname, search).catch((e) => { try { res.writeHead(500, {'Content-Type':'application/json'}); res.end(JSON.stringify({code:500,message:e.message})) } catch {} })
@@ -232,7 +722,7 @@ const server = http.createServer(serverApp).listen(PORT, HOST, () => {
  * 证书放 ./certs/{key,cert}.pem；没有就用 openssl 自签一张（会提示不安全，手动信任即可）。
  */
 const HTTPS_PORT = Number(process.env.HTTPS_PORT || 8903)
-const CERT_DIR = join(__dirname, 'certs')
+const CERT_DIR = join(BASE, 'certs')
 try {
   const keyFile = join(CERT_DIR, 'key.pem')
   const certFile = join(CERT_DIR, 'cert.pem')
@@ -242,14 +732,19 @@ try {
       'req', '-x509', '-newkey', 'rsa:2048', '-nodes',
       '-keyout', keyFile, '-out', certFile, '-days', '3650',
       '-subj', '/CN=yunhu-client',
-      '-addext', 'subjectAltName=DNS:localhost,IP:127.0.0.1,IP:::1,IP:192.168.1.100,IP:2409:8a4c:9e33:4570::9',
+      '-addext', 'subjectAltName=DNS:localhost,IP:127.0.0.1,IP:::1',
     ], { stdio: 'ignore' })
     console.log('[yunhu] 已自签 HTTPS 证书（自签的，浏览器会提示不安全，手动信任即可）')
   }
-  https.createServer({
+  const httpsSrv = https.createServer({
     key: readFileSync(keyFile),
     cert: readFileSync(certFile),
-  }, serverApp).listen(HTTPS_PORT, HOST, () => {
+  }, serverApp)
+  // 端口被占（如已有实例/sidecar 并存）只降级不崩进程：http 主服务仍可用
+  httpsSrv.on('error', (e: any) => {
+    console.log(`[yunhu] https ${HTTPS_PORT} 起不来（${e.code || e.message}），仅 http 可用`)
+  })
+  httpsSrv.listen(HTTPS_PORT, HOST, () => {
     console.log(`[yunhu] https://${HOST}:${HTTPS_PORT}  (手机录音/录像要用这个，因为是安全上下文)`)
   })
 } catch (e: any) {
@@ -280,5 +775,15 @@ server.on('upgrade', (req: any, socket: any) => {
     } catch { /* 忽略 */ }
   })
   ws.start().catch(() => {})
+})
+
+/* 进程级最后防线：任何未捕获异常/未处理拒绝只记日志，不杀进程。
+   单请求的错误（如上游怪响应头）不该让整个客户端闪退——
+   「点开板块/看文件就整个应用死掉」这类事故的兜底（根因修复见 safeHeader）。 */
+process.on('uncaughtException', (e: Error) => {
+  console.error('[yunhu] uncaughtException（已兜底，进程不退出）:', e?.message || e)
+})
+process.on('unhandledRejection', (e: any) => {
+  console.error('[yunhu] unhandledRejection（已兜底，进程不退出）:', e?.message || e)
 })
 

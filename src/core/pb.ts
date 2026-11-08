@@ -33,41 +33,55 @@ export const build = (...parts) => concat(parts.flat().filter(Boolean))
 
 /* ---------------- 解码 ---------------- */
 export function decode(u8) {
+  if (!(u8 instanceof Uint8Array)) throw new Error('Protobuf：需要字节数据')
   let i = 0; const out = {}
+  const fail = () => { throw new Error('Protobuf：响应格式错误或数据不完整') }
   const rv = () => {
-    let s = 0n, sh = 0n
-    for (;;) { const b = u8[i++]; s |= BigInt(b & 127) << sh; if (!(b & 128)) break; sh += 7n }
-    return s
+    let s = 0n
+    for (let n = 0; n < 10; n++) {
+      if (i >= u8.length) return fail()
+      const b = u8[i++]
+      if (n === 9 && b > 1) return fail()
+      s |= BigInt(b & 127) << BigInt(n * 7)
+      if (!(b & 128)) return s
+    }
+    return fail()
   }
-  /**
-   * 跳过某个字段（含递归跳过 group）。
-   * ⚠️ 之前只支持 wire type 0/1/2/5，遇到 3（start group）/4（end group）就抛
-   *    'unsupported wire type 4' —— 云湖某些响应里有已废弃的 group 类型字段，
-   *    客户端用不到这些字段，正确做法是**跳过**而不是崩溃。
-   */
-  const skip = (w) => {
+  const readTag = () => {
+    const t = rv(), f = Number(t >> 3n), w = Number(t & 7n)
+    if (f < 1 || f > 0x1fffffff || w > 5) return fail()
+    return { f, w }
+  }
+  const take = (len) => {
+    if (!Number.isSafeInteger(len) || len < 0 || len > u8.length - i) return fail()
+    const value = u8.slice(i, i + len); i += len
+    return value
+  }
+  // Deprecated groups are allowed, but must terminate with the matching field.
+  // Never loop past EOF: a string misread as a message used to freeze the UI here.
+  const skip = (w, field, depth = 0) => {
     if (w === 0) { rv(); return }
-    if (w === 2) { const len = Number(rv()); i += len; return }
-    if (w === 5) { i += 4; return }
-    if (w === 1) { i += 8; return }
+    if (w === 2) { take(Number(rv())); return }
+    if (w === 5) { take(4); return }
+    if (w === 1) { take(8); return }
     if (w === 3) {
-      // start group：递归跳到匹配的 end group（字段号在 tag 里，这里只按 w 判断）
-      for (;;) {
-        const t2 = rv(); const w2 = Number(t2 & 7n)
-        if (w2 === 4) return  // 遇到 end group，group 结束
-        skip(w2)
+      if (depth >= 64) return fail()
+      while (i < u8.length) {
+        const next = readTag()
+        if (next.w === 4) { if (next.f !== field) return fail(); return }
+        skip(next.w, next.f, depth + 1)
       }
     }
-    // w === 4（end group）或其它非法值：无 payload，直接返回
+    return fail()
   }
   while (i < u8.length) {
-    const t = rv(); const f = Number(t >> 3n); const w = Number(t & 7n)
+    const { f, w } = readTag()
     let v
     if (w === 0) v = Number(rv())
-    else if (w === 2) { const len = Number(rv()); v = u8.slice(i, i + len); i += len }
-    else if (w === 5) { v = u8.slice(i, i + 4); i += 4 }
-    else if (w === 1) { v = u8.slice(i, i + 8); i += 8 }
-    else { skip(w); continue }  // wire type 3/4 或其它未知：跳过，不崩
+    else if (w === 2) v = take(Number(rv()))
+    else if (w === 5) v = take(4)
+    else if (w === 1) v = take(8)
+    else { skip(w, f); continue }
     ;(out[f] = out[f] || []).push(v)
   }
   return out

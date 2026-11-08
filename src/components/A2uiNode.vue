@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { routeChatMedia } from '../core/media-devices'
 /**
  * A2UI（content_type=14）组件递归渲染。
  *
@@ -85,9 +86,9 @@ const DIV = () => emit('action', {})
                :is="['h1','h2','h3','h4','h5'].includes(comp.usageHint) ? comp.usageHint : 'p'"
                class="a2-text" :class="'a2-' + (comp.usageHint || 'body')">{{ str(comp.text) }}</component>
     <img v-else-if="type === 'Image'" class="a2-img" :src="resUrl(str(comp.url))" :alt="comp.alt || ''" loading="lazy" />
-    <video v-else-if="type === 'Video'" class="a2-video" :src="resUrl(str(comp.url))" controls preload="metadata" />
+    <video v-else-if="type === 'Video'" class="a2-video" :src="resUrl(str(comp.url))" controls preload="metadata" @play="routeChatMedia" />
     <div v-else-if="type === 'AudioPlayer'" class="a2-audio">
-      <audio :src="resUrl(str(comp.url))" controls preload="metadata"></audio>
+      <audio :src="resUrl(str(comp.url))" controls preload="metadata" @play="routeChatMedia"></audio>
       <span v-if="comp.description" class="a2-audio-desc">{{ str(comp.description) }}</span>
     </div>
     <span v-else-if="type === 'Icon'" class="a2-icon">{{ str(comp.name) }}</span>

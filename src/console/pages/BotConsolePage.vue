@@ -34,7 +34,7 @@ async function create() {
 function copy(text: string, label = '内容') {
   navigator.clipboard?.writeText(text).then(
     () => ctx.ui.toast(`已复制${label}`, 'success'),
-    () => window.prompt(`复制${label}：`, text))
+    () => navigator.clipboard.writeText(text).then(() => ctx.ui.toast(`${label}已复制`, 'success')).catch(() => ctx.ui.toast('复制失败', 'error')))
 }
 </script>
 
@@ -102,7 +102,7 @@ function copy(text: string, label = '内容') {
           <div class="item" v-for="(i, k) in s.instructions" :key="k">
             <div class="imain">
               <div class="iname">
-                {{ i.name || i.command || i.id || ('指令 ' + (k + 1)) }}
+                {{ i.name || i.command || i.id || ('指令 ' + (Number(k) + 1)) }}
                 <em v-if="i.type === 2">直发</em>
                 <em v-else-if="i.type === 5">自定义</em>
                 <em v-else>普通</em>

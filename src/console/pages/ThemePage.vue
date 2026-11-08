@@ -1,20 +1,42 @@
 <script setup lang="ts">
 /** 主题页：预设配色 / 主色调 / 壁纸 / 圆角 */
-import { inject, computed } from 'vue'
+import { inject, computed, ref } from 'vue'
 import KLayout from '../components/KLayout.vue'
 import KCard from '../components/KCard.vue'
+import SchemaForm from '../components/SchemaForm.vue'
 import { shade } from '../../plugins/theme'
 
 const ctx = inject<any>('ctx')
 const theme = ctx.theme
 const ui = ctx.ui
 
-const groups = computed(() => [...new Set(theme.presets.map((p: any) => p.group || '内置'))])
+/** 用户设置（插件经 ctx.console.settings() 注册）—— 按用户要求并入调色盘底部 */
+const userSettings = computed(() => ctx.console?.state?.settings || [])
+
+const groups = computed(() => [...new Set<string>(theme.presets.map((p: any) => p.group || '内置'))])
 
 const accent = computed({
   get: () => theme.state.accent || theme.current().accent,
   set: (v: string) => theme.setAccent(v),
 })
+
+/* ---- 本地图片上传（壁纸/贴纸） ---- */
+const wpInput = ref<HTMLInputElement | null>(null)
+const stInput = ref<HTMLInputElement | null>(null)
+const busy = ref(false)
+async function pickUpload(e: any, target: 'wallpaper' | 'sticker') {
+  const f: File | undefined = e.target?.files?.[0]
+  if (e.target) e.target.value = ''
+  if (!f) return
+  busy.value = true
+  try {
+    if (target === 'wallpaper') await theme.uploadWallpaper(f)
+    else await theme.uploadSticker(f)
+    ui.toast('已上传并应用', 'success', 1500)
+  } catch (err: any) {
+    ui.toast('上传失败：' + err.message, 'error')
+  } finally { busy.value = false }
+}
 </script>
 
 <template>
@@ -22,7 +44,7 @@ const accent = computed({
     <template #actions>
       <button class="ghost small" @click="theme.reset()">恢复默认</button>
       <button class="ghost small" @click="ui.toggleTheme()">
-        深色 / 浅色（当前 {{ ui.state.theme === 'dark' ? '深色' : '浅色' }}）
+        深色 / 浅色（当前 {{ ui.state.theme === 'auto' ? '跟随系统 · ' : '' }}{{ ui.effectiveTheme === 'dark' ? '深色' : '浅色' }}）
       </button>
     </template>
 
@@ -51,7 +73,9 @@ const accent = computed({
       <div class="rowline">
         <input class="grow" v-model="theme.state.wallpaper" placeholder="图片 URL，留空则不使用" />
         <button class="small" @click="theme.setWallpaper(theme.state.wallpaper)">应用</button>
+        <button class="small" :disabled="busy" @click="wpInput?.click()">上传本地图片</button>
         <button class="ghost small" @click="theme.setWallpaper('')">清除</button>
+        <input ref="wpInput" type="file" accept="image/*" hidden @change="(e: any) => pickUpload(e, 'wallpaper')" />
       </div>
       <div class="rowline mt-sm">
         <span class="dim small">模糊 {{ theme.state.blur }}px</span>
@@ -64,10 +88,12 @@ const accent = computed({
       <div class="rowline">
         <input class="grow" v-model="theme.state.sticker" placeholder="贴纸图片 URL（Doki 主题自带）" />
         <button class="small" @click="theme.setSticker(theme.state.sticker)">应用</button>
+        <button class="small" :disabled="busy" @click="stInput?.click()">上传本地图片</button>
         <button class="ghost small" @click="theme.setSticker('')">清除</button>
         <button class="ghost small" @click="theme.toggleSticker()">
           {{ theme.state.showSticker ? '隐藏' : '显示' }}
         </button>
+        <input ref="stInput" type="file" accept="image/*" hidden @change="(e: any) => pickUpload(e, 'sticker')" />
       </div>
       <div class="rowline mt-sm">
         <span class="dim small">透明度 {{ theme.state.stickerOpacity.toFixed(2) }}</span>
@@ -93,6 +119,15 @@ const accent = computed({
         <span class="bubble-demo">这是一条消息气泡，看看圆角与配色</span>
       </div>
     </KCard>
+
+    <!-- 用户设置（原独立页，按用户要求并入调色盘底部） -->
+    <KCard v-for="s in userSettings" :key="s.id" :title="s.title || s.id" class="mt">
+      <SchemaForm :schema="s.schema" :model-value="s.value || {}" @update:model-value="v => s.value = v" />
+      <div class="acts">
+        <button class="small" @click="ui.toast('已保存（即时生效）', 'success')">保存</button>
+      </div>
+    </KCard>
+    <p v-if="!userSettings.length" class="dim small mt">暂无插件级用户设置。</p>
   </KLayout>
 </template>
 

@@ -1,3 +1,4 @@
+# 云湖第三方客户端配置
 app:
   title: 云湖 · 第三方客户端
   theme: dark
@@ -5,15 +6,12 @@ app:
 plugins:
   config: {}
   theme:
-    preset: yunhu
+    preset: kobe
     accent: ''
     wallpaper: ''
     radius: 10
     blur: 0
-  message-actions:
-    confirmRecall: true
-  group-admin:
-    memberPageSize: 50
+  message-actions: {}
   logger: {}
   ui: {}
   console: {}
@@ -21,19 +19,12 @@ plugins:
   auth: {}
   adapter: {}
   chat:
-    pollMs: 7777
-    maxMessages: 200
+    pollMs: 4000
   ws:
     heartbeat: 25000
   quickreply:
-    enabled: true
+    enabled: false
     items:
       - 收到 ✅
       - 稍等一下
       - 好的
-      - 哈哈哈哈
-      - （溜了）
-  social: {}
-  community: {}
-  stickers: {}
-  botconsole: {}

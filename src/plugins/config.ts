@@ -9,7 +9,7 @@
 import { reactive } from 'vue'
 import { load as yamlLoad, dump as yamlDump } from 'js-yaml'
 import type { Context } from '../core/context'
-import ConfigPage from '../console/pages/ConfigPage.vue'
+import AccountConfigPage from '../console/pages/AccountConfigPage.vue'
 
 export interface AppConfig {
   app?: { theme?: string; title?: string; pollMs?: number }
@@ -54,7 +54,7 @@ export const configPlugin = {
       /** 从 server 拉取 yunhu.config.yml */
       async load() {
         try {
-          const res = await fetch('/config', { cache: 'no-store' })
+          const res = await fetch('/config', { cache: 'no-store', signal: AbortSignal.timeout(5000) })
           if (!res.ok) throw new Error('HTTP ' + res.status)
           const text = await res.text()
           state.text = text
@@ -142,7 +142,7 @@ export const configPlugin = {
         action: async () => { await config.save(); ctx.ui?.toast('配置已保存', 'success') },
       })
       ctx.console.addEntry((cc: any) => {
-        cc.page({ name: '配置', path: '/config', icon: 'fileSettings', order: 880, component: ConfigPage })
+        cc.page({ name: '账号与配置', path: '/config', icon: 'settings', order: 880, component: AccountConfigPage })
       })
     })
   },

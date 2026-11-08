@@ -1,0 +1,1419 @@
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -1,3 +1,7 @@
++## 1.0.24
++
++社区文章互动与分享、Typora 风格工具栏、草稿自动保存与独立编辑窗口；关联群聊跳转、关注人数、资料面板和过渡动画；退出清理防止 sidecar 重新占用端口。详见 RELEASE_NOTES_1.0.24.md。
++
+ # 1.0.20 — 修复后端无法启动
+ 
+ 替换旧安装包中被截断的 Node Windows 运行时；加入官方 SHA-256、字节数、PE 节边界及架构检查，打包前拒绝损坏文件。新增校验后替换的运行时下载脚本与完整生产页面离线启动回归。详见 RELEASE_NOTES_1.0.20.md。
+--- /dev/null
++++ b/RELEASE_NOTES_1.0.24.md
+@@ -0,0 +1,50 @@
++# YH LaoDa 1.0.24 — 社区功能与文章编辑器
++
++基于最新 `yunhu-richkobe-1.0.23-complete-source.zip` 增量修改，保留图片属性、EXIF 清除、消息、账号、用户 Bot 与已有桌面能力；未访问用户 GitHub 账号。
++
++## 完成内容
++
++- 社区文章支持点赞/取消点赞、收藏/取消收藏、评论、回复、评论点赞、作者删除评论、文章作者编辑/删除；板块创建者也可删除自己板块内的文章/评论。所有操作仍由云湖服务端核验权限。重复点击串行化，失败不伪造成功；普通文本按纯文本展示，Markdown 继续经过净化。
++- 支持向用户选择的会话发送文章卡片、分享板块；文章可复制 `yunhu://post-detail?id=...` 链接。分享仅在点击“发送分享”后执行，不自动群发。
++- 列表保留云湖返回的关注人数，板块详情显示关注人数；关注成功后同步已知计数。列表首次展示、分类切换、筛选、阅读区切换保留过渡，尊重系统减少动画设置。
++- 发布/编辑文章接入现有云湖 API。编辑器支持六级标题、粗体、斜体、删除线、下划线、高亮、引用、无序/有序/任务列表、行内代码、代码块、链接、图片链接/上传、表格、分隔线、查找替换、撤销重做、大纲、专注、Markdown 导入导出、字符数、纯文本/Markdown 与编辑/预览/双栏切换。按钮有名称/提示，支持常用键盘快捷键，预览跟随全局主题与自定义主色。
++- 草稿支持手动保存、输入停止 800ms 后保存、10/30/60 秒定时保存；每个账号最多 30 篇，保存在本机，可从顶部“草稿”恢复。保存失败显示错误并阻止关闭/发布，发布失败保留内容，成功仅清理对应草稿。草稿不跨设备同步。
++- 编辑器可在主窗口与独立窗口间切换。Windows 使用独立 Tauri WebView，Web 使用弹出窗口；独立窗口不启动登录、账号保险库、WebSocket 或用户 Bot。认证和发布/上传都由主窗口处理，主题实时同步。锁定、退出账号或主窗口关闭时清理独立窗口。
++- “关联群聊”列表可点击，展示介绍/人数，查询本机通讯录确认成员身份；已入群可进入对应群会话，未入群可主动发起申请。查询失败不伪造已入群状态。
++- 重构用户资料抽屉：头像与身份区域、统计、资料卡、简介、板块/表情包、操作区；适配深浅主题和窄屏，增加滑入/滑出、内容过渡、加载骨架、键盘焦点与 Escape。保留原有功能，点击板块后关闭资料遮罩，修正剪贴板失败处理和迟到资料请求。
++- 主窗口/托盘退出先标记退出状态，阻止监控线程在退出期间重新拉起 sidecar；主窗口关闭同时关闭编辑窗口并回收 sidecar，保留 Node 子进程 kill + wait。
++
++编辑器提供 Typora 常用 Markdown 写作能力；没有完整复刻 Typora 的所见即所得引擎、高级公式与插件体系。草稿自动保存依赖应用仍在运行，不是后台定时发布。
++
++## 验证
++
++全部测试使用本机模拟接口、虚拟账号和人工构造的媒体，不登录用户账号、不发送真实消息。
++
++- 192 项逻辑回归通过，覆盖社区请求竞态、发布失败恢复、账号隔离、草稿存储失败、消息、设置、用户 Bot、EXIF、Windows 资源完整性与已有维护功能。
++- 真实 Vue + Chromium 社区回归通过：原有分页/筛选/管理/绑定/失败重试，文章工具栏、撤销重做、查找、大纲、净化、图片插入、失败/成功发布、草稿关闭和重载恢复、点赞/收藏/评论/分享、群聊跳转，独立窗口往返与全局主题同步；检查 1280/740/390/320px 布局。
++- 资料面板、联系人、表情包跳转、锁定、已有图片编辑/查看器回归通过。原 1.0.23 图片属性/EXIF 的保存副本、替换附件、上传字节、方向校正及 GIF 边界回归通过。
++- sidecar 连续两次监听 8902，退出后立即重新绑定成功；不终止或复用其他程序占用的端口。
++- 类型检查、源码 preflight、Vite 生产构建、Node sidecar 构建、Windows x64 Rust 原生交叉编译和 NSIS 安装包生成完成；安装包解包后检查实际二进制与资源。
++- **未执行 Windows 实机安装、真实云湖账号/服务端联调**。构建和模拟测试通过不代表这些外部环境已经验收。
++
++## 源码与构建
++
++完整源码包包含本版源码、更新的前端 dist、Node sidecar、说明和 `PATCH_1.0.24.diff`；不包含 node_modules、Rust target、账号数据、测试截图或 node.exe 二进制。Windows 安装包包含经 SHA-256 校验的 Node 运行时、WebView2 加载器与官方 Evergreen 引导安装程序。
++
++```bash
++npm ci
++npm run typecheck
++npm run build
++node scripts/build-server-bundle.mjs
++node scripts/fetch-windows-node.mjs
++# Tauri 资源配置还要求 resources/dist，首次从源码构建时复制：
++node -e "require('fs').cpSync('dist','src-tauri/resources/dist',{recursive:true})"
++# Windows 主机可继续使用仓库的 Tauri 构建工作流/CLI。
++# Linux 交叉构建需要 Rust Windows GNU target、MinGW、NSIS：
++cargo build --manifest-path src-tauri/Cargo.toml --release --target x86_64-pc-windows-gnu --locked
++WEBVIEW2_BOOTSTRAPPER=/path/MicrosoftEdgeWebview2Setup.exe bash scripts/package-windows-local.sh
++```
++
++界面测试使用 `PLAYWRIGHT_MODULE` 指定 Playwright 的入口，`CHROMIUM_EXECUTABLE` 指定 Chromium；不将测试浏览器打包进安装器。
++
++API 字段依据项目自带 `yhchat.kt` 和公开 [yhchatAPI 社区文档](https://github.com/yh-Tpdev/yhchatAPI/blob/main/src/api/v1/community.md) 核对：点赞/收藏使用 `{id}`，评论使用 `{postId, commentId, content}`，编辑/删除文章使用 `postId`，分享板块使用 `{baId, receive}`，关注人数为 `memberNum`。
+--- a/package-lock.json
++++ b/package-lock.json
+@@ -1,12 +1,12 @@
+ {
+   "name": "yunhu-vue",
+-  "version": "1.0.23",
++  "version": "1.0.24",
+   "lockfileVersion": 3,
+   "requires": true,
+   "packages": {
+     "": {
+       "name": "yunhu-vue",
+-      "version": "1.0.23",
++      "version": "1.0.24",
+       "dependencies": {
+         "@capacitor/core": "^8.5.2",
+         "@jodit/image-editor": "0.2.5",
+--- a/package.json
++++ b/package.json
+@@ -1,7 +1,7 @@
+ {
+   "name": "yunhu-vue",
+   "private": true,
+-  "version": "1.0.23",
++  "version": "1.0.24",
+   "type": "module",
+   "description": "云湖牢大版 · Vue3 + 真 cordis 插件内核 + Satori 协议 + WebDAV 网关（仅供学习交流）",
+   "scripts": {
+@@ -46,7 +46,9 @@
+     "test:ui-uploads": "node scripts/test-ui-upload-fixes.mjs",
+     "test:ui-accounts": "node scripts/test-ui-accounts.mjs",
+     "test:image-properties": "node scripts/test-image-properties.mjs",
+-    "test:ui-image-properties": "node scripts/test-ui-image-properties.mjs"
++    "test:ui-image-properties": "node scripts/test-ui-image-properties.mjs",
++    "test:ui-community-extended": "node scripts/test-ui-community-extended.mjs",
++    "test:sidecar-port": "node scripts/build-server-bundle.mjs && node scripts/test-sidecar-port.mjs"
+   },
+   "dependencies": {
+     "@capacitor/core": "^8.5.2",
+--- a/scripts/test-community.mjs
++++ b/scripts/test-community.mjs
+@@ -14,9 +14,9 @@
+ function fixture(overrides = {}) {
+   const events = new Map(), toasts = [], calls = []
+   const api = { baList: async typ => typ === 3 ? [{id:'1',name:'我的'}] : [], baInfo: async id => ({id,postNum:id}), baPosts: async () => [], baPostDetail: async id => ({post:{id,title:'全文',content:'正文'}}), baGroups: async () => [], baCreate: async () => 9, baEdit: async (...v) => calls.push(['edit',...v]), baManage: async (...v) => calls.push(['manage',...v]), followBoard: async () => {}, unfollowBoard: async () => {}, ...overrides }
+-  const ctx = { api, ui: { toast: (...args) => toasts.push(args) }, console: { addEntry() {} }, set: (key,value) => ctx[key]=value, on: (key,fn) => events.set(key,fn), setTimeout() {} }
++  const ctx = { auth: { state: { user: { id: 'test-user' } } }, api, ui: { toast: (...args) => toasts.push(args) }, console: { addEntry() {} }, set: (key,value) => ctx[key]=value, on: (key,fn) => events.set(key,fn), setTimeout() {} }
+   communityPlugin.apply(ctx)
+-  return { cm:ctx.community, s:ctx.community.state, api,toasts,calls,events }
++  return { ctx, cm:ctx.community, s:ctx.community.state, api,toasts,calls,events }
+ }
+ await test('late categories cannot replace a newer tab or its loading state', async () => {
+   const a=deferred(), b=deferred(), f=fixture({baList:typ=>typ===2?a.promise:typ===4?b.promise:Promise.resolve([])})
+@@ -68,3 +68,33 @@
+ await test('logout invalidates pending read requests and clears private board data',async()=>{
+  const d=deferred(),f=fixture({baPosts:()=>d.promise});const p=f.cm.enter({id:1});f.events.get('auth/logout')();d.resolve([{id:1}]);await p;assert.equal(f.s.viewing,null);assert.deepEqual(f.s.posts,[]);assert.deepEqual(f.s.myIds,[])
+ })
++
++const localValues = new Map()
++globalThis.localStorage = { getItem: k => localValues.get(k) || null, setItem: (k,v) => localValues.set(k,v), removeItem: k => localValues.delete(k) }
++await test('post interactions normalize string flags, serialize clicks and leave failures unchanged', async () => {
++ const d=deferred(),f=fixture({baPostLike:()=>d.promise,baPostCollect:async()=>{throw Error('断网')}})
++ f.s.postDetail={id:10,isLiked:'0',isCollected:'0',likeNum:4};f.s.posts=[{...f.s.postDetail}]
++ const pending=f.cm.togglePost('like');assert.equal(await f.cm.togglePost('like'),false);d.resolve();await pending
++ assert.equal(f.s.postDetail.isLiked,1);assert.equal(f.s.postDetail.likeNum,5);assert.equal(f.s.posts[0].likeNum,5)
++ assert.equal(await f.cm.togglePost('collect'),false);assert.equal(f.s.postDetail.isCollected,'0')
++})
++await test('late comments cannot replace a new post; failed sends retain the text and reject duplicates', async () => {
++ const d=deferred(),f=fixture({baComments:()=>d.promise,baComment:async()=>{throw Error('评论失败')}})
++ f.s.viewing={id:1};f.s.postDetail={id:10};const pending=f.cm.loadComments();f.cm.backToPosts();d.resolve({comments:[{id:1}]});await pending
++ assert.deepEqual(f.s.comments,[]);assert.equal(f.s.loadingComments,false)
++ f.s.postDetail={id:11};f.s.commentText='保留评论';assert.equal(await f.cm.comment(),false);assert.equal(f.s.commentText,'保留评论')
++})
++await test('failed publication persists an account-scoped draft; success removes only that draft', async () => {
++ localValues.clear();let fail=true;const calls=[],f=fixture({baCreatePost:async(...v)=>{calls.push(v);if(fail)throw Error('服务器失败')}})
++ f.s.viewing={id:925,name:'笔记'};assert.ok(f.cm.openEditor());Object.assign(f.s.editor,{title:'我的文章',content:'正文'})
++ assert.equal(await f.cm.publish(),false);assert.match(f.s.editorError,/草稿已保留/);assert.equal(f.s.drafts.length,1)
++ const saved={...f.s.drafts[0]};assert.ok(f.cm.closeEditor());f.s.viewing=null;assert.ok(f.cm.openEditor(saved));fail=false
++ assert.equal(await f.cm.publish(),true);assert.equal(f.s.editor,null);assert.equal(f.s.drafts.length,0);assert.deepEqual(calls[1],[925,'我的文章','正文',2])
++ f.ctx.auth.state.user.id='other-user';f.cm.refreshDrafts();assert.equal(f.s.drafts.length,0)
++})
++await test('storage failure prevents closing without a saved copy, account switch ignores late publish completion', async () => {
++ localValues.clear();const d=deferred(),f=fixture({baCreatePost:()=>d.promise});f.s.viewing={id:1,name:'一'};f.cm.openEditor();Object.assign(f.s.editor,{title:'标题',content:'正文'})
++ const write=localStorage.setItem;localStorage.setItem=()=>{throw Error('空间不足')};assert.equal(f.cm.closeEditor(),false);assert.ok(f.s.editor);assert.match(f.s.editorError,/空间不足/);localStorage.setItem=write
++ const publish=f.cm.publish();f.events.get('auth/logout')();f.ctx.auth.state.user.id='next';d.resolve();assert.equal(await publish,false);assert.equal(f.s.editor,null);assert.equal(f.s.publishing,false)
++ f.ctx.auth.state.user.id='test-user';f.cm.refreshDrafts();assert.equal(f.s.drafts.length,1)
++})
+--- /dev/null
++++ b/scripts/test-sidecar-port.mjs
+@@ -0,0 +1,23 @@
++/** Start/terminate/restart the actual bundled sidecar on the desktop's preferred port. */
++import assert from 'node:assert/strict'
++import { spawn } from 'node:child_process'
++import { once } from 'node:events'
++import { createServer } from 'node:net'
++import { mkdtemp, rm } from 'node:fs/promises'
++import { tmpdir } from 'node:os'
++import { resolve, join } from 'node:path'
++const folder=await mkdtemp(join(tmpdir(),'yh-8902-')),bundle=resolve(process.env.SIDECAR_BUNDLE || 'src-tauri/resources/server-bundle.mjs')
++let child
++async function free() { const s=createServer();await new Promise((ok,fail)=>{s.once('error',fail);s.listen(8902,'127.0.0.1',ok)});await new Promise(ok=>s.close(ok)) }
++try {
++ await free()
++ for(let pass=0;pass<2;pass++) {
++  child=spawn(process.execPath,[bundle],{env:{...process.env,HOST:'127.0.0.1',PORT:'8902',HTTPS_PORT:'0',YH_ROOT:folder,YH_DATA_DIR:join(folder,'data'),YH_FILE_DIR:join(folder,'files')},stdio:'ignore'})
++  let ready=false
++  for(let i=0;i<120;i++){try{const r=await fetch('http://127.0.0.1:8902/data/session',{signal:AbortSignal.timeout(300)});if(r.ok){ready=true;break}}catch{}await new Promise(ok=>setTimeout(ok,50))}
++  assert.ok(ready,'bundled sidecar must start on 8902')
++  const stopped=once(child,'exit');child.kill('SIGTERM');await Promise.race([stopped,new Promise((_,fail)=>setTimeout(()=>fail(Error('sidecar failed to terminate')),3000).unref())]);child=null
++  await free()
++ }
++ console.log('PASS: bundled sidecar started twice on 8902; each exit released the listener immediately')
++} finally { if(child){child.kill('SIGKILL');await once(child,'exit').catch(()=>{})}await rm(folder,{recursive:true,force:true}) }
+--- /dev/null
++++ b/scripts/test-ui-community-extended.mjs
+@@ -0,0 +1,67 @@
++import assert from 'node:assert/strict'
++import { createServer } from 'vite'
++import vue from '@vitejs/plugin-vue'
++import { mkdir } from 'node:fs/promises'
++const { chromium } = await import(process.env.PLAYWRIGHT_MODULE || 'playwright')
++const server=await createServer({root:process.cwd(),configFile:false,plugins:[vue()],server:{host:'127.0.0.1',port:0},logLevel:'error'})
++await server.listen()
++const browser=await chromium.launch({headless:true,executablePath:process.env.CHROMIUM_EXECUTABLE||undefined,args:['--no-sandbox','--disable-dev-shm-usage','--disable-gpu']})
++const context=await browser.newContext({viewport:{width:1360,height:920}}),page=await context.newPage(),errors=[]
++page.on('pageerror',e=>errors.push(e.message))
++const base='http://127.0.0.1:'+server.httpServer.address().port
++const shot=async(name)=>{if(process.env.COMMUNITY_QA_DIR){await mkdir(process.env.COMMUNITY_QA_DIR,{recursive:true});await page.screenshot({path:process.env.COMMUNITY_QA_DIR+'/'+name+'.png'})}}
++try {
++ await page.goto(base+'/scripts/ui-fixture/community.html')
++ await page.getByRole('button',{name:'进入板块 笔记 / 随感',exact:true}).click()
++ await page.getByText('128 人关注',{exact:true}).waitFor()
++ await page.getByRole('button',{name:'发布文章',exact:true}).click()
++ const editor=page.getByRole('dialog',{name:'撰写文章',exact:true})
++ await editor.waitFor();await page.getByLabel('文章标题',{exact:true}).fill('测试文章')
++ const body=page.getByLabel('文章正文',{exact:true});await body.fill('写作内容')
++ await body.evaluate(el=>{el.focus();el.setSelectionRange(0,4);el.dispatchEvent(new Event('select'))})
++ await page.getByRole('button',{name:'加粗',exact:true}).click()
++ await page.waitForFunction(()=>window.__community.ctx.community.state.editor.content==='**写作内容**')
++ await page.getByRole('button',{name:'撤销',exact:true}).click();assert.equal(await body.inputValue(),'写作内容')
++ await page.getByRole('button',{name:'重做',exact:true}).click();assert.equal(await body.inputValue(),'**写作内容**')
++ await page.getByRole('button',{name:'插入表格',exact:true}).click();await page.locator('.editor-preview table').waitFor()
++ await page.getByRole('button',{name:'查找替换',exact:true}).click();await page.getByLabel('查找文字').fill('内容');await page.getByLabel('替换文字').fill('笔记');await page.getByRole('button',{name:'全部替换',exact:true}).click();assert.match(await body.inputValue(),/笔记/)
++ await page.getByRole('button',{name:'关闭查找',exact:true}).click()
++ await body.fill('# 我的笔记\n\n<script>window.editorEvil=true</script>\n\n- [ ] 待办事项\n\n正文')
++ await page.getByRole('button',{name:'文章大纲',exact:true}).click();await page.locator('.editor-outline button').filter({hasText:'我的笔记'}).waitFor()
++ assert.equal(await page.locator('.editor-preview script').count(),0);assert.equal(await page.evaluate(()=>window.editorEvil),undefined)
++ await page.getByLabel('上传文章图片').setInputFiles({name:'article.png',mimeType:'image/png',buffer:Buffer.from([1,2,3])})
++ await page.waitForFunction(()=>window.__community.ctx.community.state.editor.content.includes('![article.png]'))
++ await shot('editor-dark')
++ await page.evaluate(()=>document.documentElement.dataset.theme='light');await shot('editor-light')
++ const color=await page.locator('.community-editor').evaluate(el=>getComputedStyle(el).color);assert.notEqual(color,'rgb(255, 255, 255)')
++ await page.getByRole('button',{name:'保存草稿',exact:true}).click();await page.getByRole('button',{name:'保存并关闭编辑器',exact:true}).click();await editor.waitFor({state:'hidden'})
++ await page.getByRole('button',{name:'关闭板块',exact:true}).click()
++ await page.getByRole('button',{name:'草稿',exact:true}).click();await page.locator('.draft-row button').first().click();await editor.waitFor()
++ await page.evaluate(()=>window.__community.fail.publish=true)
++ await page.getByRole('button',{name:'发布文章',exact:true}).last().click();await page.getByRole('alert').filter({hasText:'发布失败，草稿已保留'}).waitFor()
++ assert.equal(await page.getByLabel('文章标题').inputValue(),'测试文章')
++ await page.evaluate(()=>window.__community.fail.publish=false)
++ await page.getByRole('button',{name:'发布文章',exact:true}).last().click();await editor.waitFor({state:'hidden'})
++ assert.equal(await page.evaluate(()=>window.__community.ctx.community.state.drafts.length),0)
++ await page.getByRole('button',{name:'进入板块 笔记 / 随感',exact:true}).click();await page.locator('.post-card').first().click()
++ await page.getByRole('button',{name:'0 赞',exact:true}).waitFor();await page.getByRole('button',{name:'0 赞',exact:true}).click();await page.getByRole('button',{name:'1 赞',exact:true}).waitFor()
++ await page.getByRole('button',{name:'收藏 0',exact:true}).click();await page.getByRole('button',{name:'已收藏 1',exact:true}).waitFor()
++ await page.getByLabel('评论内容').fill('保留我的评论');await page.evaluate(()=>window.__community.fail.comment=true);await page.getByRole('button',{name:'发表评论',exact:true}).click();await page.waitForFunction(()=>!window.__community.ctx.community.state.commenting);assert.equal(await page.getByLabel('评论内容').inputValue(),'保留我的评论')
++ await page.evaluate(()=>window.__community.fail.comment=false);await page.getByRole('button',{name:'发表评论',exact:true}).click();await page.waitForFunction(()=>!window.__community.ctx.community.state.commenting);assert.equal(await page.getByLabel('评论内容').inputValue(),'')
++ await page.getByRole('button',{name:'分享文章',exact:true}).click();await page.getByLabel('选择会话').selectOption('2:g1');await page.getByRole('button',{name:'发送分享',exact:true}).click();await page.waitForFunction(()=>window.__community.calls.some(c=>c[0]==='send'&&c[3]===6))
++ await shot('article-interactions')
++ await page.getByRole('button',{name:'板块操作',exact:true}).click();await page.getByRole('button',{name:'关联群聊',exact:true}).click();await page.evaluate(()=>window.__community.fail.book=true);await page.getByRole('button',{name:'查看群聊 物理学习交流',exact:true}).click();await page.getByRole('alert').filter({hasText:'无法确认入群状态'}).waitFor();assert.equal(await page.getByRole('button',{name:'申请加入群聊',exact:true}).isDisabled(),true);await page.evaluate(()=>window.__community.fail.book=false);await page.getByRole('button',{name:'重试',exact:true}).click();await page.getByRole('button',{name:'进入群聊',exact:true}).click();await page.waitForFunction(()=>window.__community.calls.some(c=>c[0]==='chat'&&c[1].id==='g1'&&c[1].type===2))
++ await page.evaluate(()=>{const cm=window.__community.ctx.community;cm.openEditor()})
++ await editor.waitFor();await page.getByLabel('文章标题').fill('独立窗口草稿');await body.fill('主窗口输入')
++ const popupPromise=page.waitForEvent('popup');await page.getByRole('button',{name:'在独立窗口编辑',exact:true}).click();const popup=await popupPromise
++ await popup.getByLabel('文章正文').waitFor();await popup.getByLabel('文章正文').fill('独立窗口输入并自动保存')
++ await page.waitForFunction(()=>window.__community.ctx.community.state.editor.content==='独立窗口输入并自动保存')
++ await page.evaluate(()=>{document.documentElement.dataset.theme='dark';document.documentElement.style.setProperty('--acc','#33aa88')})
++ await popup.waitForFunction(()=>document.documentElement.dataset.theme==='dark'&&getComputedStyle(document.documentElement).getPropertyValue('--acc').trim()==='#33aa88')
++ await popup.getByRole('button',{name:'返回主窗口编辑',exact:true}).click();await editor.waitFor();assert.equal(await body.inputValue(),'独立窗口输入并自动保存')
++ for(const width of [1280,740,390,320]) {await page.setViewportSize({width,height:800});await page.waitForTimeout(180);assert.ok(await page.locator('.community-editor').evaluate(el=>el.scrollWidth<=el.clientWidth+1));await shot('editor-'+width)}
++ await page.getByRole('button',{name:'保存并关闭编辑器',exact:true}).click();await editor.waitFor({state:'hidden'})
++ await page.reload();await page.getByRole('button',{name:'草稿',exact:true}).click();await page.locator('.draft-row button').first().click();await page.getByLabel('文章正文').waitFor();assert.equal(await body.inputValue(),'独立窗口输入并自动保存')
++ assert.deepEqual(errors,[])
++ console.log('PASS: toolbar/undo/redo/find/outline/sanitization/image upload; account drafts recover after close+reload; failed/success publish; like/collect/comment/share; real group navigation; detached editor round-trip+theme synchronization; 1280/740/390/320 layout')
++} finally {await context.close();await browser.close();await server.close()}
+--- a/scripts/test-ui-features.mjs
++++ b/scripts/test-ui-features.mjs
+@@ -11,7 +11,7 @@
+ const page = await browser.newPage({ viewport: { width: 1280, height: 820 } }), errors = []
+ page.on('pageerror', e => errors.push(e.message))
+ const base = 'http://127.0.0.1:' + server.httpServer.address().port
+-const shot = async name => { if (process.env.UI_QA_SCREENSHOTS) { await mkdir(process.env.UI_QA_SCREENSHOTS,{recursive:true});await page.screenshot({path:resolve(process.env.UI_QA_SCREENSHOTS,name+'.png')}) } }
++const shot = async name => { if (process.env.UI_QA_SCREENSHOTS) { await mkdir(process.env.UI_QA_SCREENSHOTS,{recursive:true});await page.screenshot({animations:'disabled',path:resolve(process.env.UI_QA_SCREENSHOTS,name+'.png')}) } }
+ try {
+   await page.route('**/sticker-directory?*', route => {
+     const author = new URL(route.request().url()).searchParams.get('author_id')
+--- /dev/null
++++ b/scripts/ui-fixture/article-test.svg
+@@ -0,0 +1 @@
++<svg xmlns="http://www.w3.org/2000/svg" width="220" height="100"><rect width="220" height="100" rx="12" fill="#5b537c"/><text x="20" y="57" fill="white" font-size="20">Article image</text></svg>
+\ No newline at end of file
+--- a/scripts/ui-fixture/community.ts
++++ b/scripts/ui-fixture/community.ts
+@@ -1,5 +1,7 @@
+ // 真实板块服务和页面，使用虚拟数据；不读取账号，不访问外部服务。
+-import { createApp, reactive } from 'vue'
++import FloatingCommunityEditor from '../../src/components/FloatingCommunityEditor.vue'
++import CommunityEditorHost from '../../src/components/CommunityEditorHost.vue'
++import { createApp, reactive, h } from 'vue'
+ import CommunityPage from '../../src/console/pages/CommunityPage.vue'
+ import { communityPlugin } from '../../src/plugins/community'
+ import '../../src/styles.css'
+@@ -17,25 +19,40 @@
+ const fail = reactive({ create: false, edit: false, posts: false, groups: false, detail: false })
+ const delay = (ms: number) => new Promise(resolve => setTimeout(resolve,ms))
+ const ctx: any = {
++  auth: { state: reactive({ user: { id: 'fixture-user' } }) },
++  chat: { state: reactive({ conversations: [{ id: 'g1', type: 2, name: '物理学习交流' }], current: null }), open: (c: any) => calls.push(['chat', c]) },
++  social: { state: { book: { groups: [{ id: 'g1' }] } }, loadBook: async () => {}, apply: async (...v: any[]) => calls.push(['apply', ...v]) },
++  group: { openProfile: (u: any) => calls.push(['profile', u]) },
+   api: {
++    addressBook: async () => { if ((fail as any).book) throw Error('通讯录查询失败'); return { groups: [{ id: 'g1' }], users: [], bots: [] } },
++    applyFriend: async (...v: any[]) => calls.push(['apply', ...v]),
++    baPostLike: async (...v: any[]) => { calls.push(['like', ...v]); await delay(60) },
++    baPostCollect: async (...v: any[]) => { calls.push(['collect', ...v]); await delay(60) },
++    baComments: async (_id: number, opts: any) => ({ comments: [{ id: 5, senderId: 'other', senderNickname: '同好', content: '一起讨论', createTime: Date.now(), likeNum: 2, isLiked: '0' }], total: 1 }),
++    baComment: async (...v: any[]) => { calls.push(['comment', ...v]); await delay(80); if ((fail as any).comment) throw Error('评论接口失败') },
++    baCommentLike: async (...v: any[]) => calls.push(['commentLike', ...v]),
++    baForward: async (...v: any[]) => calls.push(['forward', ...v]), send: async (...v: any[]) => calls.push(['send', ...v]),
++    baCreatePost: async (...v: any[]) => { calls.push(['publish', ...v]); await delay(80); if ((fail as any).publish) throw Error('发布接口失败') },
++    baEditPost: async (...v: any[]) => { calls.push(['editPost', ...v]); await delay(80) },
+     baList: async (type: number, opts: any) => { calls.push(['list',type,opts]); await delay(25); return type===3?boards.filter(b=>b.id===925):type===1?[boards[2]]:boards.map(b=>({...b})) },
+-    baInfo: async (id: number) => ({id,postNum:id===925?32:id===1009?0:4,groupNum:2,visibleRange:0,publishAuthority:1}),
++    baInfo: async (id: number) => ({id,memberNum:128,postNum:id===925?32:id===1009?0:4,groupNum:2,visibleRange:0,publishAuthority:1}),
+     baPosts: async (id: number, opts: any) => { calls.push(['posts',id,opts]); await delay(40);if(fail.posts)throw Error('网络连接中断');return opts.page===1?makePosts(id):[{id:id*100+30,title:'最后一篇文章',senderName:'TR',content:'最后一篇'}] },
+-    baPostDetail: async (id: number) => { await delay(30);if(fail.detail)throw Error('详情接口失败');return {post:{id,title:'物理光学：从观察开始',content:'## 从一个问题开始\n\n光为什么会折射？从观察到推理，我们可以一步一步理解它。\n\n> 记录过程，也记录每次灵光一现。\n\n```js\nconst curious = true\n```\n\n<script>window.evil=true</script><img src=x onerror="window.evil=true">'}} },
++    baPostDetail: async (id: number) => { await delay(30);if(fail.detail)throw Error('详情接口失败');return {post:{id,senderId:'fixture-user',isLiked:'0',isCollected:'0',title:'物理光学：从观察开始',content:'## 从一个问题开始\n\n光为什么会折射？从观察到推理，我们可以一步一步理解它。\n\n> 记录过程，也记录每次灵光一现。\n\n```js\nconst curious = true\n```\n\n<script>window.evil=true</script><img src=x onerror="window.evil=true">'}} },
+     baGroups: async () => { await delay(20);if(fail.groups)throw Error('群聊接口失败');return [{groupId:'g1',name:'物理学习交流',avatar:picture,introduction:'一起记录和讨论'},{groupId:'g2',name:'学习打卡',avatar:''}] },
+     baCreate: async (...args: any[]) => {calls.push(['create',...args]);await delay(70);if(fail.create)throw Error('创建失败');return 6000},
+     baEdit: async (...args: any[]) => {calls.push(['edit',...args]);await delay(50);if(fail.edit)throw Error('保存失败')},
+     baManage: async (...args: any[]) => {calls.push(['manage',...args]);await delay(50)},
+     followBoard: async (...args: any[]) => {calls.push(['follow',...args]);await delay(80)}, unfollowBoard: async (...args: any[]) => {calls.push(['unfollow',...args]);await delay(80)},
+     bindBaGroup: async (...args: any[]) => {calls.push(['bind',...args]);await delay(50)},
+-    uploadFile: async () => {await delay(30);return {url:picture}},
++    uploadFile: async (file: File) => {await delay(30);return {url:file.name === 'article.png' ? location.origin + '/scripts/ui-fixture/article-test.svg' : picture}},
+   },
+-  ui: { toast: (message: string) => errors.push(message) },
+-  console: { state: reactive({ slots:[],menus:{} }), addEntry() {} },
++  ui: { toast: (message: string) => errors.push(message), confirm: async () => true },
++  console: { state: reactive({ slots:[],menus:{} }), goto: (p: string) => calls.push(['goto',p]), addEntry() {} },
+   on() {}, setTimeout(fn: any,ms: number) {const id=setTimeout(fn,ms);timers.push(id);return id}, set(key: string,value: any) {ctx[key]=value},
+ }
+ communityPlugin.apply(ctx)
+-const app=createApp(CommunityPage).provide('ctx',ctx)
++const sessionId = new URLSearchParams(location.search).get('community-editor')
++const app=(sessionId ? createApp(FloatingCommunityEditor, { sessionId }) : createApp({ render: () => [h(CommunityPage), h(CommunityEditorHost)] })).provide('ctx',ctx)
+ app.mount('#app')
+ ;(window as any).__community={ctx,calls,fail,errors}
+ window.addEventListener('beforeunload',()=>{app.unmount();for(const id of timers)clearTimeout(id)})
+--- a/src-tauri/Cargo.lock
++++ b/src-tauri/Cargo.lock
+@@ -4833,7 +4833,7 @@
+ 
+ [[package]]
+ name = "yunhulaoda-desktop"
+-version = "1.0.23"
++version = "1.0.24"
+ dependencies = [
+  "base64 0.22.1",
+  "serde",
+--- a/src-tauri/Cargo.toml
++++ b/src-tauri/Cargo.toml
+@@ -1,6 +1,6 @@
+ [package]
+ name = "yunhulaoda-desktop"
+-version = "1.0.23"
++version = "1.0.24"
+ description = "云湖牢大版桌面客户端（Tauri 壳 + Node sidecar 服务）"
+ authors = ["yibanm"]
+ edition = "2021"
+--- a/src-tauri/build.rs
++++ b/src-tauri/build.rs
+@@ -16,6 +16,8 @@
+             "open_ai_panel",
+             "close_ai_panel",
+             "ai_panel_action",
++            "open_community_editor",
++            "close_community_editor",
+         ])),
+     )
+     .expect("failed to build Tauri application permissions");
+--- a/src-tauri/capabilities/default.json
++++ b/src-tauri/capabilities/default.json
+@@ -27,6 +27,8 @@
+     "allow-ai-bridge-token",
+     "allow-open-ai-panel",
+     "allow-close-ai-panel",
+-    "allow-set-privacy"
++    "allow-set-privacy",
++    "allow-open-community-editor",
++    "allow-close-community-editor"
+   ]
+ }
+--- /dev/null
++++ b/src-tauri/src/community_editor.rs
+@@ -0,0 +1,27 @@
++//! Detached editor: all authenticated operations stay in the main window.
++use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
++
++#[tauri::command]
++pub async fn open_community_editor(app: AppHandle, window: WebviewWindow, session_id: String) -> Result<(), String> {
++    if window.label() != "main" { return Err("Only the main window can open the editor".into()); }
++    if session_id.is_empty() || session_id.len() > 80 || !session_id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-') { return Err("Invalid editor session".into()); }
++    if *crate::privacy::NOTIFICATION_GATE.lock().map_err(|_| "锁定状态不可用")? { return Err("请先解锁".into()); }
++    let url = format!("http://127.0.0.1:{}/?community-editor={}", super::app_port(), session_id).parse::<tauri::Url>().map_err(|e| e.to_string())?;
++    if let Some(old) = app.get_webview_window("community-editor") { old.destroy().map_err(|e| e.to_string())?; }
++    let panel = WebviewWindowBuilder::new(&app, "community-editor", WebviewUrl::External(url))
++        .title("YH LaoDa · 文章编辑器").inner_size(1100.0, 800.0).min_inner_size(420.0, 500.0)
++        .content_protected(crate::privacy::capture_enabled())
++        .on_navigation(|url| url.scheme() == "http" && url.host_str() == Some("127.0.0.1") && url.port_or_known_default() == Some(super::app_port()))
++        .build().map_err(|e| e.to_string())?;
++    crate::privacy::reduce_webview_memory(&panel);
++    let handle = app.clone();
++    panel.on_window_event(move |event| { if matches!(event, tauri::WindowEvent::Destroyed) { let _ = handle.emit_to("main", "community-editor-closed", ()); } });
++    panel.show().map_err(|e| e.to_string())?; panel.set_focus().map_err(|e| e.to_string())
++}
++
++#[tauri::command]
++pub async fn close_community_editor(app: AppHandle, window: WebviewWindow) -> Result<(), String> {
++    if window.label() != "main" { return Err("Only the main window can close the editor".into()); }
++    if let Some(panel) = app.get_webview_window("community-editor") { panel.close().map_err(|e| e.to_string())?; }
++    Ok(())
++}
+--- a/src-tauri/src/main.rs
++++ b/src-tauri/src/main.rs
+@@ -13,12 +13,14 @@
+ mod desktop_endpoint;
+ mod userbot_security;
+ mod ai_panel;
++mod community_editor;
+ mod privacy;
+ 
+ use std::net::TcpStream;
+ use std::path::PathBuf;
+ use std::process::{Child, Command, Stdio};
+-use std::sync::Mutex;
++use std::sync::{Mutex, atomic::{AtomicBool, Ordering}};
++static APP_EXITING: AtomicBool = AtomicBool::new(false);
+ use std::time::{Duration, Instant};
+ #[cfg(windows)]
+ use std::os::windows::process::CommandExt as _;
+@@ -129,6 +131,7 @@
+ ///    首行额外写一条壳侧启动记录（node/bundle/YH_ROOT 实际路径），路径类崩溃可直接对账。
+ fn spawn_sidecar(res: &std::path::Path) -> bool {
+     let Ok(mut slot) = sidecar_slot().lock() else { return false };
++    if APP_EXITING.load(Ordering::SeqCst) { return false; }
+     if let Some(child) = slot.as_mut() {
+         if matches!(child.try_wait(), Ok(None)) { return true; }
+     }
+@@ -279,6 +282,7 @@
+         let mut respawn_fail = 0u32;
+         loop {
+             std::thread::sleep(Duration::from_secs(2));
++            if APP_EXITING.load(Ordering::SeqCst) { return; }
+             let need_respawn = match sidecar_slot().lock() {
+                 Ok(mut guard) => {
+                     let st = guard.as_mut().map(|c| c.try_wait()); // 借用在此结束
+@@ -324,6 +328,7 @@
+         // WebView2 对 target=_blank 的新窗口导航默认拦截，表现为「点网址没反应」
+         .plugin(tauri_plugin_opener::init())
+         .invoke_handler(tauri::generate_handler![restart_sidecar, open_external_url, privacy::set_privacy,
++            community_editor::open_community_editor, community_editor::close_community_editor,
+             ai_panel::open_ai_panel, ai_panel::close_ai_panel, ai_panel::ai_panel_action,
+             userbot_security::secure_read, userbot_security::secure_write, userbot_security::secure_delete,
+             userbot_security::ai_bridge_token,
+@@ -456,6 +461,7 @@
+                 // 菜单项点击：「退出」先杀 sidecar，再退出应用
+                 .on_menu_event(|app, event| match event.id().as_ref() {
+                     "quit" => {
++                        APP_EXITING.store(true, Ordering::SeqCst);
+                         notifications::clear();
+                         kill_sidecar();
+                         app.exit(0);
+@@ -500,6 +506,8 @@
+                 }
+             }
+             if let tauri::WindowEvent::Destroyed = event {
++                APP_EXITING.store(true, Ordering::SeqCst);
++                if let Some(panel) = window.get_webview_window("community-editor") { let _ = panel.close(); }
+                 if let Some(panel) = window.get_webview_window("ai-reply") { let _ = panel.close(); }
+                 notifications::clear();
+                 // 主窗口关闭 = 清理 sidecar（kill_sidecar 幂等，托盘退出路径已 take 过则为空操作）
+@@ -507,6 +515,9 @@
+             }
+         })
+         .run(tauri::generate_context!());
++
++    APP_EXITING.store(true, Ordering::SeqCst);
++    kill_sidecar();
+ 
+     // 原来这里是 .expect("error while running tauri application")，
+     // panic=abort 下会直接 abort。改成打印后以非零码干净退出。
+--- a/src-tauri/src/privacy.rs
++++ b/src-tauri/src/privacy.rs
+@@ -13,7 +13,7 @@
+     CAPTURE.store(capture, Ordering::SeqCst);
+     for (_, win) in app.webview_windows() {
+         win.set_content_protected(capture).map_err(|e| e.to_string())?;
+-        if locked && win.label() == "ai-reply" { let _ = win.hide(); }
++        if locked && (win.label() == "ai-reply" || win.label() == "community-editor") { let _ = win.hide(); }
+     }
+     Ok(())
+ }
+--- a/src-tauri/tauri.conf.json
++++ b/src-tauri/tauri.conf.json
+@@ -1,7 +1,7 @@
+ {
+   "$schema": "https://schema.tauri.app/config/2",
+   "productName": "YunhuLaoda",
+-  "version": "1.0.23",
++  "version": "1.0.24",
+   "identifier": "com.richkobe.yunhulaoda",
+   "build": {
+     "beforeBuildCommand": "",
+--- a/src/App.vue
++++ b/src/App.vue
+@@ -9,6 +9,7 @@
+ import Login from './components/Login.vue'
+ import Console from './console/Console.vue'
+ import Toasts from './components/Toasts.vue'
++import CommunityEditorHost from './components/CommunityEditorHost.vue'
+ 
+ const ctx = inject<any>('ctx')
+ </script>
+@@ -20,4 +21,5 @@
+   </div>
+   <Console v-else />
+   <Toasts />
++  <CommunityEditorHost v-if="ctx.community" />
+ </template>
+--- /dev/null
++++ b/src/components/CommunityEditor.vue
+@@ -0,0 +1,124 @@
++<script setup lang="ts">
++import { computed, ref, nextTick, watch } from 'vue'
++import Icon from '../console/components/Icon.vue'
++import { renderMarkdown } from '../core/render'
++import { fixResourceUrls } from '../core/res'
++import { markdownEdit, type CommunityDraft } from '../core/community-drafts'
++const props = defineProps<{ draft: CommunityDraft; busy?: boolean; error?: string; savedAt?: number; detached?: boolean; uploading?: boolean }>()
++const emit = defineEmits(['change', 'save', 'publish', 'close', 'detach', 'upload'])
++const mode = ref('split'), source = ref<HTMLTextAreaElement>(), preview = ref<HTMLElement>(), outlineOpen = ref(false), focus = ref(false)
++const findOpen = ref(false), find = ref(''), replacement = ref(''), linkOpen = ref(false), linkUrl = ref('https://'), linkLabel = ref(''), linkImage = ref(false)
++const history = ref<string[]>([props.draft.content]), cursor = ref(0), interval = ref(30)
++const html = computed(() => props.draft.contentType === 1 ? '' : renderMarkdown(props.draft.content))
++const headings = computed(() => props.draft.content.split('\n').map((line, index) => ({ line, index, match: /^(#{1,6})\s+(.+)/.exec(line) })).filter(x => x.match).slice(0, 100))
++const matches = computed(() => find.value ? props.draft.content.split(find.value).length - 1 : 0)
++let selected = { start: 0, end: 0 }
++function remember() { if (source.value) selected = { start: source.value.selectionStart, end: source.value.selectionEnd } }
++function change(content: string, record = true) {
++  if (record) {
++    const next = history.value.slice(0, cursor.value + 1)
++    if (next[next.length - 1] !== content) next.push(content)
++    if (next.length > 80) next.shift()
++    history.value = next; cursor.value = next.length - 1
++  }
++  emit('change', { content })
++}
++async function edit(before: string, after = '', placeholder = '文字') {
++  if (props.busy || props.draft.contentType === 1) return
++  const next = markdownEdit(props.draft.content, selected.start, selected.end, before, after, placeholder)
++  change(next.text); mode.value = mode.value === 'preview' ? 'split' : mode.value
++  await nextTick(); source.value?.focus(); source.value?.setSelectionRange(next.start, next.end); remember()
++}
++function undo(redo = false) { const index = cursor.value + (redo ? 1 : -1); if (index < 0 || index >= history.value.length) return; cursor.value = index; change(history.value[index], false) }
++function key(e: KeyboardEvent) {
++  remember()
++  if (e.key === 'Tab') { e.preventDefault(); void edit('  ', '', '') }
++  if (!(e.ctrlKey || e.metaKey)) return
++  const k = e.key.toLowerCase()
++  if (['b', 'i', 's', 'f', 'h', 'z', 'y', 'k', 'enter'].includes(k)) e.preventDefault()
++  if (k === 'b') void edit('**', '**')
++  if (k === 'i') void edit('*', '*')
++  if (k === 's') emit('save')
++  if (k === 'enter' && !props.busy) emit('publish')
++  if (k === 'f' || k === 'h') findOpen.value = !findOpen.value
++  if (k === 'z') undo(e.shiftKey)
++  if (k === 'y') undo(true)
++  if (k === 'k') openLink(false)
++}
++function openLink(image: boolean) { linkImage.value = image; linkLabel.value = props.draft.content.slice(selected.start, selected.end); linkOpen.value = true }
++function insertLink() {
++  try {
++    const url = new URL(linkUrl.value)
++    if (!['https:', 'http:'].includes(url.protocol)) return
++    const label = linkLabel.value.replace(/[\[\]\n]/g, '') || (linkImage.value ? '图片' : '链接')
++    change(props.draft.content.slice(0, selected.start) + (linkImage.value ? '!' : '') + '[' + label + '](' + url.href.replace(/\)/g, '%29') + ')' + props.draft.content.slice(selected.end))
++    linkOpen.value = false
++  } catch { /* Invalid URL remains editable. */ }
++}
++function replaceAll() { if (find.value) change(props.draft.content.split(find.value).join(replacement.value)) }
++async function findNext() {
++  if (!find.value) return
++  mode.value = 'source'; await nextTick()
++  const from = source.value?.selectionEnd || 0
++  let index = props.draft.content.indexOf(find.value, from)
++  if (index < 0) index = props.draft.content.indexOf(find.value)
++  if (index >= 0) { source.value?.focus(); source.value?.setSelectionRange(index, index + find.value.length); remember() }
++}
++async function gotoLine(line: number) {
++  mode.value = 'source'; await nextTick()
++  const offset = props.draft.content.split('\n').slice(0, line).reduce((sum, value) => sum + value.length + 1, 0)
++  source.value?.focus(); source.value?.setSelectionRange(offset, offset); if (source.value) source.value.scrollTop = line * 26; remember()
++}
++function exportMd() {
++  const blob = new Blob([props.draft.title + '\n\n' + props.draft.content], { type: 'text/markdown;charset=utf-8' }), url = URL.createObjectURL(blob)
++  const a = document.createElement('a'); a.href = url; a.download = (props.draft.title || '未命名文章').replace(/[\\/:*?"<>|]/g, '_') + '.md'; a.click(); setTimeout(() => URL.revokeObjectURL(url), 1000)
++}
++async function importMd(ev: Event) {
++  const input = ev.target as HTMLInputElement, file = input.files?.[0]
++  if (file && file.size <= 800000) change(await file.text())
++  input.value = ''
++}
++function upload(ev: Event) { const el = ev.target as HTMLInputElement; if (el.files?.[0]) emit('upload', el.files[0]); el.value = '' }
++watch(html, async () => { await nextTick(); fixResourceUrls(preview.value) })
++watch(interval, value => emit('change', { autoSaveSeconds: Number(value) }))
++</script>
++
++<template>
++  <section class="community-editor" :class="{ 'editor-focus': focus }" aria-label="文章编辑器" @keydown="key">
++    <header class="editor-top"><div><small>{{ draft.boardName }} · {{ draft.postId ? '编辑文章' : '新文章' }}</small><strong>把想法写下来</strong></div><div class="editor-buttons"><button type="button" title="导出 Markdown" aria-label="导出 Markdown" @click="exportMd"><Icon name="download" :size="17" /></button><button type="button" :aria-label="detached ? '返回主窗口编辑' : '在独立窗口编辑'" :disabled="busy" @click="emit('detach')"><Icon :name="detached ? 'collapse' : 'expand'" :size="17" /></button><button type="button" aria-label="保存并关闭编辑器" :disabled="busy" @click="emit('close')"><Icon name="close" :size="19" /></button></div></header>
++    <input class="editor-title" :value="draft.title" aria-label="文章标题" placeholder="文章标题" maxlength="200" :disabled="busy" @input="emit('change', { title: ($event.target as HTMLInputElement).value })" />
++    <div class="editor-toolbar" role="toolbar" aria-label="Markdown 工具栏" @pointerdown="remember">
++      <button type="button" aria-label="撤销" title="撤销 Ctrl+Z" :disabled="busy || cursor === 0" @click="undo()"><Icon name="undo" :size="16" /></button><button type="button" aria-label="重做" title="重做 Ctrl+Y" :disabled="busy || cursor >= history.length - 1" @click="undo(true)">↪</button>
++      <select aria-label="插入标题" :disabled="busy || draft.contentType === 1" value="" @change="edit(($event.target as HTMLSelectElement).value, '', '标题'); ($event.target as HTMLSelectElement).value = ''"><option value="" disabled>标题</option><option v-for="n in 6" :key="n" :value="'#'.repeat(n) + ' '">H{{ n }}</option></select>
++      <button aria-label="加粗" title="加粗 Ctrl+B" :disabled="busy" @click="edit('**', '**')"><b>B</b></button><button aria-label="斜体" title="斜体 Ctrl+I" :disabled="busy" @click="edit('*', '*')"><i>I</i></button><button aria-label="删除线" title="删除线" :disabled="busy" @click="edit('~~', '~~')"><s>S</s></button><button aria-label="下划线" title="下划线" :disabled="busy" @click="edit('<u>', '</u>')"><u>U</u></button><button aria-label="高亮" title="高亮" :disabled="busy" @click="edit('<mark>', '</mark>')">荧光</button>
++      <span class="tool-separator"></span><button aria-label="引用" title="引用" :disabled="busy" @click="edit('\n> ', '\n')"><Icon name="quote" :size="16" /></button><button aria-label="无序列表" title="无序列表" :disabled="busy" @click="edit('\n- ', '\n', '列表项')">• 列表</button><button aria-label="有序列表" title="有序列表" :disabled="busy" @click="edit('\n1. ', '\n', '列表项')">1. 列表</button><button aria-label="任务列表" title="任务列表" :disabled="busy" @click="edit('\n- [ ] ', '\n', '待办事项')">☐ 待办</button><button aria-label="行内代码" title="行内代码" :disabled="busy" @click="edit('`', '`', 'code')">&lt;/&gt;</button><button aria-label="代码块" title="代码块" :disabled="busy" @click="edit('\n```text\n', '\n```\n', '代码')">代码块</button>
++      <button aria-label="插入链接" title="链接 Ctrl+K" :disabled="busy" @click="openLink(false)"><Icon name="link" :size="16" /></button><button aria-label="插入图片链接" title="图片链接" :disabled="busy" @click="openLink(true)"><Icon name="image" :size="16" /></button><label class="editor-file" title="上传图片"><Icon name="plus" :size="16" />图片<input type="file" accept="image/*" hidden :disabled="busy || uploading" aria-label="上传文章图片" @change="upload" /></label>
++      <button aria-label="插入表格" title="插入表格" :disabled="busy" @click="edit('\n| 列一 | 列二 |\n| --- | --- |\n| ', ' | 内容 |\n', '内容')">表格</button><button aria-label="插入分隔线" title="分隔线" :disabled="busy" @click="edit('\n\n---\n', '', '')">―</button><button aria-label="查找替换" title="查找替换 Ctrl+F" @click="findOpen = !findOpen"><Icon name="search" :size="16" /></button><button aria-label="文章大纲" :aria-pressed="outlineOpen" @click="outlineOpen = !outlineOpen"><Icon name="menu" :size="16" /></button><button aria-label="专注写作" :aria-pressed="focus" @click="focus = !focus"><Icon name="collapse" :size="16" /></button>
++    </div>
++    <Transition name="editor-bar"><form v-if="linkOpen" class="editor-find" @submit.prevent="insertLink"><input v-model="linkLabel" aria-label="链接文字" placeholder="文字或图片说明" /><input v-model="linkUrl" aria-label="链接地址" type="url" required placeholder="https://" /><button type="submit">插入</button><button type="button" @click="linkOpen = false">取消</button></form></Transition>
++    <Transition name="editor-bar"><div v-if="findOpen" class="editor-find"><input v-model="find" aria-label="查找文字" placeholder="查找文字" /><input v-model="replacement" aria-label="替换文字" placeholder="替换为" /><small>{{ matches }} 处</small><button type="button" @click="findNext">下一处</button><button type="button" :disabled="!find || busy" @click="replaceAll">全部替换</button><button type="button" aria-label="关闭查找" @click="findOpen = false">×</button></div></Transition>
++    <div class="editor-view-controls"><nav aria-label="编辑视图"><button v-for="v in [{ id: 'source', name: '编辑' }, { id: 'split', name: '双栏' }, { id: 'preview', name: '预览' }]" :key="v.id" :aria-pressed="mode === v.id" @click="mode = v.id">{{ v.name }}</button></nav><label>格式<select aria-label="文章格式" :value="draft.contentType" :disabled="busy" @change="emit('change', { contentType: Number(($event.target as HTMLSelectElement).value) })"><option :value="2">Markdown</option><option :value="1">纯文本</option></select></label><label class="editor-file">导入 .md<input type="file" accept=".md,.txt,.markdown" hidden aria-label="导入 Markdown" :disabled="busy" @change="importMd" /></label></div>
++    <div class="editor-workspace" :class="'view-' + mode">
++      <aside v-if="outlineOpen" class="editor-outline" aria-label="文章大纲"><strong>大纲</strong><button v-for="h in headings" :key="h.index" :style="{ paddingLeft: (h.match![1].length - 1) * 10 + 6 + 'px' }" @click="gotoLine(h.index)">{{ h.match![2] }}</button><p v-if="!headings.length">使用标题组织文章</p></aside>
++      <textarea v-show="mode !== 'preview'" ref="source" class="editor-source" :value="draft.content" aria-label="文章正文" placeholder="开始写作… 使用工具栏快速插入格式。" :disabled="busy" spellcheck="false" maxlength="200000" @input="change(($event.target as HTMLTextAreaElement).value); remember()" @select="remember" @keyup="remember" @click="remember"></textarea>
++      <article v-show="mode !== 'source'" ref="preview" class="editor-preview" aria-label="文章预览"><template v-if="draft.contentType === 1"><p class="plain-preview">{{ draft.content || '在左侧输入内容，这里显示预览。' }}</p></template><div v-else v-html="html || '<p>在左侧输入内容，这里显示预览。</p>'"></div></article>
++    </div>
++    <footer class="editor-bottom"><div class="editor-save-status"><span>{{ draft.content.length }} 字符</span><label>自动保存<select v-model="interval" aria-label="草稿自动保存间隔"><option :value="10">10 秒</option><option :value="30">30 秒</option><option :value="60">60 秒</option></select></label><span role="status">{{ uploading ? '正在上传图片…' : savedAt ? '草稿已保存 ' + new Date(savedAt).toLocaleTimeString() : '输入后自动保存草稿' }}</span></div><div class="editor-submit"><button type="button" class="secondary" :disabled="busy" @click="emit('save')">保存草稿</button><button type="button" :disabled="busy || uploading || !draft.title.trim() || !draft.content.trim()" @click="emit('publish')">{{ busy ? '发布中…' : draft.postId ? '更新文章' : '发布文章' }}</button></div></footer>
++    <p v-if="error" class="editor-error" role="alert">{{ error }}</p>
++  </section>
++</template>
++
++<style scoped>
++.community-editor { display:flex; flex-direction:column; width:100%; height:100%; min-height:0; color:var(--fg); background:var(--card); font-size:13px; }
++.community-editor button,.editor-file,.community-editor select { background:var(--card2); color:var(--fg); border:1px solid var(--line); border-radius:8px; padding:6px 10px; font:inherit; cursor:pointer; }
++.community-editor button:hover,.editor-file:hover { background:var(--acc-soft); color:var(--acc); }.community-editor button:disabled { opacity:.45; cursor:default; }
++.editor-top { display:flex; align-items:center; justify-content:space-between; gap:10px; padding:16px 22px; border-bottom:1px solid var(--line); }.editor-top small { display:block; color:var(--fg2); margin-bottom:5px; }.editor-top strong { font-size:18px; }.editor-buttons { display:flex; gap:5px; }.editor-buttons button { display:grid; place-items:center; padding:7px; background:transparent; }
++.editor-title { padding:22px 26px 18px; font-size:25px; font-weight:650; color:var(--fg); border:0; border-radius:0; width:100%; background:transparent; box-sizing:border-box; outline:0; }
++.editor-toolbar { display:flex; flex-wrap:wrap; gap:4px; padding:8px 16px; border-block:1px solid var(--line); background:var(--card2); }.editor-toolbar button { min-width:29px; height:30px; padding:5px 8px; display:inline-flex; align-items:center; justify-content:center; border-color:transparent; background:transparent; font-size:12px; }.editor-toolbar select { padding:3px; max-width:65px; }.editor-file { display:inline-flex; gap:4px; align-items:center; font-size:12px; }.tool-separator { border-left:1px solid var(--line); margin:3px; }
++.editor-view-controls { display:flex; align-items:center; gap:14px; padding:9px 18px; color:var(--fg2); font-size:11px; flex-wrap:wrap; }.editor-view-controls nav { display:flex; gap:3px; margin-right:auto; }.editor-view-controls button { border:0; background:transparent; font-size:12px; }.editor-view-controls button[aria-pressed=true] { background:var(--acc-soft); color:var(--acc); }.editor-view-controls label { display:flex; gap:5px; align-items:center; }.editor-view-controls select { font-size:11px; padding:3px; }
++.editor-workspace { display:flex; flex:1; min-height:0; overflow:hidden; border-block:1px solid var(--line); }.editor-source { flex:1; min-width:0; resize:none; border:0; border-radius:0; background:var(--bg); color:var(--fg); padding:24px; font:14px/1.9 ui-monospace,Consolas,monospace; outline:0; tab-size:2; }.editor-preview { flex:1; min-width:0; overflow:auto; padding:24px 32px; font-size:15px; line-height:1.9; overflow-wrap:anywhere; border-left:1px solid var(--line); }.editor-preview :deep(img) { max-width:100%; height:auto; border-radius:8px; }.editor-preview :deep(pre) { overflow:auto; background:var(--card2); padding:16px; border-radius:9px; }.editor-preview :deep(table) { display:block; max-width:100%; overflow:auto; border-collapse:collapse; }.editor-preview :deep(td),.editor-preview :deep(th) { padding:8px; border:1px solid var(--line); }.editor-preview :deep(blockquote) { border-left:3px solid var(--acc); padding-left:16px; margin-left:0; color:var(--fg2); }.editor-preview :deep(mark) { background:var(--acc-soft); color:var(--fg); }.plain-preview { white-space:pre-wrap; }.editor-outline { width:160px; flex-shrink:0; overflow:auto; padding:15px 10px; border-right:1px solid var(--line); }.editor-outline strong { display:block; padding:5px; }.editor-outline button { display:block; width:100%; text-align:left; font-size:12px; background:transparent; border:0; overflow-wrap:anywhere; }.editor-outline p { color:var(--fg2); font-size:11px; }
++.editor-find { display:flex; gap:6px; align-items:center; padding:10px 18px; flex-wrap:wrap; }.editor-find input { flex:1; width:80px; min-width:60px; background:var(--bg); color:var(--fg); border:1px solid var(--line); padding:7px; border-radius:7px; }.editor-bottom { display:flex; justify-content:space-between; align-items:center; gap:12px; padding:12px 20px; flex-wrap:wrap; }.editor-save-status { display:flex; flex-wrap:wrap; align-items:center; gap:10px; font-size:11px; color:var(--fg2); }.editor-save-status select { font-size:11px; padding:3px; margin-left:5px; }.editor-submit { display:flex; gap:7px; margin-left:auto; }.editor-submit button:last-child { background:var(--acc); color:var(--on-acc,#202020); }.editor-error { color:var(--err); font-size:12px; margin:0; padding:10px 20px; background:var(--card2); }.editor-focus .editor-top,.editor-focus .editor-view-controls { display:none; }
++.editor-bar-enter-active,.editor-bar-leave-active { transition:opacity .15s,transform .15s; }.editor-bar-enter-from,.editor-bar-leave-to { opacity:0; transform:translateY(-5px); }
++@media(max-width:650px) { .editor-top { padding:12px; }.editor-title { padding:16px; font-size:21px; }.editor-toolbar { padding:7px; gap:2px; max-height:105px; overflow:auto; }.editor-toolbar button { padding:4px 6px; }.view-split .editor-preview { display:none; }.editor-source,.editor-preview { padding:16px; }.editor-outline { width:110px; }.editor-bottom { padding:10px; gap:8px; }.editor-save-status { gap:7px; } }
++@media(prefers-reduced-motion:reduce) { * { transition:none !important; } }
++</style>
+--- /dev/null
++++ b/src/components/CommunityEditorHost.vue
+@@ -0,0 +1,105 @@
++<script setup lang="ts">
++import { inject, ref, watch, nextTick, onBeforeUnmount } from 'vue'
++import CommunityEditor from './CommunityEditor.vue'
++import { PANEL_COLORS, newPanelId } from '../core/ai-panel'
++const ctx = inject<any>('ctx'), cm = ctx.community, s = cm.state
++const dialog = ref<HTMLDialogElement>(), detached = ref(false), uploading = ref(false)
++let bus: BroadcastChannel | undefined, popup: Window | null = null, timer: ReturnType<typeof setTimeout> | undefined
++let repeat: ReturnType<typeof setInterval> | undefined, monitor: ReturnType<typeof setInterval> | undefined, observer: MutationObserver | undefined
++let autoSaveSeconds = 30, ack = 0, offNative: (() => void) | undefined
++const native = !!(window as any).__TAURI_INTERNALS__
++const invoke = (command: string, args?: any) => (window as any).__TAURI__.core.invoke(command, args)
++function snapshot() {
++  if (!bus) return
++  const styles = getComputedStyle(document.documentElement)
++  bus.postMessage({ type: 'snapshot', ack, draft: s.editor ? { ...s.editor } : null, busy: s.publishing, uploading: uploading.value,
++    error: s.editorError, savedAt: s.savedAt, theme: document.documentElement.dataset.theme,
++    colors: Object.fromEntries([...PANEL_COLORS, '--err', '--warn', '--on-acc'].map(k => [k, styles.getPropertyValue(k)])),
++    locked: !!ctx.lock?.isLocked })
++}
++function resetInterval() { if (repeat) clearInterval(repeat); repeat = setInterval(() => { if (s.editor && !s.publishing) cm.saveDraft() }, autoSaveSeconds * 1000) }
++function change(patch: any) {
++  if (!s.editor || s.publishing || ctx.lock?.isLocked) return
++  if ([10, 30, 60].includes(patch?.autoSaveSeconds)) { autoSaveSeconds = patch.autoSaveSeconds; resetInterval(); return }
++  for (const key of ['title', 'content']) {
++    if (typeof patch?.[key] !== 'string') continue
++    if (patch[key].length > (key === 'title' ? 200 : 200000)) { s.editorError = key === 'title' ? '标题最多 200 字' : '正文最多 20 万字，原内容已保留'; return }
++    s.editor[key] = patch[key]
++  }
++  if (patch?.contentType === 1 || patch?.contentType === 2) s.editor.contentType = patch.contentType
++  s.savedAt = 0
++  if (timer) clearTimeout(timer)
++  timer = setTimeout(() => cm.saveDraft(), 800)
++}
++async function image(file: File) {
++  const draft = s.editor
++  if (!draft || uploading.value || s.publishing || !file?.type?.startsWith('image/') || file.size > 10 * 1024 * 1024 || !file.size) { s.editorError = '请选择 10MB 以内的有效图片'; return }
++  uploading.value = true
++  try {
++    const r = await ctx.api.uploadFile(file, 'image')
++    if (draft !== s.editor || ctx.lock?.isLocked) return
++    const raw = r.url || (r.key ? 'https://chat-img.jwznb.com/' + r.key : '')
++    const url = new URL(raw)
++    if (!['http:', 'https:'].includes(url.protocol)) throw new Error('上传接口未返回图片地址')
++    change({ content: draft.content + '\n\n![' + file.name.replace(/[\[\]\n]/g, '') + '](' + url.href.replace(/\)/g, '%29') + ')\n' })
++  } catch (e: any) { if (draft === s.editor) s.editorError = '图片上传失败：' + e.message }
++  finally { uploading.value = false; snapshot() }
++}
++async function dock() {
++  detached.value = false; bus?.postMessage({ type: 'dock' }); bus?.close(); bus = undefined
++  observer?.disconnect(); observer = undefined; if (monitor) clearInterval(monitor)
++  offNative?.(); offNative = undefined
++  if (native) await invoke('close_community_editor').catch(() => {})
++  else { popup?.close(); popup = null }
++}
++async function detach() {
++  if (detached.value) { await dock(); return }
++  if (!cm.saveDraft()) return
++  try {
++    const sessionId = newPanelId()
++    bus = new BroadcastChannel('yh-community-editor-' + sessionId); ack = 0
++    bus.onmessage = async ({ data }) => {
++      if (!detached.value || !s.editor || ctx.lock?.isLocked) return
++      if (data?.type === 'ready') { snapshot(); return }
++      if (data?.type !== 'command' || !Number.isSafeInteger(data.seq) || data.seq <= ack) return
++      ack = data.seq
++      if (data.action === 'change') change(data.patch)
++      else if (data.action === 'save') cm.saveDraft()
++      else if (data.action === 'publish' && !uploading.value) await cm.publish()
++      else if (data.action === 'upload') await image(data.file)
++      else if (data.action === 'close') { if (cm.closeEditor()) await dock() }
++      else if (data.action === 'detach') await dock()
++      snapshot()
++    }
++    detached.value = true
++    if (native) {
++      offNative = await (window as any).__TAURI__.event.listen('community-editor-closed', () => { void dock() })
++      await invoke('open_community_editor', { sessionId })
++    } else {
++      const url = new URL(location.href); url.search = ''; url.searchParams.set('community-editor', sessionId)
++      popup = window.open(url.href, 'yh-editor-' + sessionId, 'popup,width=1100,height=800')
++      if (!popup) throw new Error('请允许打开独立窗口')
++      monitor = setInterval(() => { if (popup?.closed) void dock() }, 700)
++    }
++    observer = new MutationObserver(snapshot); observer.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme', 'style'] })
++    snapshot()
++  } catch (e: any) { await dock(); s.editorError = '独立窗口打开失败：' + e.message }
++}
++watch(() => !!s.editor && !detached.value && !ctx.lock?.isLocked, async visible => { await nextTick(); if (visible && !dialog.value?.open) dialog.value?.showModal(); if (!visible && dialog.value?.open) dialog.value.close() })
++watch(() => s.editor?.id, id => {
++  if (timer) clearTimeout(timer)
++  if (repeat) clearInterval(repeat)
++  if (id) resetInterval(); else void dock()
++})
++watch(() => [s.editor?.title, s.editor?.content, s.editor?.contentType, s.publishing, s.savedAt, s.editorError, uploading.value], snapshot)
++watch(() => ctx.lock?.isLocked, locked => { if (locked) { cm.saveDraft(); void dock() } })
++function flush() { if (s.editor) cm.saveDraft() }
++window.addEventListener('beforeunload', flush)
++onBeforeUnmount(() => { flush(); void dock(); if (timer) clearTimeout(timer); if (repeat) clearInterval(repeat); window.removeEventListener('beforeunload', flush) })
++</script>
++<template>
++  <Teleport to="body"><dialog ref="dialog" class="community-editor-dialog" aria-label="撰写文章" @cancel.prevent="cm.closeEditor()"><CommunityEditor v-if="s.editor" :key="s.editor.id" :draft="s.editor" :busy="s.publishing" :error="s.editorError" :saved-at="s.savedAt" :uploading="uploading" @change="change" @save="cm.saveDraft()" @publish="!uploading && cm.publish()" @upload="image" @close="cm.closeEditor()" @detach="detach" /></dialog></Teleport>
++</template>
++<style scoped>
++.community-editor-dialog { width:min(1240px,96vw); height:92dvh; max-width:none; max-height:none; padding:0; border:1px solid var(--line); border-radius:18px; background:var(--card); color:var(--fg); overflow:hidden; box-shadow:0 24px 90px #0005; }.community-editor-dialog[open] { animation:editor-appear .2s ease-out; }.community-editor-dialog::backdrop { background:#0006; }@keyframes editor-appear { from { opacity:0; transform:translateY(12px) scale(.99); } to { opacity:1; transform:none; } }@media(max-width:650px) { .community-editor-dialog { width:100vw; height:100dvh; margin:0; border:0; border-radius:0; } }@media(prefers-reduced-motion:reduce) { .community-editor-dialog[open] { animation:none; } }
++</style>
+--- /dev/null
++++ b/src/components/FloatingCommunityEditor.vue
+@@ -0,0 +1,21 @@
++<script setup lang="ts">
++import { ref, onBeforeUnmount } from 'vue'
++import CommunityEditor from './CommunityEditor.vue'
++const props = defineProps<{ sessionId: string }>()
++const bus = new BroadcastChannel('yh-community-editor-' + props.sessionId), state = ref<any>(null)
++let seq = 0, lastSeen = Date.now()
++function command(action: string, value: any = {}) { bus.postMessage({ type: 'command', seq: ++seq, action, ...value }) }
++bus.onmessage = ({ data }) => {
++  if (data?.type === 'dock') { state.value = null; window.close(); return }
++  if (data?.type !== 'snapshot' || data.ack < seq) return
++  lastSeen = Date.now()
++  document.documentElement.dataset.theme = data.theme || 'dark'
++  for (const [k, v] of Object.entries(data.colors || {})) if (k.startsWith('--') && typeof v === 'string') document.documentElement.style.setProperty(k, v)
++  state.value = data.locked || !data.draft ? null : data
++}
++const timer = setInterval(() => { bus.postMessage({ type: 'ready' }); if (Date.now() - lastSeen > 12000) state.value = null }, 3000)
++bus.postMessage({ type: 'ready' })
++onBeforeUnmount(() => { clearInterval(timer); bus.close() })
++</script>
++<template><div class="floating-editor"><CommunityEditor v-if="state?.draft" :key="state.draft.id" :draft="state.draft" :busy="state.busy" :error="state.error" :saved-at="state.savedAt" :uploading="state.uploading" detached @change="patch => { Object.assign(state.draft, patch); command('change', { patch }) }" @save="command('save')" @publish="command('publish')" @upload="file => command('upload', { file })" @close="command('close')" @detach="command('detach')" /><p v-else role="status">正在连接主窗口，或当前账号已锁定/退出。</p></div></template>
++<style scoped>.floating-editor { height:100dvh; width:100%; background:var(--card); color:var(--fg); overflow:hidden; }.floating-editor > p { padding:25px; }</style>
+--- a/src/components/ProfilePanel.vue
++++ b/src/components/ProfilePanel.vue
+@@ -11,6 +11,7 @@
+  * 看自己资料时显示「这是你自己」。点板块 chip 会跳到控制台板块页并进入该板块。
+  */
+ import { inject, ref, computed, watch, onUnmounted, nextTick } from 'vue'
++import Icon from '../console/components/Icon.vue'
+ import { resUrl } from '../core/res'
+ import { fallbackAvatar, fmtTime } from '../core/util'
+ 
+@@ -47,18 +48,20 @@
+ 
+ async function loadBas(id: string) {
+   if (!id) { userBas.value = []; return }
++  const version = profileVersion
+   basLoading.value = true
+   try {
+     const result = await ctx.api.baListByCreate(id)
+-    if (String(g.state.profileUser?.id) === id) userBas.value = result
++    if (version === profileVersion && String(g.state.profileUser?.id) === id) userBas.value = result
+   } catch {
+     // 接口失败时，如果是自己就退回本地缓存的「我的板块」
+-    if (String(g.state.profileUser?.id) === id) userBas.value = String(id) === String(ctx.auth?.state?.user?.id || '') ? (cm?.state?.mine || []) : []
+-  } finally { if (String(g.state.profileUser?.id) === id) basLoading.value = false }
++    if (version === profileVersion && String(g.state.profileUser?.id) === id) userBas.value = String(id) === String(ctx.auth?.state?.user?.id || '') ? (cm?.state?.mine || []) : []
++  } finally { if (version === profileVersion && String(g.state.profileUser?.id) === id) basLoading.value = false }
+ }
+ 
+ /** 点板块 → 跳到控制台「板块」页并定位到这个板块 */
+ function gotoBoard(b: any) {
++  g.closeProfile()
+   ctx.community?.focus?.(b)          // 让板块页选中它（并尽量进入）
+   ctx.console?.goto?.('/community')  // 真正的跳页
+ }
+@@ -135,27 +138,41 @@
+   ctx.console?.goto?.('/'); chat.open(conv); g.closeProfile()
+ }
+ 
+-function copyId() {
+-  const id = data.value?.id || g.state.profileUser?.id
+-  navigator.clipboard?.writeText(id).then(
+-    () => ui.toast('已复制 ID', 'success'),
+-    () => navigator.clipboard.writeText(String(id)).then(() => ui.toast('已复制 ' + id, 'success')).catch(() => ui.toast('复制失败', 'error')),
+-  )
++async function copyId() {
++  const id = String(data.value?.id || g.state.profileUser?.id || '')
++  try { await navigator.clipboard.writeText(id); ui.toast('已复制 ID', 'success') }
++  catch { ui.toast('无法访问剪贴板，请手动复制 ID：' + id, 'error') }
++}
++const panel = ref<HTMLElement>()
++let lastFocus: HTMLElement | null = null
++watch(() => !!g.state.profileUser, async visible => {
++  if (visible) { lastFocus = document.activeElement as HTMLElement; await nextTick(); panel.value?.focus() }
++  else { await nextTick(); if (lastFocus?.isConnected) lastFocus.focus() }
++}, { immediate: true })
++function profileKey(e: KeyboardEvent) {
++  if (document.querySelector('dialog[open]')) return
++  if (e.key === 'Escape') { e.stopPropagation(); g.closeProfile() }
++  if (e.key !== 'Tab') return
++  const items = [...(panel.value?.querySelectorAll<HTMLElement>('button:not(:disabled), a[href], input:not(:disabled)') || [])].filter(el => el.getClientRects().length)
++  if (!items.length) return
++  const first = items[0], last = items[items.length - 1]
++  if (e.shiftKey && (document.activeElement === first || document.activeElement === panel.value)) { e.preventDefault(); last.focus() }
++  else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus() }
+ }
+ </script>
+ 
+ <template>
+-  <div v-if="g.state.profileUser" class="pf-mask" @click.self="g.closeProfile()">
+-    <aside class="pf">
++  <Transition name="profile-panel"><div v-if="g.state.profileUser" class="pf-mask" @click.self="g.closeProfile()">
++    <aside ref="panel" class="pf" role="dialog" aria-modal="true" aria-label="用户主页" tabindex="-1" @keydown="profileKey">
+       <header>
+-        <b>用户主页</b>
++        <span class="pf-heading-icon"><Icon name="userCircle" :size="18" /></span><b>用户主页</b>
+         <span class="grow"></span>
+-        <button class="pf-x" @click="g.closeProfile()">×</button>
++        <button class="pf-x" aria-label="关闭用户主页" @click="g.closeProfile()"><Icon name="close" :size="18" /></button>
+       </header>
+ 
+-      <div class="pf-body" v-if="loading">加载中…</div>
+-
+-      <div class="pf-body" v-else-if="data">
++      <div class="pf-body pf-skeleton" v-if="loading" role="status" aria-label="正在加载用户资料"><span class="skeleton-avatar"></span><span></span><span></span><span></span></div>
++
++      <div class="pf-body" v-else-if="data" :key="data.id">
+         <div class="pf-top">
+           <img :src="data.avatar ? resUrl(data.avatar) : fallbackAvatar(data.name)"
+                @error="(e: any) => (e.target.src = fallbackAvatar(data.name))" alt="" />
+@@ -166,13 +183,14 @@
+               <em v-if="data.isVip" class="vip">VIP</em>
+               <em v-if="data.banId" class="ban">封禁中</em>
+             </div>
+-            <div class="dim small">ID {{ data.id }}</div>
++            <button class="pf-id" title="复制 ID" @click="copyId">ID {{ data.id }} <Icon name="copy" :size="12" /></button>
+             <div class="pf-tags" v-if="tags.length">
+               <span v-for="t in tags" :key="t.id" class="pf-tag" :style="{ background: (t.color || '#888') + '22', color: t.color || '#888' }">{{ t.tag }}</span>
+             </div>
+           </div>
+         </div>
+ 
++        <div v-if="!data.isBot" class="pf-highlights"><div><strong>{{ data.onlineDay ?? '—' }}</strong><span>在线天数</span></div><div><strong>{{ data.medalCount ?? 0 }}</strong><span>获得勋章</span></div><div><strong>{{ userBas.length }}</strong><span>创建板块</span></div></div>
+         <p class="dim small" v-if="data._note">{{ data._note }}</p>
+ 
+         <!-- 机器人资料（/v1/bot/bot-info） -->
+@@ -252,37 +270,38 @@
+ 
+       <div class="pf-body" v-else>没有拿到资料</div>
+     </aside>
+-  </div>
++  </div></Transition>
+ </template>
+ 
+ <style scoped>
+-.pf-mask { position: fixed; inset: 0; background: rgba(0, 0, 0, .35); z-index: 115; display: flex; justify-content: flex-end; }
+-.pf { width: 400px; max-width: 94vw; background: var(--card); border-left: 1px solid var(--line); display: flex; flex-direction: column; box-shadow: var(--shadow); }
+-.pf > header { display: flex; align-items: center; gap: 8px; padding: 12px 14px; border-bottom: 1px solid var(--line); }
++.pf-mask { color:var(--fg);  position: fixed; inset: 0; background: rgba(0, 0, 0, .35); z-index: 115; display: flex; justify-content: flex-end; }
++.pf { width: 440px; max-width: 100vw; outline:none; background: var(--card); border-left: 1px solid var(--line); display: flex; flex-direction: column; box-shadow: var(--shadow); }
++.pf > header { display: flex; align-items: center; gap: 8px; padding: 17px 20px; border-bottom: 1px solid var(--line); }
+ .pf > header .grow { flex: 1; }
+ .pf-x { background: transparent; color: var(--fg2); font-size: 20px; padding: 0 8px; line-height: 1; }
+ .pf-x:hover { color: var(--err); background: transparent; }
+-.pf-body { flex: 1; overflow: auto; padding: 16px; }
+-.pf-top { display: flex; gap: 12px; align-items: center; }
+-.pf-top img { width: 56px; height: 56px; border-radius: 50%; object-fit: cover; background: var(--card2); }
+-.pf-name { font-size: 16px; font-weight: 600; display: flex; align-items: center; gap: 6px; }
++.pf-body { flex: 1; overflow: auto; padding: 24px; scrollbar-gutter:stable; animation:profile-content .2s ease-out; }
++.pf-top { display: flex; gap: 16px; align-items: center; padding:12px 0 21px; }
++.pf-top img { width: 80px; height: 80px; border-radius: 25px; flex-shrink:0; border:3px solid var(--card2); object-fit: cover; background: var(--card2); }
++.pf-name { overflow-wrap:anywhere; flex-wrap:wrap; font-size: 22px; font-weight: 600; display: flex; align-items: center; gap: 6px; }
+ .pf-name em { font-style: normal; font-size: 11px; border-radius: 5px; padding: 1px 6px; }
+ .pf-name em.vip { color: var(--warn); background: color-mix(in srgb, var(--warn) 18%, transparent); }
+ .pf-name em.ban { color: var(--err); background: color-mix(in srgb, var(--err) 18%, transparent); }
+ .pf-name em.bot { color: var(--acc); background: var(--acc-soft); }
+ .pf-tags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 5px; }
+ .pf-tag { font-size: 11px; border-radius: 5px; padding: 1px 6px; }
+-.pf-grid { display: grid; grid-template-columns: 1fr; gap: 2px; margin-top: 14px; }
+-.kv { display: flex; gap: 10px; font-size: 13px; padding: 3px 0; }
+-.kv .k { flex: 0 0 80px; color: var(--fg2); font-size: 12.5px; }
++.pf-grid { display:grid; grid-template-columns:1fr; gap:0; margin-top:18px; padding:8px 16px; background:var(--card2); border:1px solid var(--line); border-radius:16px; }
++.kv { display: flex; gap: 10px; font-size:13px; padding:11px 0; border-bottom:1px solid var(--line); }
++.kv:last-child { border-bottom:0; }.kv > span:last-child { min-width:0; overflow-wrap:anywhere; }.kv .k { flex: 0 0 80px; color: var(--fg2); font-size: 12.5px; }
+ .pf-intro { margin-top: 14px; }
+ .pf-intro .lab { font-size: 12.5px; color: var(--fg2); margin-bottom: 4px; }
+ .pf-intro p { margin: 0; font-size: 13px; white-space: pre-wrap; background: var(--card2); padding: 10px; border-radius: 8px; }
+-.pf-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 18px; }
++.pf-actions { padding-top:18px; border-top:1px solid var(--line); display: flex; flex-wrap: wrap; gap: 8px; margin-top: 18px; }
+ .pf-ba { margin-top: 16px; }
+ .pf-ba .lab { font-size: 12.5px; color: var(--fg2); margin-bottom: 6px; }
+ .ba-list { display: flex; flex-wrap: wrap; gap: 6px; }
+-.ba-chip { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; padding: 4px 9px; border-radius: 999px; border: 1px solid var(--line); background: transparent; color: var(--fg); cursor: pointer; }
+-.ba-chip:hover { border-color: var(--acc); color: var(--acc); }
++.ba-chip { transition:background .16s, border-color .16s, transform .16s;  display: inline-flex; align-items: center; gap: 5px; font-size: 12px; padding: 4px 9px; border-radius: 999px; border: 1px solid var(--line); background: transparent; color: var(--fg); cursor: pointer; }
++.ba-chip:hover { background:var(--acc-soft); transform:translateY(-1px);  border-color: var(--acc); color: var(--acc); }
+ .ba-chip img, .ba-ic { width: 18px; height: 18px; border-radius: 5px; object-fit: cover; display: inline-flex; align-items: center; justify-content: center; background: var(--card2); font-size: 11px; }
++.pf-heading-icon { display:grid; place-items:center; color:var(--acc); background:var(--acc-soft); width:32px; height:32px; border-radius:10px; }.pf > header b { font-size:13px; letter-spacing:.5px; }.pf-x { display:grid; place-items:center; width:30px; height:30px; border-radius:9px; }.pf-id { display:inline-flex; align-items:center; gap:7px; background:transparent; color:var(--fg2); font-size:11px; padding:5px 0; }.pf-id:hover { color:var(--acc); background:transparent; }.pf-highlights { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); background:var(--acc-soft); border-radius:16px; padding:16px 5px; }.pf-highlights > div { display:flex; align-items:center; flex-direction:column; gap:4px; border-right:1px solid var(--line); }.pf-highlights > div:last-child { border:0; }.pf-highlights strong { font-size:21px; font-weight:650; }.pf-highlights span { color:var(--fg2); font-size:10px; }.pf-skeleton { display:flex; flex-direction:column; gap:18px; }.pf-skeleton span { display:block; height:34px; border-radius:9px; background:var(--card2); }.pf-skeleton .skeleton-avatar { width:80px; height:80px; border-radius:25px; }.pf-intro .lab,.pf-ba .lab { font-weight:600; color:var(--fg); margin-bottom:10px; }.pf-intro p { line-height:1.8; padding:14px; border-radius:13px; }.pf-actions button { display:inline-flex; align-items:center; justify-content:center; border-radius:10px; min-height:34px; padding:8px 12px; }.pf-actions .danger { color:var(--err); }.profile-panel-enter-active,.profile-panel-leave-active { transition:opacity .2s ease; }.profile-panel-enter-active .pf,.profile-panel-leave-active .pf { transition:transform .25s cubic-bezier(.2,.7,.3,1); }.profile-panel-enter-from,.profile-panel-leave-to { opacity:0; }.profile-panel-enter-from .pf,.profile-panel-leave-to .pf { transform:translateX(100%); }@keyframes profile-content { from { opacity:0; transform:translateY(7px); } to { opacity:1; transform:none; } }@media(max-width:480px) { .pf { width:100%; border-left:0; }.pf-body { padding:18px; }.pf-name { font-size:21px; } }@media(prefers-reduced-motion:reduce) { *, .profile-panel-enter-active .pf,.profile-panel-leave-active .pf { transition:none !important; animation:none !important; } }
+ </style>
+--- a/src/console/components/Icon.vue
++++ b/src/console/components/Icon.vue
+@@ -11,6 +11,7 @@
+ const props = defineProps({ name: { type: String, default: 'page' }, size: { type: [Number, String], default: 20 } })
+ 
+ const PATHS = {
++  heart: 'M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.7l-1.1-1.1a5.5 5.5 0 0 0-7.8 7.8L12 21l8.8-8.6a5.5 5.5 0 0 0 0-7.8z',
+   chat: 'M21 11.5a8.4 8.4 0 0 1-9 8.4 9 9 0 0 1-3.8-.8L3 21l1.9-4.6A8.4 8.4 0 0 1 4 11.5 8.4 8.4 0 0 1 12.5 3 8.4 8.4 0 0 1 21 11.5z',
+   puzzle: 'M10 3.5a2 2 0 0 1 4 0V5h3a1 1 0 0 1 1 1v3h1.5a2 2 0 0 1 0 4H18v3a1 1 0 0 1-1 1h-3v-1.5a2 2 0 0 0-4 0V20H7a1 1 0 0 1-1-1v-3H4.5a2 2 0 0 1 0-4H6V6a1 1 0 0 1 1-1h3z',
+   terminal: 'M4 5h16v14H4zM7 9l3 3-3 3M13 15h4',
+--- a/src/console/pages/CommunityPage.vue
++++ b/src/console/pages/CommunityPage.vue
+@@ -6,6 +6,7 @@
+ import { fmtTime } from '../../core/util'
+ import { renderMarkdown } from '../../core/render'
+ import { fixResourceUrls } from '../../core/res'
++import { communityFlag } from '../../core/community-drafts'
+ 
+ const ctx = inject<any>('ctx'), cm = ctx.community, s = cm.state
+ const TABS = [{ key: 2, label: '热门' }, { key: 1, label: '关注' }, { key: 3, label: '我的' }, { key: 4, label: '全部' }]
+@@ -18,18 +19,73 @@
+   if (!focusReading.value) { focusReading.value = true; showLibrary.value = false }
+   else showLibrary.value = !showLibrary.value
+ }
+-const dialogType = computed(() => creating.value ? 'create' : s.editing ? 'edit' : s.groupsOf ? 'groups' : '')
+-const dialogTitle = computed(() => ({ create: '创建板块', edit: '管理板块', groups: '关联群聊' }[dialogType.value] || ''))
+-const busy = computed(() => s.creating || s.saving || s.managing || s.binding || s.uploading)
++const dialogType = computed(() => draftsOpen.value ? 'drafts' : sharing.value ? 'share' : creating.value ? 'create' : s.editing ? 'edit' : s.groupsOf ? 'groups' : '')
++const dialogTitle = computed(() => ({ create: '创建板块', edit: '管理板块', groups: '关联群聊', drafts: '本地草稿', share: '分享至会话' }[dialogType.value] || ''))
++const busy = computed(() => s.creating || s.saving || s.managing || s.binding || s.uploading || sharingBusy.value)
+ const norm = (t: any) => String(t ?? '').normalize('NFKC').toLocaleLowerCase()
+ const boards = computed(() => s.list.filter((b: any) => norm(`${b.name} ${b.id}`).includes(norm(search.value.trim()))))
+ const posts = computed(() => s.posts.filter((p: any) => norm(`${p.title} ${p.senderName || p.senderId}`).includes(norm(postSearch.value.trim()))))
+ const owns = (b: any) => cm.owns(b)
+ const followed = (b: any) => cm.isFollowed(b.id)
+ const followBusy = (b: any) => s.following.includes(Number(b.id))
+-const articleHtml = computed(() => renderMarkdown(String(s.postDetail?.content || '')))
++const articleHtml = computed(() => Number(s.postDetail?.contentType) === 1 ? '' : renderMarkdown(String(s.postDetail?.content || '')))
+ const canBind = typeof ctx.api?.bindBaGroup === 'function'
+ const permission = ref('')
++const draftsOpen = ref(false), sharing = ref<'board' | 'post' | ''>(''), shareTarget = ref(''), sharingBusy = ref(false)
++let groupInspectRequest = 0
++const selectedGroup = ref<any>(null), groupJoined = ref(false), groupBusy = ref(false), groupError = ref('')
++const shareTargets = computed(() => (ctx.chat?.state?.conversations || []).map((c: any) => ({ ...c, key: c.type + ':' + c.id })))
++function showDrafts() { cm.refreshDrafts(); draftsOpen.value = true }
++function resumeDraft(draft: any) { if (cm.openEditor(draft)) draftsOpen.value = false }
++async function removeDraft(draft: any) { if (await ctx.ui.confirm?.('删除草稿', '确定删除这篇本地草稿？', { danger: true })) cm.deleteDraft(draft.id) }
++function share(kind: 'board' | 'post') { sharing.value = kind; shareTarget.value = '' }
++async function copyPostLink() {
++  try { await navigator.clipboard.writeText('yunhu://post-detail?id=' + encodeURIComponent(s.postDetail.id)); ctx.ui.toast('文章链接已复制', 'success') }
++  catch { ctx.ui.toast('无法使用剪贴板，请通过分享按钮选择会话', 'error') }
++}
++async function sendShare() {
++  const target = shareTargets.value.find((c: any) => c.key === shareTarget.value), kind = sharing.value, board = s.viewing, post = s.postDetail
++  const account = String(ctx.auth?.state?.user?.id || '')
++  if (!target || sharingBusy.value) return
++  sharingBusy.value = true
++  try {
++    if (kind === 'board') await ctx.api.baForward(Number(board.id), [{ chatId: String(target.id), chatType: target.type }])
++    else await ctx.api.send(String(target.id), target.type, 6, { post_id: Number(post.id), post_title: post.title, post_content: String(post.content || '').slice(0, 200) })
++    if (account !== String(ctx.auth?.state?.user?.id || '')) return
++    sharing.value = ''; ctx.ui.toast('已分享至「' + target.name + '」', 'success')
++    if (String(ctx.chat?.state?.current?.id) === String(target.id) && ctx.chat.state.current.type === target.type) void ctx.chat.loadMessages?.()
++  } catch (e: any) { ctx.ui.toast('分享失败：' + e.message, 'error') }
++  finally { sharingBusy.value = false }
++}
++async function inspectGroup(group: any) {
++  const request = ++groupInspectRequest, account = String(ctx.auth?.state?.user?.id || '')
++  selectedGroup.value = group; groupJoined.value = false; groupBusy.value = true; groupError.value = ''
++  try {
++    const book = await ctx.api.addressBook()
++    if (!Array.isArray(book?.groups)) throw new Error('通讯录未返回群列表')
++    if (request === groupInspectRequest && account === String(ctx.auth?.state?.user?.id || '')) groupJoined.value = book.groups.some((g: any) => String(g.id) === String(group.groupId || group.id))
++  } catch (e: any) { if (request === groupInspectRequest) groupError.value = '无法确认入群状态：' + e.message }
++  finally { if (request === groupInspectRequest) groupBusy.value = false }
++}
++function goGroup() {
++  const group = selectedGroup.value
++  if (!group || !groupJoined.value || groupBusy.value || groupError.value) return
++  const id = String(group.groupId || group.id)
++  const conv = ctx.chat.state.conversations.find((c: any) => c.type === 2 && String(c.id) === id) || { id, type: 2, name: group.name, avatar: group.avatar || group.avatarUrl, unread: 0, preview: '', ts: Date.now() }
++  cm.closeGroups(); selectedGroup.value = null; groupInspectRequest++; ctx.console.goto('/'); void ctx.chat.open(conv)
++}
++async function joinGroup() {
++  const group = selectedGroup.value, account = String(ctx.auth?.state?.user?.id || ''), request = groupInspectRequest
++  if (!group || groupBusy.value || groupError.value) return
++  groupBusy.value = true
++  try {
++    await ctx.api.applyFriend(String(group.groupId || group.id), 2, '通过板块关联群聊申请加入')
++    if (request !== groupInspectRequest || account !== String(ctx.auth?.state?.user?.id || '')) return
++    ctx.ui.toast('加群申请已发送，开放群可直接加入', 'success')
++    await inspectGroup(group)
++  } catch (e: any) { if (request === groupInspectRequest) groupError.value = '加群失败：' + e.message }
++  finally { if (request === groupInspectRequest) groupBusy.value = false }
++}
+ const permissionChoices = [
+   { value: '0:0', label: '公开 · 所有人可发文章' },
+   { value: '0:1', label: '公开 · 仅我可发文章' },
+@@ -45,7 +101,7 @@
+ }
+ function closeDialog() {
+   if (busy.value) return
+-  creating.value = false; s.editing = null; cm.closeGroups(); s.newAvatar = ''
++  creating.value = false; s.editing = null; cm.closeGroups(); s.newAvatar = ''; draftsOpen.value = false; sharing.value = ''; selectedGroup.value = null; groupInspectRequest++
+ }
+ async function submitCreate() { if (await cm.createWithAvatar(newName.value)) { creating.value = false; newName.value = ''; search.value = '' } }
+ async function saveEdit() {
+@@ -79,6 +135,7 @@
+ <template>
+   <KLayout class="community-page" :class="{ 'reading-article': reading, 'focus-reading': reading && focusReading }" ns="community" title="板块" desc="发现值得读的内容，找到同好。">
+     <template #actions>
++      <button class="secondary" @click="showDrafts"><Icon name="page" :size="16" />草稿</button>
+       <button class="create-button" @click="openCreate"><Icon name="plus" :size="16" />创建板块</button>
+     </template>
+ 
+@@ -99,11 +156,11 @@
+         <div class="board-list">
+           <p v-if="search" class="search-note">仅筛选已加载的板块</p>
+           <div v-if="s.loading && !s.list.length" class="empty-state" role="status"><Icon name="layers" :size="28" /><b>正在寻找好内容</b><span>板块加载中…</span></div>
+-          <TransitionGroup name="board-list-motion" tag="div" class="board-rows">
+-          <div v-for="b in boards" :key="b.id" class="board-row" :class="{ selected: Number(s.viewing?.id) === Number(b.id) }">
++          <TransitionGroup name="board-list-motion" appear tag="div" class="board-rows">
++          <div v-for="b in boards" :key="s.listType + ':' + b.id" class="board-row" :class="{ selected: Number(s.viewing?.id) === Number(b.id) }">
+             <button class="board-open" :aria-label="`进入板块 ${b.name}`" :aria-pressed="Number(s.viewing?.id) === Number(b.id)" @click="selectBoard(b)">
+               <CommunityAvatar :src="b.avatar" :name="b.name" />
+-              <span class="board-copy"><span class="board-name">{{ b.name }}<em v-if="owns(b)">我创建的</em></span><span class="board-id">ID {{ b.id }}<span v-if="b.lastActive"> · {{ fmtTime(b.lastActive) }} 活跃</span></span></span>
++              <span class="board-copy"><span class="board-name">{{ b.name }}<em v-if="owns(b)">我创建的</em></span><span class="board-id">ID {{ b.id }}<span v-if="b.memberNum != null"> · {{ b.memberNum }} 人关注</span><span v-if="b.lastActive"> · {{ fmtTime(b.lastActive) }} 活跃</span></span></span>
+             </button>
+             <button class="follow-quick icon-button" :class="{ followed: followed(b) }" :aria-label="`${followed(b) ? '取消关注' : '关注'} ${b.name}`" :aria-pressed="followed(b)" :disabled="followBusy(b)" :title="followed(b) ? '取消关注' : '关注板块'" @click="cm.toggleFollow(b)"><Icon :name="followed(b) ? 'check' : 'plus'" :size="16" /></button>
+           </div>
+@@ -124,7 +181,7 @@
+             <button class="mobile-back icon-button" aria-label="返回板块列表" @click="cm.exitBoard()"><Icon name="chevronLeft" :size="20" /></button>
+             <button v-if="reading" class="library-toggle icon-button" :aria-label="libraryCollapsed ? '展开板块列表' : '收起板块列表'" :title="libraryCollapsed ? '展开板块列表' : '收起板块列表'" :aria-expanded="!libraryCollapsed" @click="toggleLibrary"><Icon name="layers" :size="18" /></button>
+             <CommunityAvatar :src="s.viewing.avatar" :name="s.viewing.name" />
+-            <div class="reader-title"><span class="eyebrow">板块 / {{ s.viewing.id }}</span><h3>{{ s.viewing.name }}</h3><div class="reader-stats"><span>{{ s.info?.postNum ?? '—' }} 篇文章</span><span>{{ s.info?.groupNum ?? '—' }} 个群聊</span></div></div>
++            <div class="reader-title"><span class="eyebrow">板块 / {{ s.viewing.id }}</span><h3>{{ s.viewing.name }}</h3><div class="reader-stats"><span>{{ s.info?.postNum ?? '—' }} 篇文章</span><span>{{ s.info?.memberNum ?? s.viewing.memberNum ?? '—' }} 人关注</span><span>{{ s.info?.groupNum ?? '—' }} 个群聊</span></div></div>
+             <template v-if="reading">
+               <button class="icon-button" :aria-label="focusReading ? '退出专注阅读' : '专注阅读'" :title="focusReading ? '退出专注阅读' : '专注阅读'" :aria-pressed="focusReading" @click="focusReading = !focusReading; showLibrary = false"><Icon :name="focusReading ? 'collapse' : 'expand'" :size="18" /></button>
+               <button class="icon-button" aria-label="板块操作" title="板块操作" :aria-expanded="showBoardTools" @click="showBoardTools = !showBoardTools"><Icon name="sliders" :size="18" /></button>
+@@ -133,7 +190,9 @@
+           </header>
+           <Transition name="board-tools"><div v-show="!reading || showBoardTools" class="reader-actions">
+             <button class="follow-button" :class="{ 'secondary followed': followed(s.viewing) }" :disabled="followBusy(s.viewing)" :aria-pressed="followed(s.viewing)" @click="cm.toggleFollow(s.viewing)"><Icon :name="followed(s.viewing) ? 'check' : 'plus'" :size="15" />{{ followBusy(s.viewing) ? '处理中…' : followed(s.viewing) ? '已关注' : '关注板块' }}</button>
+-            <button class="secondary" @click="cm.loadGroups(s.viewing)"><Icon name="contacts" :size="15" />关联群聊</button>
++            <button class="secondary" @click="cm.openEditor()"><Icon name="pencil" :size="15" />发布文章</button>
++            <button class="secondary" @click="share('board')"><Icon name="forward" :size="15" />分享板块</button>
++            <button class="secondary" @click="selectedGroup = null; cm.loadGroups(s.viewing)"><Icon name="contacts" :size="15" />关联群聊</button>
+             <button v-if="owns(s.viewing)" class="secondary" @click="editBoard(s.viewing)"><Icon name="sliders" :size="15" />管理</button>
+             <button class="icon-button reader-refresh" :disabled="s.loadingPosts || s.loadingDetail" aria-label="刷新文章" title="刷新文章" @click="s.postDetail ? cm.openPost(s.postDetail) : cm.enter(s.viewing)"><Icon name="refresh" :size="16" /></button>
+           </div>
+@@ -148,14 +207,26 @@
+                 <div class="post-meta"><span>{{ s.postDetail.senderName || s.postDetail.senderId || '匿名作者' }}</span><time v-if="s.postDetail.createTime">{{ fmtTime(s.postDetail.createTime) }}</time></div>
+                 <p v-if="s.loadingDetail" class="loading-note" role="status">正在加载完整文章…</p>
+                 <div v-if="s.detailError" class="error-state" role="alert"><p>{{ s.detailError }}</p><button class="secondary" @click="cm.openPost(s.postDetail)">重试文章</button></div>
+-                <div ref="articleBody" class="article-prose" v-html="articleHtml"></div>
+-                <div class="article-footer">{{ s.postDetail.likeNum ?? 0 }} 赞<span>·</span>{{ s.postDetail.commentNum ?? 0 }} 评论</div>
++                <div v-if="Number(s.postDetail.contentType) === 1" class="article-prose plain-article">{{ s.postDetail.content }}</div><div v-else ref="articleBody" class="article-prose" v-html="articleHtml"></div>
++                <div class="article-footer">
++                  <button class="secondary" :aria-pressed="communityFlag(s.postDetail.isLiked)" :disabled="s.loadingDetail || !!s.detailError || s.actions.includes('like:' + s.postDetail.id)" @click="cm.togglePost('like')"><Icon name="heart" :size="15" />{{ s.postDetail.likeNum ?? 0 }} 赞</button>
++                  <button class="secondary" :aria-pressed="communityFlag(s.postDetail.isCollected)" :disabled="s.loadingDetail || !!s.detailError || s.actions.includes('collect:' + s.postDetail.id)" @click="cm.togglePost('collect')"><Icon name="star" :size="15" />{{ communityFlag(s.postDetail.isCollected) ? '已收藏' : '收藏' }} {{ s.postDetail.collectNum ?? 0 }}</button>
++                  <button class="secondary" @click="share('post')"><Icon name="forward" :size="15" />分享文章</button><button class="secondary" @click="copyPostLink">复制链接</button>
++                  <button v-if="cm.canEditPost(s.postDetail)" class="secondary" :disabled="s.loadingDetail || !!s.detailError" @click="cm.openEditor(undefined, s.postDetail)">编辑文章</button>
++                  <button v-if="cm.canEditPost(s.postDetail) || owns(s.viewing)" class="secondary danger" :disabled="s.loadingDetail || s.actions.includes('delete:' + s.postDetail.id)" @click="cm.deletePost()">删除文章</button>
++                </div>
++                <section class="article-comments" aria-label="文章评论"><h3>评论 <span>{{ s.postDetail.commentNum ?? 0 }}</span></h3>
++                  <form @submit.prevent="cm.comment()"><p v-if="s.replyTo" class="reply-banner">回复 {{ s.replyTo.senderNickname || s.replyTo.senderName || s.replyTo.senderId }} <button type="button" class="text-button" @click="s.replyTo = null">取消回复</button></p><textarea v-model="s.commentText" maxlength="5000" aria-label="评论内容" placeholder="说说你的想法…" :disabled="s.commenting"></textarea><button :disabled="s.commenting || s.loadingDetail || !!s.detailError || !s.commentText.trim()">{{ s.commenting ? '发送中…' : '发表评论' }}</button></form>
++                  <p v-if="s.commentsError" role="alert">{{ s.commentsError }} <button class="text-button" @click="cm.loadComments()">重试评论</button></p>
++                  <TransitionGroup name="post-list-motion" tag="div" class="comments-list"><article v-for="c in s.comments" :key="c.id" class="comment-item"><header><button class="text-button" @click="ctx.group?.openProfile?.({ id: String(c.senderId), name: c.senderNickname || c.senderName, avatar: c.senderAvatar })">{{ c.senderNickname || c.senderName || c.senderId }}</button><time>{{ fmtTime(c.createTime) }}</time></header><p>{{ c.content }}</p><div class="comment-actions"><button class="text-button" :aria-pressed="communityFlag(c.isLiked)" :disabled="s.actions.includes('comment:' + c.id)" @click="cm.commentAction(c)">{{ communityFlag(c.isLiked) ? '已赞' : '赞' }} {{ c.likeNum || 0 }}</button><button class="text-button" @click="s.replyTo = c">回复</button><button v-if="String(c.senderId) === String(ctx.auth?.state?.user?.id) || owns(s.viewing)" class="text-button" :disabled="s.actions.includes('comment:' + c.id)" @click="cm.commentAction(c, true)">删除</button></div><div v-for="r in c.replies || []" :key="r.id" class="comment-reply"><b>{{ r.senderNickname || r.senderId }}</b><p>{{ r.content }}</p><button class="text-button" @click="s.replyTo = r">回复</button></div></article></TransitionGroup>
++                  <p v-if="s.loadingComments" role="status" class="end-note">评论加载中…</p><button v-else-if="s.hasMoreComments" class="secondary load-more" @click="cm.loadComments(true)">加载更多评论</button><p v-else-if="!s.comments.length && !s.commentsError" class="end-note">还没有评论，来聊聊吧。</p>
++                </section>
+               </article>
+             </div>
+             <div v-else :key="'posts-' + s.viewing.id">
+               <div class="posts-heading"><h4>文章<span>{{ s.posts.length }}</span></h4><label v-if="s.posts.length || postSearch" class="search-box post-search"><Icon name="search" :size="15" /><input v-model="postSearch" placeholder="筛选已加载文章" aria-label="筛选已加载文章" /></label></div>
+               <div v-if="s.loadingPosts && !s.posts.length" class="empty-state" role="status"><Icon name="page" :size="28" /><b>文章加载中…</b></div>
+-              <TransitionGroup name="post-list-motion" tag="div" class="post-list">
++              <TransitionGroup name="post-list-motion" appear tag="div" class="post-list">
+               <button v-for="p in posts" :key="p.id" class="post-card" @click="cm.openPost(p)">
+                 <span class="post-meta"><span>{{ p.senderName || p.senderId || '匿名作者' }}</span><time v-if="p.createTime">{{ fmtTime(p.createTime) }}</time></span>
+                 <strong>{{ p.title || '无标题文章' }}</strong><span v-if="p.content" class="post-excerpt">{{ preview(p) }}</span><span class="post-footer"><span>{{ p.likeNum ?? 0 }} 赞<span class="meta-dot">·</span>{{ p.commentNum ?? 0 }} 评论</span><span class="read-link">阅读全文 <Icon name="chevronRight" :size="14" /></span></span>
+@@ -176,7 +247,9 @@
+       <dialog ref="dialog" class="community-dialog" :aria-label="dialogTitle" @cancel.prevent="closeDialog" @click="e => { if (e.target === dialog) closeDialog() }">
+         <template v-if="dialogType">
+           <header class="dialog-header"><div><span class="eyebrow">{{ dialogType === 'groups' ? s.groupsOf?.name : 'COMMUNITY' }}</span><h3>{{ dialogTitle }}</h3></div><button class="icon-button" aria-label="关闭对话框" :disabled="busy" @click="closeDialog"><Icon name="close" :size="20" /></button></header>
+-          <form v-if="creating" class="dialog-content" @submit.prevent="submitCreate">
++          <div v-if="draftsOpen" class="dialog-content"><p class="dialog-hint">草稿保存在本机，按账号区分；输入后自动保存，也可手动保存。</p><p v-if="s.editorError" role="alert">{{ s.editorError }}</p><div v-for="d in s.drafts" :key="d.id" class="draft-row"><button class="text-button" @click="resumeDraft(d)"><b>{{ d.title || '未命名草稿' }}</b><span>{{ d.boardName }} · {{ new Date(d.updatedAt).toLocaleString() }}</span></button><button class="text-button" @click="removeDraft(d)">删除</button></div><p v-if="!s.drafts.length" class="end-note">还没有保存的草稿。</p></div>
++          <form v-else-if="sharing" class="dialog-content" @submit.prevent="sendShare"><p class="dialog-hint">{{ sharing === 'post' ? s.postDetail?.title : s.viewing?.name }}</p><label class="field-label">选择会话<select v-model="shareTarget" :disabled="sharingBusy"><option value="" disabled>请选择接收的会话</option><option v-for="c in shareTargets" :key="c.key" :value="c.key">{{ c.name || c.id }} · {{ c.type === 2 ? '群聊' : c.type === 3 ? '机器人' : '私聊' }}</option></select></label><p v-if="!shareTargets.length" class="dialog-hint">暂无会话，请先建立会话。</p><footer class="dialog-footer"><button type="button" class="secondary" :disabled="sharingBusy" @click="closeDialog">取消</button><button :disabled="!shareTarget || sharingBusy">{{ sharingBusy ? '分享中…' : '发送分享' }}</button></footer></form>
++          <form v-else-if="creating" class="dialog-content" @submit.prevent="submitCreate">
+             <p class="dialog-hint">一个名字，一群同好。为你的板块选个名字吧。</p>
+             <div class="avatar-field"><CommunityAvatar :name="newName" :src="s.newAvatar" /><label class="secondary upload-label"><Icon name="image" :size="16" />{{ s.uploading ? '上传中…' : '上传头像' }}<input type="file" accept="image/*" :disabled="busy" hidden @change="cm.uploadAvatar($event, 'new')" /></label><button v-if="s.newAvatar" type="button" class="text-button" :disabled="busy" @click="s.newAvatar = ''">移除</button></div>
+             <label class="field-label">板块名称<input v-model="newName" autofocus maxlength="10" placeholder="例如：物理研习室" :disabled="busy" /></label><span class="field-help">{{ [...newName].length }} / 10 字 · 头像可选，图片不超过 10MB</span>
+@@ -193,7 +266,8 @@
+           </div>
+           <div v-else-if="s.groupsOf" class="dialog-content">
+             <p class="dialog-hint">{{ owns(s.groupsOf) ? '查看关联群聊，或通过群 ID 绑定新的群聊。' : '查看这个板块关联的群聊。' }}</p>
+-            <div class="group-list" :aria-busy="s.loadingGroups"><div v-for="g in s.groups" :key="g.groupId || g.id" class="group-row"><CommunityAvatar :src="g.avatar || g.avatarUrl" :name="g.name" /><div><b>{{ g.name || '未命名群聊' }}</b><span>ID {{ g.groupId || g.id }}</span><p v-if="g.introduction">{{ g.introduction }}</p></div></div><p v-if="s.loadingGroups" class="loading-note" role="status">正在加载群聊…</p><div v-if="s.groupsError" class="error-state" role="alert"><p>{{ s.groupsError }}</p><button class="secondary" @click="cm.loadGroups(s.groupsOf, s.groups.length > 0)">重试群聊</button></div><div v-else-if="!s.groups.length && !s.loadingGroups" class="empty-state"><Icon name="contacts" :size="26" /><b>暂时没有关联群聊</b></div><button v-if="s.hasMoreGroups" class="load-more secondary" :disabled="s.loadingGroups" @click="cm.loadGroups(s.groupsOf, true)">加载更多群聊</button></div>
++            <div class="group-list" :aria-busy="s.loadingGroups"><button v-for="g in s.groups" :key="g.groupId || g.id" class="group-row group-open" :aria-label="'查看群聊 ' + g.name" @click="inspectGroup(g)"><CommunityAvatar :src="g.avatar || g.avatarUrl" :name="g.name" /><div><b>{{ g.name || '未命名群聊' }}</b><span>ID {{ g.groupId || g.id }}</span><p v-if="g.introduction">{{ g.introduction }}</p></div><Icon name="chevronRight" :size="16" /></button><p v-if="s.loadingGroups" class="loading-note" role="status">正在加载群聊…</p><div v-if="s.groupsError" class="error-state" role="alert"><p>{{ s.groupsError }}</p><button class="secondary" @click="cm.loadGroups(s.groupsOf, s.groups.length > 0)">重试群聊</button></div><div v-else-if="!s.groups.length && !s.loadingGroups" class="empty-state"><Icon name="contacts" :size="26" /><b>暂时没有关联群聊</b></div><button v-if="s.hasMoreGroups" class="load-more secondary" :disabled="s.loadingGroups" @click="cm.loadGroups(s.groupsOf, true)">加载更多群聊</button></div>
++            <section v-if="selectedGroup" class="group-inspector" aria-label="群聊详情"><h4>{{ selectedGroup.name }}</h4><p>ID {{ selectedGroup.groupId || selectedGroup.id }} · {{ selectedGroup.headcount ?? '—' }} 人</p><p>{{ selectedGroup.introduction || '暂无群介绍' }}</p><p v-if="groupBusy" role="status">正在查询群聊状态…</p><p v-if="groupError" role="alert">{{ groupError }} <button class="text-button" @click="inspectGroup(selectedGroup)">重试</button></p><button v-if="groupJoined" :disabled="groupBusy || !!groupError" @click="goGroup">进入群聊</button><button v-else :disabled="groupBusy || !!groupError" @click="joinGroup">申请加入群聊</button></section>
+             <p v-if="owns(s.groupsOf) && !canBind" class="binding-help">新增关联群聊请在云湖官方客户端操作。</p>
+             <form v-if="owns(s.groupsOf) && canBind" class="bind-form" @submit.prevent="cm.bindGroup(s.groupsOf.id, s.bindGroupId)"><label class="field-label">绑定群聊<input v-model="s.bindGroupId" placeholder="输入你有权管理的群 ID" :disabled="busy" /></label><button type="submit" :disabled="busy || !s.bindGroupId.trim()">{{ s.binding ? '绑定中…' : '绑定' }}</button></form>
+           </div>
+@@ -287,7 +361,7 @@
+ .article-prose :deep(pre) { max-width: 100%; overflow: auto; padding: 14px; background: var(--card2); border-radius: 10px; }
+ .article-prose :deep(table) { display: block; max-width: 100%; overflow: auto; }
+ .article-prose :deep(blockquote) { margin: 12px 0; border-left: 3px solid var(--acc); padding-left: 16px; color: var(--fg2); }
+-.article-footer { display: flex; gap: 10px; border-top: 1px solid var(--line); padding: 18px 0; color: var(--fg2); font-size: 12px; }
++.article-footer { flex-wrap:wrap; display: flex; gap: 10px; border-top: 1px solid var(--line); padding: 18px 0; color: var(--fg2); font-size: 12px; }
+ .mobile-back { display: none; }
+ .community-dialog { width: min(480px, calc(100vw - 28px)); max-height: min(80dvh, 720px); border: 1px solid var(--line); border-radius: 22px; background: var(--card); color: var(--fg); padding: 0; box-shadow: var(--shadow); overflow: auto; }
+ .community-dialog[open] { animation: community-in .16s ease-out; }
+@@ -395,4 +469,6 @@
+ }
+ @media (max-width: 400px) { .dialog-header { padding: 18px; } .dialog-content { padding: 18px; } }
+ @media (prefers-reduced-motion: reduce) { .community-dialog[open] { animation: none; } .board-row, .post-card strong { transition: none; } }
++.group-open { width:100%; text-align:left; color:var(--fg); background:transparent; border:1px solid transparent; border-radius:12px; transition:background .16s,transform .16s; }.group-open:hover { background:var(--acc-soft); transform:translateX(2px); }.group-open > div { flex:1; min-width:0; }.group-inspector { padding:16px; background:var(--card2); border:1px solid var(--line); border-radius:12px; margin-top:15px; }.group-inspector h4 { margin-top:0; }.group-inspector p { color:var(--fg2); font-size:12px; overflow-wrap:anywhere; }.plain-article { white-space:pre-wrap; }
++.article-footer button[aria-pressed=true],.comment-actions button[aria-pressed=true] { color:var(--acc); background:var(--acc-soft); }.article-comments { padding:10px 0 25px; }.article-comments h3 { font-size:17px; }.article-comments h3 span { color:var(--fg2); font-size:12px; }.article-comments form { display:flex; flex-wrap:wrap; gap:8px; margin-bottom:18px; }.article-comments textarea { flex:1 0 100%; min-height:85px; max-height:240px; resize:vertical; padding:12px; box-sizing:border-box; color:var(--fg); background:var(--card2); border:1px solid var(--line); border-radius:12px; font:inherit; }.article-comments form > button { margin-left:auto; font-size:12px; }.comments-list { position:relative; }.comment-item { border-bottom:1px solid var(--line); padding:15px 0; }.comment-item header { display:flex; gap:10px; align-items:center; justify-content:space-between; }.comment-item time { color:var(--fg2); font-size:10px; }.comment-item p { white-space:pre-wrap; overflow-wrap:anywhere; margin:8px 0; font-size:13px; }.comment-actions { display:flex; gap:15px; }.comment-reply { margin:10px 0 0 12px; padding:8px 12px; border-left:2px solid var(--line); background:var(--card2); }.reply-banner { width:100%; font-size:12px; color:var(--fg2); }.draft-row { display:flex; align-items:center; gap:12px; padding:13px 0; border-bottom:1px solid var(--line); }.draft-row > button:first-child { flex:1; min-width:0; text-align:left; display:flex; flex-direction:column; gap:5px; }.draft-row b { color:var(--fg); overflow-wrap:anywhere; }.draft-row span { font-size:10px; }
+ </style>
+--- /dev/null
++++ b/src/core/community-drafts.ts
+@@ -0,0 +1,28 @@
++/** Local drafts contain no credentials and are partitioned by the signed-in user. */
++export interface CommunityDraft {
++  id: string; owner: string; baId: number; boardName: string; postId?: number
++  title: string; content: string; contentType: number; updatedAt: number
++}
++const key = (owner: string) => 'yh.community.drafts.v1:' + owner
++export function readCommunityDrafts(owner: string): CommunityDraft[] {
++  if (!owner) return []
++  const value = JSON.parse(localStorage.getItem(key(owner)) || '[]')
++  if (!Array.isArray(value)) throw new Error('草稿数据损坏，未覆盖原记录')
++  return value.filter(d => d?.owner === owner && typeof d.id === 'string' && typeof d.content === 'string' && typeof d.title === 'string')
++}
++export function saveCommunityDraft(draft: CommunityDraft) {
++  if (!draft.owner) throw new Error('请先登录再保存草稿')
++  const all = readCommunityDrafts(draft.owner), index = all.findIndex(d => d.id === draft.id)
++  if (index < 0 && all.length >= 30) throw new Error('本地草稿已达 30 篇，请先删除不需要的草稿')
++  if (index < 0) all.unshift({ ...draft }); else all[index] = { ...draft }
++  localStorage.setItem(key(draft.owner), JSON.stringify(all))
++}
++export function removeCommunityDraft(owner: string, id: string) {
++  localStorage.setItem(key(owner), JSON.stringify(readCommunityDrafts(owner).filter(d => d.id !== id)))
++}
++/** Pure selection transforms shared by toolbar and keyboard shortcuts. */
++export function markdownEdit(text: string, start: number, end: number, before: string, after = '', placeholder = '文字') {
++  const selected = text.slice(start, end) || placeholder
++  return { text: text.slice(0, start) + before + selected + after + text.slice(end), start: start + before.length, end: start + before.length + selected.length }
++}
++export function communityFlag(value: unknown) { return value === true || value === 1 || value === '1' }
+--- a/src/main.ts
++++ b/src/main.ts
+@@ -24,6 +24,12 @@
+ }, true)
+ 
+ ;(async () => {
++  const editorId = new URLSearchParams(location.search).get('community-editor')
++  if (editorId) {
++    const { default: FloatingCommunityEditor } = await import('./components/FloatingCommunityEditor.vue')
++    createApp(FloatingCommunityEditor, { sessionId: editorId }).mount('#app')
++    return
++  }
+   const sessionId = new URLSearchParams(location.search).get('ai-panel')
+   if (sessionId) {
+     // A detached view never bootstraps auth, WebSocket, user Bots or the account vault.
+--- a/src/plugins/api.ts
++++ b/src/plugins/api.ts
+@@ -451,7 +451,7 @@
+         const r = await request('/v1/community/posts/post-list', { body: { typ, baId, size, page } })
+         assertOk(r)
+         return (r.json?.data?.posts || []).map((x: any) => ({
+-          id: x.id, baId: x.baId, senderId: x.senderId, title: x.title || '',
++          ...x, id: x.id, baId: x.baId, senderId: x.senderId, title: x.title || '',
+           contentType: x.contentType, content: x.content || '',
+           createTime: x.createTime, likeNum: x.likeNum || 0, commentNum: x.commentNum || 0,
+           senderName: x.senderName || x.senderNickname || '',
+@@ -469,6 +469,42 @@
+         return assertOk(await request('/v1/community/posts/create', { body: { baId, title, content, contentType } }))
+       },
+ 
++      async baPostLike(id: number) {
++        return assertOk(await request('/v1/community/posts/post-like', { body: { id } }))
++      },
++      async baPostCollect(id: number) {
++        return assertOk(await request('/v1/community/posts/post-collect', { body: { id } }))
++      },
++      async baComments(postId: number, { page = 1, size = 20 } = {}) {
++        const r = await request('/v1/community/comment/comment-list', { body: { postId, page, size } }); assertOk(r)
++        return r.json?.data || { comments: [] }
++      },
++      async baComment(postId: number, content: string, commentId = 0) {
++        return assertOk(await request('/v1/community/comment/comment', { body: { postId, content, commentId } }))
++      },
++      async baCommentLike(id: number) {
++        return assertOk(await request('/v1/community/comment/comment-like', { body: { id } }))
++      },
++      async baDeleteComment(commentId: number) {
++        return assertOk(await request('/v1/community/comment/delete', { body: { commentId } }))
++      },
++      async baEditPost(postId: number, title: string, content: string, contentType = 2) {
++        return assertOk(await request('/v1/community/posts/edit', { body: { postId, title, content, contentType } }))
++      },
++      async baDeletePost(postId: number) {
++        return assertOk(await request('/v1/community/posts/delete', { body: { postId } }))
++      },
++      async baStickyPost(postId: number) {
++        return assertOk(await request('/v1/community/posts/edit-sticky', { body: { postId } }))
++      },
++      async baForward(baId: number, receive: { chatId: string; chatType: number }[]) {
++        return assertOk(await request('/v1/community/ba/forward', { body: { baId, receive } }))
++      },
++      async baSavedPosts(page = 1, size = 30) {
++        const r = await request('/v1/community/posts/post-collect-list', { body: { page, size } }); assertOk(r)
++        return r.json?.data?.posts || []
++      },
++
+       /* ================= 机器人指令 ================= */
+ 
+       /**
+@@ -520,7 +556,7 @@
+         const r = await request('/v1/community/ba/following-ba-list', { body: { typ, size, page } })
+         assertOk(r)
+         return (r.json?.data?.ba || []).map((b: any) => ({
+-          id: b.id, name: b.name, avatar: b.avatar, createTime: b.createTime,
++          ...b, id: b.id, name: b.name, avatar: b.avatar, createTime: b.createTime,
+           lastActive: b.lastActive, desc: b.desc || b.introduction || '',
+         }))
+       },
+--- a/src/plugins/community.ts
++++ b/src/plugins/community.ts
+@@ -3,6 +3,7 @@
+ import { reactive } from 'vue'
+ import type { Context } from '../core/context'
+ import CommunityPage from '../console/pages/CommunityPage.vue'
++import { readCommunityDrafts, saveCommunityDraft, removeCommunityDraft, communityFlag, type CommunityDraft } from '../core/community-drafts'
+ 
+ export const name = 'community'
+ export interface CommunityCfg { pageSize: number; autoLoadMine: boolean }
+@@ -25,7 +26,12 @@
+       postsError: '', detailError: '', info: null as any,
+       newAvatar: '', editing: null as any, creating: false, saving: false, managing: false,
+       uploading: false, following: [] as number[], followReady: false,
++      comments: [] as any[], commentPage: 0, hasMoreComments: false, loadingComments: false, commentsError: '',
++      commentText: '', replyTo: null as any, commenting: false, actions: [] as string[],
++      editor: null as CommunityDraft | null, drafts: [] as CommunityDraft[], publishing: false, editorError: '', savedAt: 0,
+     })
++    const owner = () => String((ctx as any).auth?.state?.user?.id || '')
++    let commentsRequest = 0
+     let listRequest = 0, boardRequest = 0, detailRequest = 0, groupRequest = 0, identityRequest = 0, followsVersion = 0
+     const idOf = (x: any) => Number(x?.id ?? x)
+     const owns = (b: any) => state.myIds.includes(idOf(b))
+@@ -150,17 +156,20 @@
+       } catch (e: any) { if (request === boardRequest) state.postsError = e?.message || '文章加载失败'; return false }
+       finally { if (request === boardRequest) state.loadingPosts = false }
+     }
+-    function backToPosts() { ++detailRequest; state.postDetail = null; state.loadingDetail = false; state.detailError = '' }
++    function backToPosts() { ++detailRequest; ++commentsRequest; state.postDetail = null; state.loadingDetail = false; state.detailError = ''; state.comments = []; state.loadingComments = false; state.commentText = ''; state.replyTo = null }
+     function exitBoard() { ++boardRequest; backToPosts(); state.viewing = null; state.posts = []; state.info = null; state.loadingPosts = false }
+     async function openPost(p: any) {
+       if (!state.viewing) return false
+       const request = ++detailRequest, board = boardRequest
+       state.postDetail = p; state.loadingDetail = true; state.detailError = ''
++      state.comments = []; state.commentPage = 0; state.hasMoreComments = false; state.commentsError = ''; state.commentText = ''; state.replyTo = null
+       try {
+         const d = await api.baPostDetail(p.id)
+         if (request !== detailRequest || board !== boardRequest) return false
+         if (!d) throw new Error('服务端未返回文章内容')
+         state.postDetail = { ...p, ...d, ...(d.post || {}) }
++        if (d.ba) state.info = { ...state.info, ...d.ba }
++        if (typeof api.baComments === 'function') void loadComments()
+         return true
+       } catch (e: any) {
+         if (request === detailRequest && board === boardRequest) state.detailError = '完整文章加载失败：' + (e?.message || '请重试')
+@@ -217,14 +226,127 @@
+       state.following.push(id); ++followsVersion
+       const identity = identityRequest
+       try {
+-        if (isFollowed(id)) { await api.unfollowBoard(id); if (identity !== identityRequest) return false; state.followIds = state.followIds.filter(x => x !== id); if (state.listType === 1) state.list = state.list.filter(x => idOf(x) !== id) }
++        const was = isFollowed(id)
++        if (was) { await api.unfollowBoard(id); if (identity !== identityRequest) return false; state.followIds = state.followIds.filter(x => x !== id); if (state.listType === 1) state.list = state.list.filter(x => idOf(x) !== id) }
+         else { await api.followBoard(id); if (identity !== identityRequest) return false; state.followIds = [...state.followIds, id] }
++        const known = Number(state.info?.id) === id ? state.info : b
++        if (known.memberNum != null) updateBoard(id, { memberNum: Math.max(0, Number(known.memberNum) + (was ? -1 : 1)) })
+         return true
+       } catch (e) { return fail('关注操作失败：', e) }
+       finally { state.following = state.following.filter(x => x !== id) }
+     }
+-    ctx.set('community', { state, load, mine, countOf, owns, create, createWithAvatar, edit, manage, loadGroups, closeGroups, bindGroup, enter, exitBoard, backToPosts, openPost, uploadAvatar, focus, loadFollows, isFollowed, toggleFollow, loadMorePosts })
++    async function action(key: string, run: () => Promise<any>, success: () => void) {
++      if (state.actions.includes(key)) return false
++      const identity = identityRequest
++      state.actions.push(key)
++      try { await run(); if (identity !== identityRequest) return false; success(); return true }
++      catch (e) { return fail('操作失败：', e) }
++      finally { if (identity === identityRequest) state.actions = state.actions.filter(k => k !== key) }
++    }
++    function patchPost(id: number, patch: any) {
++      for (const p of [...state.posts, state.postDetail]) if (p && Number(p.id) === id) Object.assign(p, patch)
++    }
++    async function togglePost(kind: 'like' | 'collect') {
++      const p = state.postDetail
++      if (!p || state.loadingDetail || state.detailError) return false
++      const id = Number(p.id), field = kind === 'like' ? 'isLiked' : 'isCollected', count = kind === 'like' ? 'likeNum' : 'collectNum', was = communityFlag(p[field])
++      return action(kind + ':' + id, () => kind === 'like' ? api.baPostLike(id) : api.baPostCollect(id), () => patchPost(id, { [field]: was ? 0 : 1, [count]: Math.max(0, Number(p[count] || 0) + (was ? -1 : 1)) }))
++    }
++    async function loadComments(more = false) {
++      const p = state.postDetail
++      if (!p || (more && (state.loadingComments || !state.hasMoreComments))) return false
++      const request = detailRequest, commentRequest = ++commentsRequest, page = more ? state.commentPage + 1 : 1
++      state.loadingComments = true; state.commentsError = ''
++      try {
++        const result = await api.baComments(p.id, { page, size: 20 })
++        if (request !== detailRequest || commentRequest !== commentsRequest) return false
++        const list = Array.isArray(result) ? result : result.comments || []
++        state.comments = unique(more ? [...state.comments, ...list] : list); state.commentPage = page
++        state.hasMoreComments = list.length >= 20 && (result.total == null || state.comments.length < Number(result.total))
++        return true
++      } catch (e: any) { if (request === detailRequest && commentRequest === commentsRequest) state.commentsError = e.message || '评论加载失败'; return false }
++      finally { if (request === detailRequest && commentRequest === commentsRequest) state.loadingComments = false }
++    }
++    async function comment() {
++      const p = state.postDetail, text = state.commentText.trim(), request = detailRequest, identity = identityRequest
++      if (!p || !text || state.commenting || state.loadingDetail || state.detailError) return false
++      if (text.length > 5000) return fail('', new Error('评论不能超过 5000 字'))
++      const reply = Number(state.replyTo?.id || 0)
++      state.commenting = true
++      try {
++        await api.baComment(p.id, text, reply)
++        if (identity !== identityRequest) return false
++        patchPost(Number(p.id), { commentNum: Number(p.commentNum || 0) + 1 })
++        if (request === detailRequest) { state.commentText = ''; state.replyTo = null; await loadComments() }
++        ui.toast('评论已发送', 'success'); return true
++      } catch (e) { return fail('评论失败：', e) }
++      finally { if (identity === identityRequest) state.commenting = false }
++    }
++    const canEditPost = (p: any) => !!owner() && String(p?.senderId) === owner()
++    async function deletePost() {
++      const p = state.postDetail, identity = identityRequest
++      if (!p || !(canEditPost(p) || owns(state.viewing)) || !(await ui.confirm?.('删除文章', '删除后无法恢复，确定继续？', { danger: true })) || identity !== identityRequest) return false
++      return action('delete:' + p.id, () => api.baDeletePost(Number(p.id)), () => {
++        state.posts = state.posts.filter(x => Number(x.id) !== Number(p.id))
++        if (Number(state.postDetail?.id) === Number(p.id)) backToPosts()
++        ui.toast('文章已删除', 'success')
++      })
++    }
++    async function commentAction(c: any, deleting = false) {
++      const request = detailRequest, identity = identityRequest, p = state.postDetail
++      if (!p) return false
++      if (deleting && (!(String(c.senderId) === owner() || owns(state.viewing)) || !(await ui.confirm?.('删除评论', '确定删除这条评论？', { danger: true })))) return false
++      if (identity !== identityRequest || request !== detailRequest) return false
++      const was = communityFlag(c.isLiked)
++      return action('comment:' + c.id, () => deleting ? api.baDeleteComment(Number(c.id)) : api.baCommentLike(Number(c.id)), () => {
++        if (request !== detailRequest) return
++        if (deleting) { state.comments = state.comments.filter(x => x.id !== c.id); patchPost(Number(p.id), { commentNum: Math.max(0, Number(p.commentNum || 0) - 1) }) }
++        else { c.isLiked = was ? 0 : 1; c.likeNum = Math.max(0, Number(c.likeNum || 0) + (was ? -1 : 1)) }
++      })
++    }
++    function refreshDrafts() {
++      try { state.drafts = readCommunityDrafts(owner()).sort((a, b) => b.updatedAt - a.updatedAt) }
++      catch (e: any) { state.editorError = e.message }
++    }
++    function saveDraft() {
++      const d = state.editor
++      if (!d) return true
++      try { d.updatedAt = Date.now(); saveCommunityDraft({ ...d }); state.savedAt = d.updatedAt; state.editorError = ''; refreshDrafts(); return true }
++      catch (e: any) { state.editorError = '草稿保存失败：' + e.message; return false }
++    }
++    function openEditor(draft?: CommunityDraft, post?: any) {
++      if (!owner() || (!state.viewing && !draft) || state.publishing || (post && !canEditPost(post))) return false
++      if (state.editor && !saveDraft()) return false
++      state.editor = draft ? { ...draft } : { id: crypto.randomUUID(), owner: owner(), baId: Number(state.viewing.id), boardName: state.viewing.name,
++        postId: post?.id, title: post?.title || '', content: post?.content || '', contentType: Number(post?.contentType || 2), updatedAt: Date.now() }
++      if (state.editor.owner !== owner()) { state.editor = null; return false }
++      state.savedAt = draft?.updatedAt || 0; state.editorError = ''; return true
++    }
++    function closeEditor() { if (state.publishing || !saveDraft()) return false; state.editor = null; return true }
++    async function publish() {
++      const d = state.editor, identity = identityRequest
++      if (!d || state.publishing || d.owner !== owner()) return false
++      if (!d.title.trim() || !d.content.trim()) { state.editorError = '请填写标题和正文'; return false }
++      if (d.title.length > 200 || d.content.length > 200000) { state.editorError = '标题最多 200 字，正文最多 20 万字'; return false }
++      if (!saveDraft()) return false
++      state.publishing = true; state.editorError = ''
++      try {
++        if (d.postId) await api.baEditPost(d.postId, d.title.trim(), d.content, d.contentType)
++        else await api.baCreatePost(d.baId, d.title.trim(), d.content, d.contentType)
++        if (identity !== identityRequest) return false
++        try { removeCommunityDraft(d.owner, d.id) } catch { ui.toast('文章已发布，但本地草稿未能清理，请手动删除草稿', 'warn') }
++        state.editor = null; refreshDrafts(); ui.toast(d.postId ? '文章已更新' : '文章已发布', 'success')
++        if (Number(state.viewing?.id) === d.baId) await enter(state.viewing)
++        return true
++      } catch (e: any) { if (identity === identityRequest) state.editorError = '发布失败，草稿已保留：' + e.message; return false }
++      finally { if (identity === identityRequest) state.publishing = false }
++    }
++    function deleteDraft(id: string) { try { removeCommunityDraft(owner(), id); refreshDrafts() } catch (e) { fail('删除失败：', e) } }
++    ctx.set('community', { state, load, mine, countOf, owns, create, createWithAvatar, edit, manage, loadGroups, closeGroups, bindGroup, enter, exitBoard, backToPosts, openPost, uploadAvatar, focus, loadFollows, isFollowed, toggleFollow, loadMorePosts,
++      togglePost, loadComments, comment, canEditPost, deletePost, commentAction, openEditor, closeEditor, saveDraft, publish, refreshDrafts, deleteDraft })
+     function resetAccount() {
++      if (state.editor) saveDraft()
++      state.editor = null; state.drafts = []; state.comments = []; state.commentText = ''; state.replyTo = null; state.loadingComments = false; state.commenting = false; state.publishing = false; state.actions = []
+       ++identityRequest; ++listRequest; ++followsVersion; exitBoard(); closeGroups()
+       state.list = []; state.mine = []; state.myIds = []; state.followIds = []; state.followReady = false
+       state.following = []; state.editing = null; state.newAvatar = ''; state.loading = false; state.listError = ''

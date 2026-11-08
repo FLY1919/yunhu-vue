@@ -1,0 +1,116 @@
+import assert from 'node:assert/strict'
+import { mkdir } from 'node:fs/promises'
+import { createServer } from 'vite'
+import vue from '@vitejs/plugin-vue'
+const { chromium } = await import(process.env.PLAYWRIGHT_MODULE || 'playwright')
+const server = await createServer({ configFile:false,plugins:[vue()],server:{ host:'127.0.0.1',port:0,hmr:false },logLevel:'error' })
+await server.listen()
+const browser = await chromium.launch({ executablePath:process.env.CHROMIUM_EXECUTABLE || undefined,args:['--no-sandbox','--disable-dev-shm-usage'] })
+const page = await browser.newPage({ viewport:{ width:1300,height:900 } }), errors = []
+page.on('pageerror',e => errors.push(e.message))
+try {
+  await page.goto(`http://127.0.0.1:${server.httpServer.address().port}/scripts/ui-fixture/group-panels.html`)
+  await page.waitForFunction(() => window.__qa?.groupPanelsReady)
+  await page.evaluate(() => document.documentElement.dataset.theme = 'dark')
+  const pins = page.locator('.pinned-fold')
+  const oldHeight = await pins.evaluate(el => el.getBoundingClientRect().height)
+  await page.getByRole('button',{ name:'折叠置顶会话',exact:true }).click()
+  await page.waitForFunction(() => document.querySelector('.pinned-fold')?.getBoundingClientRect().height < 1)
+  assert.ok(oldHeight > 60)
+  assert.equal(await pins.evaluate(el => el.inert),true)
+  await page.getByRole('button',{ name:'展开置顶会话',exact:true }).click()
+  await page.getByRole('button',{ name:'折叠置顶会话',exact:true }).click()
+  await page.getByRole('button',{ name:'展开置顶会话',exact:true }).click()
+  await page.waitForFunction(() => document.querySelector('.pinned-fold')?.getBoundingClientRect().height > 60)
+  await page.locator('.search input').fill('云湖置顶')
+  assert.equal(await page.locator('.pinned-toggle').count(),0)
+  await page.locator('.search input').fill('')
+  // Read actual computed colors for the entire preset/mode/accent matrix.
+  const contrastResult = await page.evaluate(async () => {
+    const { PRESETS } = await import('/src/plugins/theme.ts')
+    const { themePalette,contrast } = await import('/src/core/theme-colors.ts')
+    let minimum = 99, cases = 0
+    for (const preset of PRESETS) for (const mode of ['dark','light']) for (const accent of ['', '#d0bcff', '#ffff00']) {
+      const p = themePalette(preset,mode,accent), root = document.documentElement
+      root.dataset.theme = mode
+      for (const [key,value] of Object.entries(p)) if (typeof value === 'string') root.style.setProperty('--'+key,value)
+      root.style.setProperty('--acc',p.accent)
+      const color = s => { const n=s.match(/[\d.]+/g).slice(0,3).map(Number); return '#'+n.map(x=>Math.round(x).toString(16).padStart(2,'0')).join('') }
+      const bg = color(getComputedStyle(document.querySelector('.file-attachment')).backgroundColor)
+      for (const el of document.querySelectorAll('.file b,.fmeta small,.file-save')) minimum=Math.min(minimum,contrast(color(getComputedStyle(el).color),bg))
+      cases++
+    }
+    rootReset: { const root=document.documentElement; root.removeAttribute('style'); root.dataset.theme='dark' }
+    return { minimum,cases }
+  })
+  assert.ok(contrastResult.minimum >= 4.5,JSON.stringify(contrastResult))
+  if (process.env.UI_CAPTURE_DIR) {
+    await mkdir(process.env.UI_CAPTURE_DIR,{ recursive:true })
+    await page.locator('.file-attachment').screenshot({ path:process.env.UI_CAPTURE_DIR+'/file-dark.png' })
+  }
+  await page.evaluate(() => window.__qa.ctx.group.setDockTab('members'))
+  await page.getByRole('heading',{ name:/群成员/ }).waitFor()
+  await page.keyboard.press('Shift+Tab')
+  assert.equal(await page.evaluate(() => !!document.activeElement?.closest('.dock')),true)
+  assert.equal(await page.locator('.member-row').count(),50)
+  await page.getByRole('button',{ name:'群主与管理员',exact:true }).click()
+  await page.waitForFunction(() => document.querySelectorAll('.member-row').length === 2)
+  await page.locator('.members-toolbar').getByRole('button',{ name:/^机器人/ }).click()
+  await page.locator('.member-identity').filter({ hasText:'灵感记录助手' }).waitFor()
+  await page.getByRole('button',{ name:'全部成员',exact:true }).click()
+  await page.getByRole('textbox',{ name:'搜索群成员' }).fill('member-1')
+  await page.waitForFunction(() => window.__qa.ctx.group.state.membersTotal === 11)
+  await page.getByRole('textbox',{ name:'搜索群成员' }).fill('')
+  await page.waitForFunction(() => window.__qa.ctx.group.state.membersTotal === 86)
+  await page.getByRole('button',{ name:'管理',exact:true }).nth(2).click()
+  await page.getByRole('dialog',{ name:'成员操作' }).waitFor()
+  await page.getByRole('button',{ name:'10 分钟',exact:true }).click()
+  await page.getByRole('dialog',{ name:'成员操作' }).waitFor({ state:'detached' })
+  assert.ok(await page.evaluate(() => window.__qa.groupCalls.some(c => c[0] === 'gagMember' && c[2] === 'member-0' && c[3] === 600)))
+  await page.evaluate(() => window.__qa.ctx.group.setDockTab('info'))
+  await page.getByRole('button',{ name:'编辑资料',exact:true }).click()
+  await page.getByRole('textbox',{ name:'群名称',exact:true }).fill('设计与开发 · 更新')
+  await page.getByRole('button',{ name:'保存群资料',exact:true }).click()
+  await page.getByRole('heading',{ name:'设计与开发 · 更新' }).waitFor()
+  await page.getByRole('button',{ name:'打开群设置',exact:true }).click()
+  await page.locator('.dock-mask').waitFor({ state:'detached' })
+  await page.getByRole('textbox',{ name:'我的本群昵称',exact:true }).waitFor()
+  await page.getByRole('tab',{ name:'群管理',exact:true }).click()
+  await page.getByRole('switch',{ name:'进群免审核',exact:true }).click()
+  await page.getByRole('switch',{ name:'进群免审核',exact:true }).waitFor()
+  await page.waitForFunction(() => document.querySelector('[aria-labelledby=policy-joinFree]')?.getAttribute('aria-checked') === 'true')
+  await page.getByRole('button',{ name:'文章',exact:true }).click()
+  await page.getByRole('button',{ name:'保存类型限制',exact:true }).click()
+  assert.ok(await page.evaluate(() => window.__qa.groupCalls.some(c => c[0] === 'setMsgTypeLimit' && c[2] === '6')))
+  await page.getByRole('combobox',{ name:'消息自动清理',exact:true }).selectOption('730')
+  await page.getByRole('button',{ name:'保存清理规则',exact:true }).click()
+  await page.getByRole('switch',{ name:'禁止成员上传群文件',exact:true }).click()
+  await page.evaluate(() => { window.__qa.ctx.api.setGroupDiskUpload = async () => { throw new Error('离线保存失败') } })
+  await page.getByRole('switch',{ name:'禁止成员上传群文件',exact:true }).click()
+  await page.getByRole('alert').filter({ hasText:'离线保存失败' }).waitFor()
+  assert.equal(await page.getByRole('switch',{ name:'禁止成员上传群文件',exact:true }).getAttribute('aria-checked'),'true')
+  await page.setViewportSize({ width:420,height:860 })
+  assert.ok(await page.locator('.gp').evaluate(el => el.getBoundingClientRect().width <= window.innerWidth))
+  await page.getByRole('tab',{ name:'个人偏好',exact:true }).click()
+  await page.getByRole('textbox',{ name:'我的本群昵称',exact:true }).waitFor()
+  await page.emulateMedia({ reducedMotion:'reduce' })
+  await page.evaluate(() => { window.__qa.ctx.group.close(); window.__qa.ctx.group.open() })
+  assert.equal(await page.locator('.gp').evaluate(el => getComputedStyle(el).transform),'none')
+  await page.evaluate(() => window.__qa.ctx.group.setDockTab('members'))
+  await page.locator('.member-row').first().waitFor()
+  assert.ok(await page.locator('.dock-body').evaluate(el => el.scrollWidth <= el.clientWidth + 1))
+  if (process.env.UI_CAPTURE_DIR) {
+    await mkdir(process.env.UI_CAPTURE_DIR,{ recursive:true })
+    await page.screenshot({ path:process.env.UI_CAPTURE_DIR+'/members-narrow.png' })
+    await page.setViewportSize({ width:1300,height:900 })
+    await page.evaluate(() => { document.documentElement.dataset.theme='light'; window.__qa.ctx.group.setDockTab('info') })
+    await page.getByRole('heading',{ name:'设计与开发 · 更新' }).waitFor()
+    await page.screenshot({ path:process.env.UI_CAPTURE_DIR+'/group-info-light.png' })
+    await page.evaluate(() => { document.documentElement.dataset.theme='dark'; window.__qa.ctx.group.open() })
+    await page.getByRole('tab',{ name:'群管理',exact:true }).click()
+    await page.getByRole('switch',{ name:'进群免审核',exact:true }).waitFor()
+    await page.screenshot({ path:process.env.UI_CAPTURE_DIR+'/settings-dark.png' })
+  }
+  assert.deepEqual(errors,[])
+  console.log('PASS: group panels, permission actions, settings feedback, reversible pins, theme contrast, narrow layout and reduced motion',contrastResult)
+} finally { await browser.close(); await server.close() }

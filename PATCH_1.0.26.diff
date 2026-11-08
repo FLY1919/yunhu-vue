@@ -1,0 +1,888 @@
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index 54f3ea2..bb66cfb 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -1,3 +1,7 @@
++## 1.0.26
++
++EXIF 无效字段显示“无”，空/损坏 EXIF 可清除并显示 GPS 中文方向；图片原比例拖动；紧凑个人资料卡；文章编辑器仅保留写作、固定发布板块、扩大正文空间并恢复过渡动画。详见 RELEASE_NOTES_1.0.26.md。
++
+ ## 1.0.24
+ 
+ 社区文章互动与分享、Typora 风格工具栏、草稿自动保存与独立编辑窗口；关联群聊跳转、关注人数、资料面板和过渡动画；退出清理防止 sidecar 重新占用端口。详见 RELEASE_NOTES_1.0.24.md。
+diff --git a/RELEASE_NOTES_1.0.26.md b/RELEASE_NOTES_1.0.26.md
+new file mode 100644
+index 0000000..2f054e8
+--- /dev/null
++++ b/RELEASE_NOTES_1.0.26.md
+@@ -0,0 +1,39 @@
++# YH LaoDa 1.0.26
++
++基线：最新的 `yunhu-richkobe-1.0.25-complete-source.zip`。增量修改现有功能，未访问或推送用户 GitHub 账号。
++
++## 修复内容
++
++- 无法读取、损坏或无效的 EXIF 信息显示“无”；已读取到的有效属性继续展示，保留型号、软件、GPS 等优先排序。
++- JPEG、PNG、WebP 清除全部标准 EXIF 区块，不再因没有 EXIF 或 EXIF 字段解析失败而禁用按钮。允许重复清除；没有 EXIF 的 GIF 生成字节不变的副本，保留动画。损坏的是图像容器而非 EXIF 字段时，仍会报告无法安全处理。
++- EXIF 方向需要校正或静态图片 EXIF 损坏时，以浏览器显示方向导出 PNG。其他通常情况保留原压缩图像和动画数据。清除后重新检查 EXIF 和图像尺寸。
++- GPS 坐标附加北纬、南纬、东经、西经；方向标签中文显示，非法坐标显示“无”，缺少方向的度分秒数据不会编造方向。
++- 图片查看器在原始大小和缩小状态也支持鼠标左键按住拖动，关闭原生图片拖拽；松手或点击图片保持打开，点击背景/关闭按钮退出。
++- 用户资料改为紧凑头像与统一概览卡，统计项对齐铺满卡片，资料字段两列排列，移除重复统计内容，保持窄屏适配。
++- Markdown 编辑器仅保留写作界面，删除写作/源码/阅读切换栏、板块选择和多余的专注按钮。保留现有格式工具、导入/导出、图片、查找替换、大纲、云端草稿等能力，旧纯文本草稿仍可编辑。
++- 新文章自动使用开始写作时的板块。恢复云端草稿时保留原板块 ID，避免详情接口缺失该字段后丢失发布目标。
++- 缩小顶部和标题，正文获得更多空间。撤销/重做使用统一 SVG 图标；“窗口内展开”和“独立窗口”采用不同图标、文字与说明，独立窗口仅显示“返回主窗口”。
++- 恢复编辑器开关、查找/链接栏、大纲、窗口大小和按钮交互过渡。锁定账号时立即关闭编辑对话框，不等待离场动画。
++
++## 验证
++
++- `npm run typecheck`、`npm run build`、源码 preflight、`git diff --check` 通过。
++- `node scripts/test-image-properties.mjs`：12 项通过，包括 JPEG/PNG/WebP、损坏 EXIF、无 EXIF GIF、方向处理、GPS 四个方向、无效字段和 WebP 标志位。
++- `node scripts/test-community.mjs`：20 项通过，包括发布目标板块、云端草稿恢复、失败保留及并发/账号切换保护。
++- `node --test scripts/test-windows-assets.mjs`：2 项通过，Windows Node 官方 SHA-256、完整长度、PE 节边界及 x64 架构校验通过。
++- `node scripts/test-local-image-save.mjs`：生产图片保存字节、本地凭据持久化及路径校验通过。
++- `node scripts/test-sidecar-port.mjs`：实际 sidecar 在 8902 端口启动、退出、再次启动，退出后监听立即释放。
++- 浏览器 `test-ui-image-properties.mjs`：真实 Vue 界面的 EXIF 搜索、空/损坏/GIF 清除、GPS、保存/附件/上传字节一致、旋转像素一致、原始比例拖动通过。
++- 浏览器 `test-ui-community-extended.mjs`：工具栏、撤销/重做、导入及净化、查找/大纲动画、手动云端草稿、发布、独立窗口往返、主题同步和 1280/740/390/320px 布局通过。
++- 浏览器 `test-ui-maintenance-125.mjs`：资料布局与既有引用定位/对比度回归通过。
++- Windows x64 Tauri 主程序在本机构建；使用 NSIS 编译安装程序，并对解包后的程序、Node、sidecar 和前端文件进行一致性核对。
++
++浏览器和接口测试使用本地虚拟账号及模拟上游接口。未在 Windows 真机安装运行，未使用真实云湖账号测试发布。
++
++## 源码与构建
++
++完整源码含本次修改、测试、既有功能以及 `PATCH_1.0.26.diff`，不含 `node_modules`、编译缓存或用户数据。
++
++常规前端：`npm ci` → `npm run typecheck` → `npm run build`。
++
++桌面：运行 `node scripts/build-server-bundle.mjs`、`npm run fetch:windows-node`；将 `dist` 复制到 `src-tauri/resources/dist`，再使用仓库 Windows 工作流或 `scripts/package-windows-local.sh` 构建。Windows 运行时下载脚本会验证官方哈希与文件结构。
+diff --git a/package-lock.json b/package-lock.json
+index d5cdd64..782f269 100644
+--- a/package-lock.json
++++ b/package-lock.json
+@@ -1,12 +1,12 @@
+ {
+   "name": "yunhu-vue",
+-  "version": "1.0.25",
++  "version": "1.0.26",
+   "lockfileVersion": 3,
+   "requires": true,
+   "packages": {
+     "": {
+       "name": "yunhu-vue",
+-      "version": "1.0.25",
++      "version": "1.0.26",
+       "dependencies": {
+         "@capacitor/core": "^8.5.2",
+         "@jodit/image-editor": "0.2.5",
+diff --git a/package.json b/package.json
+index 075f078..4e3f2bf 100644
+--- a/package.json
++++ b/package.json
+@@ -1,7 +1,7 @@
+ {
+   "name": "yunhu-vue",
+   "private": true,
+-  "version": "1.0.25",
++  "version": "1.0.26",
+   "type": "module",
+   "description": "云湖牢大版 · Vue3 + 真 cordis 插件内核 + Satori 协议 + WebDAV 网关（仅供学习交流）",
+   "scripts": {
+diff --git a/scripts/test-community.mjs b/scripts/test-community.mjs
+index 76ecc69..2378591 100644
+--- a/scripts/test-community.mjs
++++ b/scripts/test-community.mjs
+@@ -114,3 +114,14 @@ await test('publication failure retains the editor without silently uploading an
+  let saves=0;const f=fixture({baSaveDraft:async()=>{saves++;return 1},baCreatePost:async()=>{throw Error('服务器失败')}});f.s.viewing={id:925};f.cm.openEditor();Object.assign(f.s.editor,{title:'标题',content:'正文'})
+  assert.equal(await f.cm.publish(),false);assert.equal(saves,0);assert.equal(f.s.editor.content,'正文');assert.match(f.s.editorError,/编辑内容已保留/)
+ })
++await test('publishing keeps the board chosen when writing began, even after another board is viewed',async()=>{
++ const calls=[],f=fixture({baDrafts:async()=>({list:[],more:false}),baCreatePost:async(...v)=>calls.push(v)})
++ f.s.viewing={id:925,name:'开始写作的板块'};f.cm.openEditor();Object.assign(f.s.editor,{title:'标题',content:'正文'})
++ f.s.viewing={id:1009,name:'另一个板块'}
++ assert.equal(await f.cm.publish(),true);assert.equal(calls[0][0],925)
++})
++await test('cloud draft detail missing board ID preserves the original target board',async()=>{
++ const f=fixture({baGetDraft:async()=>({id:40,title:'云端标题',content:'云端正文'})})
++ assert.equal(await f.cm.resumeDraft({id:'cloud:40',cloudId:40,owner:'test-user',baId:925,boardName:'笔记',title:'标题',content:'正文',contentType:2,updatedAt:1}),true)
++ assert.equal(f.s.editor.baId,925);assert.equal(f.s.editor.boardName,'笔记')
++})
+diff --git a/scripts/test-image-properties.mjs b/scripts/test-image-properties.mjs
+index 9685f2d..8380aed 100644
+--- a/scripts/test-image-properties.mjs
++++ b/scripts/test-image-properties.mjs
+@@ -31,10 +31,10 @@ await test('Orientation 6 is retained for the normalization branch',async()=>{
+  const bytes=await readFile('scripts/image-properties-fixtures/oriented.jpg')
+  assert.equal((await core.readImageProperties(new File([bytes],'oriented.jpg'))).orientation,6)
+ })
+-await test('GIF is inspectable, but unsupported EXIF deletion never silently flattens animation',async()=>{
++await test('GIF without standard EXIF supports idempotent cleaning without flattening animation',async()=>{
+  const bytes=await readFile('scripts/ui-fixture/animated.gif'), info=await core.readImageProperties(new File([bytes],'animated.gif'))
+- assert.equal(info.format,'GIF');assert.equal(info.hasExif,false);assert.equal(info.canClean,false)
+- assert.throws(()=>core.stripExifBytes(bytes),/不支持/)
++ assert.equal(info.format,'GIF');assert.equal(info.hasExif,false);assert.equal(info.canClean,true)
++ assert.deepEqual(Buffer.from(core.stripExifBytes(bytes)),bytes)
+ })
+ await test('Malformed containers and empty input fail explicitly',async()=>{
+  const bytes=await readFile('scripts/image-properties-fixtures/photo.webp');assert.throws(()=>core.stripExifBytes(bytes.subarray(0,bytes.length-3)),/损坏/)
+@@ -49,3 +49,26 @@ await test('complete metadata retains unknown EXIF, full comments, maker binary
+  assert.ok(rows.some(r=>r.group.includes('xmp')&&r.value.includes('Extended metadata software')));assert.ok(Object.keys(info.metadata).some(k=>k==='icc'))
+  assert.ok(rows.find(r=>r.key==='UserComment').value.length>3000);const maker=rows.find(r=>r.key==='MakerNote');assert.equal(maker.raw.byteLength,512);assert.ok(core.propertyValue(maker.raw,true).length>1000)
+ })
++await test('GPS directions include hemispheres, unknown or invalid fields display 无',()=>{
++ const rows=core.imagePropertyRows({gps:{GPSLatitude:[22,30,0],GPSLatitudeRef:'N',GPSLongitude:[114,10,20],GPSLongitudeRef:'E'},empty:undefined,bad:NaN,date:new Date('invalid')})
++ assert.equal(rows.find(r=>r.key==='GPSLatitude').value,'北纬 22° 30′ 0″')
++ assert.equal(rows.find(r=>r.key==='GPSLongitude').value,'东经 114° 10′ 20″')
++ for(const key of ['empty','bad','date'])assert.equal(rows.find(r=>r.key===key).value,'无')
++ const south=core.imagePropertyRows({gps:{GPSLatitude:[12,0,1],GPSLatitudeRef:'S',GPSLongitude:[45,0,1],GPSLongitudeRef:'W'}})
++ assert.match(south.find(r=>r.key==='GPSLatitude').value,/南纬/);assert.match(south.find(r=>r.key==='GPSLongitude').value,/西经/)
++ assert.equal(core.imagePropertyRows({gps:{GPSLatitude:[0,70,0],GPSLatitudeRef:'N'}})[0].value,'无')
++})
++await test('broken EXIF values do not prevent removing every EXIF container',async()=>{
++ const original=await readFile('scripts/image-properties-fixtures/photo.jpg'),bytes=Buffer.from(original),tiff=bytes.indexOf(Buffer.from('Exif\0\0'))+6
++ bytes[tiff]=0;bytes[tiff+1]=0
++ const info=await core.readImageProperties(new File([bytes],'broken.jpg'))
++ assert.equal(info.hasExif,true);assert.deepEqual(info.exif,{})
++ const clean=core.stripExifBytes(bytes),after=await core.readImageProperties(new File([clean],'clean.jpg'))
++ assert.equal(after.hasExif,false);assert.equal(after.parseError,'');assert.deepEqual(core.stripExifBytes(clean),clean)
++})
++await test('WebP EXIF flag clears even when the advertised EXIF block is absent',async()=>{
++ const bytes=Buffer.from(core.stripExifBytes(await readFile('scripts/image-properties-fixtures/photo.webp')))
++ bytes[20]|=8
++ const clean=core.stripExifBytes(bytes);assert.equal(clean[20]&8,0)
++ assert.equal(new DataView(clean.buffer).getUint32(4,true),clean.length-8)
++})
+diff --git a/scripts/test-ui-community-extended.mjs b/scripts/test-ui-community-extended.mjs
+index fd7e4ed..0335ab3 100644
+--- a/scripts/test-ui-community-extended.mjs
++++ b/scripts/test-ui-community-extended.mjs
+@@ -18,6 +18,15 @@ try {
+  const editor=page.getByRole('dialog',{name:'撰写文章',exact:true})
+  await editor.waitFor();await page.getByLabel('文章标题',{exact:true}).fill('测试文章')
+  const body=page.getByLabel('文章正文',{exact:true});await body.fill('写作内容')
++ assert.equal(await page.getByRole('button',{name:/^(写作|源码|阅读|专注写作)$/}).count(),0)
++ assert.equal(await page.getByLabel('发布板块',{exact:true}).count(),0)
++ const dimensions=await page.locator('.community-editor').evaluate(el=>({height:el.clientHeight,title:el.querySelector('.editor-title').getBoundingClientRect().height,body:el.querySelector('.editor-workspace').getBoundingClientRect().height}))
++ assert.ok(dimensions.title<=60);assert.ok(dimensions.body/dimensions.height>.65)
++ await page.getByRole('button',{name:'窗口内展开',exact:true}).click()
++ await page.waitForFunction(()=>document.querySelector('.community-editor-dialog').clientHeight>=innerHeight-2)
++ await page.getByRole('button',{name:'还原编辑器大小',exact:true}).click()
++ await page.waitForFunction(()=>document.querySelector('.community-editor-dialog').clientHeight<innerHeight-10)
++
+  await body.evaluate(el=>{el.focus();const r=document.createRange();r.selectNodeContents(el);const sel=window.getSelection();sel.removeAllRanges();sel.addRange(r)})
+  await page.getByRole('button',{name:'加粗',exact:true}).click()
+  await page.waitForFunction(()=>window.__community.ctx.community.state.editor.content==='**写作内容**')
+@@ -26,10 +35,10 @@ try {
+  await page.getByRole('button',{name:'插入表格',exact:true}).click();await page.locator('.markdown-canvas table').waitFor()
+  await page.getByRole('button',{name:'查找替换',exact:true}).click();await page.getByLabel('查找文字').fill('内容');await page.getByLabel('替换文字').fill('笔记');await page.getByRole('button',{name:'全部替换',exact:true}).click();assert.match(await page.evaluate(()=>window.__community.ctx.community.state.editor.content),/笔记/)
+  await page.getByRole('button',{name:'关闭查找',exact:true}).click()
+- await page.getByRole('button',{name:'源码',exact:true}).click();await page.getByLabel('文章源码').fill('# 我的笔记\n\n<script>window.editorEvil=true</script>\n\n- [ ] 待办事项\n\n正文');await page.getByRole('button',{name:'写作',exact:true}).click()
++ await page.getByLabel('导入 Markdown').setInputFiles({name:'writing.md',mimeType:'text/markdown',buffer:Buffer.from('# 我的笔记\n\n<script>window.editorEvil=true</script>\n\n- [ ] 待办事项\n\n正文')})
+  const task=page.locator('.markdown-canvas ul[data-type=taskList] > li').first();await task.locator('input[type=checkbox]').check();await page.waitForFunction(()=>window.__community.ctx.community.state.editor.content.includes('- [x]'))
+  const aligned=await task.evaluate(el=>{const a=el.querySelector('input').getBoundingClientRect(),b=el.querySelector('p').getBoundingClientRect();return Math.abs(a.y-b.y)<b.height});assert.equal(aligned,true);await task.locator('input[type=checkbox]').uncheck()
+- await page.getByRole('button',{name:'文章大纲',exact:true}).click();await page.locator('.editor-outline button').filter({hasText:'我的笔记'}).waitFor()
++ await page.getByRole('button',{name:'文章大纲',exact:true}).click();await page.waitForFunction(()=>document.querySelector('.editor-outline')?.getAnimations().length>0,{},{polling:10,timeout:1000});await page.locator('.editor-outline button').filter({hasText:'我的笔记'}).waitFor()
+  assert.equal(await page.locator('.markdown-canvas script').count(),0);assert.equal(await page.evaluate(()=>window.editorEvil),undefined)
+  await page.getByLabel('上传文章图片').setInputFiles({name:'article.png',mimeType:'image/png',buffer:Buffer.from([1,2,3])})
+  await page.waitForFunction(()=>window.__community.ctx.community.state.editor.content.includes('![article.png]'))
+@@ -46,6 +55,7 @@ try {
+  await page.evaluate(()=>window.__community.fail.publish=false)
+  await page.getByRole('button',{name:'发布文章',exact:true}).last().click();await editor.waitFor({state:'hidden'})
+  assert.equal(await page.evaluate(()=>window.__community.ctx.community.state.drafts.length),0)
++ assert.equal(await page.evaluate(()=>window.__community.calls.filter(c=>c[0]==='publish').at(-1)[1]),925)
+  await page.getByRole('button',{name:'进入板块 笔记 / 随感',exact:true}).click();await page.locator('.post-card').first().click()
+  await page.getByRole('button',{name:'0 赞',exact:true}).waitFor();await page.getByRole('button',{name:'0 赞',exact:true}).click();await page.getByRole('button',{name:'1 赞',exact:true}).waitFor()
+  await page.getByRole('button',{name:'收藏 0',exact:true}).click();await page.getByRole('button',{name:'已收藏 1',exact:true}).waitFor()
+diff --git a/scripts/test-ui-image-properties.mjs b/scripts/test-ui-image-properties.mjs
+index abb396e..a4a7815 100644
+--- a/scripts/test-ui-image-properties.mjs
++++ b/scripts/test-ui-image-properties.mjs
+@@ -85,15 +85,40 @@ try {
+  // Open the actual message toolbar; cleaning and queuing is separate from sending.
+  const viewerSource=await readFile('scripts/image-properties-fixtures/photo.jpg');objects.set('viewer-photo.jpg',{bytes:viewerSource,mime:'image/jpeg'})
+  await page.evaluate(()=>{const ctx=window.__qa.ctx;ctx.chat.state.messages.push({id:'viewer-photo',chatId:'normal',chatType:2,type:2,senderId:'me',sender:'Me',ts:Date.now(),content:{image_url:'viewer-photo.jpg',width:48,height:32}})})
+- await page.locator('img.media').last().click();await page.getByRole('button',{name:'图片属性',exact:true}).click();await dialog.getByText('QA Camera',{exact:true}).waitFor()
++ await page.locator('img.media').last().click()
++ // Left-drag works at 100%, remains open on release, and clicking the image no longer closes it.
++ const viewerImage=page.locator('.viewer-img'), box=await viewerImage.boundingBox()
++ await page.mouse.move(box.x+box.width/2,box.y+box.height/2);await page.mouse.down();await page.mouse.move(box.x+box.width/2+65,box.y+box.height/2+35,{steps:8});await page.mouse.up()
++ assert.equal(await page.locator('.viewer-mask').count(),1)
++ assert.ok((await viewerImage.boundingBox()).x-box.x>=64)
++ await viewerImage.click();assert.equal(await page.locator('.viewer-mask').count(),1)
++ await page.getByRole('button',{name:'图片属性',exact:true}).click();await dialog.getByText('QA Camera',{exact:true}).waitFor()
+  await page.keyboard.press('Escape');await dialog.waitFor({state:'detached'});await page.locator('.viewer-mask').waitFor()
+  await page.getByRole('button',{name:'编辑图片',exact:true}).click();edit=page.getByRole('dialog',{name:'编辑图片',exact:true});await edit.getByRole('button',{name:'EXIF 隐私',exact:true}).click();await edit.getByRole('button',{name:'清除 EXIF',exact:true}).click()
+  await edit.getByRole('button',{name:'加入待发送附件',exact:true}).click();await edit.waitFor({state:'detached'});assert.equal(uploads.length,4)
+  await page.locator('.viewer-bar button[title="关闭"]').click();assert.equal(await page.getByRole('button',{name:'附件图片属性',exact:true}).count(),1)
+- // No EXIF and GIF states don't enable destructive operations.
++ // The property panel stays read-only; cleaning without EXIF is allowed in the editor.
+  await page.locator('.pend-x').click()
+  await page.locator('input[type=file][accept="image/*"]').setInputFiles({name:'animation.gif',mimeType:'image/gif',buffer:await readFile('scripts/ui-fixture/animated.gif')})
+- await page.getByRole('button',{name:'附件图片属性',exact:true}).click();await dialog.getByText('GIF 不含标准 EXIF；动画数据保持原样。',{exact:true}).waitFor();assert.equal(await dialog.getByRole('button',{name:'清除 EXIF',exact:true}).count(),0)
+- await page.getByRole('button',{name:'关闭属性',exact:true}).click();assert.deepEqual(errors,[])
++ await page.getByRole('button',{name:'附件图片属性',exact:true}).click();await dialog.getByText('EXIF：无',{exact:true}).waitFor();assert.equal(await dialog.getByRole('button',{name:'清除 EXIF',exact:true}).count(),0)
++ await page.getByRole('button',{name:'关闭属性',exact:true}).click()
++ await page.locator('.pend img').click();edit=page.getByRole('dialog',{name:'编辑图片',exact:true});await edit.getByRole('button',{name:'EXIF 隐私',exact:true}).click();await edit.getByRole('button',{name:'清除 EXIF',exact:true}).click();await edit.getByRole('button',{name:'应用到附件',exact:true}).click();await edit.waitFor({state:'detached'})
++ const gifBytes=await page.evaluate(async()=>{const {ctx}=window.__qa,p=ctx.chat.drafts.get(ctx.chat.state.current).pending[0];return Array.from(new Uint8Array(await p.file.arrayBuffer()))})
++ assert.deepEqual(Buffer.from(gifBytes),await readFile('scripts/ui-fixture/animated.gif'))
++ for (const damaged of [false,true]) {
++  await page.locator('.pend-x').click()
++  const bytes=damaged?Buffer.from(await readFile('scripts/image-properties-fixtures/photo.jpg')):Buffer.from(core.stripExifBytes(await readFile('scripts/image-properties-fixtures/photo.png')))
++  if(damaged) { const tiff=bytes.indexOf(Buffer.from('Exif\0\0'))+6;bytes[tiff]=0;bytes[tiff+1]=0 }
++  await page.locator('input[type=file][accept="image/*"]').setInputFiles({name:damaged?'damaged.jpg':'empty.png',mimeType:damaged?'image/jpeg':'image/png',buffer:bytes})
++  await page.getByRole('button',{name:'附件图片属性',exact:true}).click();await dialog.getByText('EXIF：无',{exact:true}).waitFor();assert.equal(await dialog.locator('.properties-error').count(),0)
++  await page.getByRole('button',{name:'关闭属性',exact:true}).click()
++  await page.locator('.pend img').click();edit=page.getByRole('dialog',{name:'编辑图片',exact:true});await edit.getByRole('button',{name:'EXIF 隐私',exact:true}).click()
++  const cleanButton=edit.getByRole('button',{name:'清除 EXIF',exact:true});await cleanButton.waitFor();await page.waitForFunction(()=>!document.querySelector('[aria-label="EXIF 隐私设置"] button').disabled);assert.equal(await cleanButton.isEnabled(),true)
++  await cleanButton.click();await edit.getByText('EXIF 已清除并校验。可保存副本，或使用下方按钮应用到待发送附件。',{exact:true}).waitFor()
++  await edit.getByRole('button',{name:'应用到附件',exact:true}).click();await edit.waitFor({state:'detached'})
++  const data=await page.evaluate(async()=>{const {readImageProperties}=await import('/src/core/image-properties.ts'),p=window.__qa.ctx.chat.drafts.get(window.__qa.ctx.chat.state.current).pending[0];const info=await readImageProperties(p.file);return {hasExif:info.hasExif,w:info.width,h:info.height}})
++  assert.deepEqual(data,{hasExif:false,w:48,h:32})
++ }
++ assert.deepEqual(errors,[])
+  console.log('PASS: read-only EXIF/GPS panel, model-first sorting, editor-only cleaning, search, dark/light/mobile, saved bytes == replacement == multipart upload, protobuf dimensions, Orientation 6 pixel equality, message toolbar queuing without auto-send, Escape and GIF states')
+ } finally {await browser.close();await server.close()}
+diff --git a/scripts/test-ui-maintenance-125.mjs b/scripts/test-ui-maintenance-125.mjs
+index 765f238..c359843 100644
+--- a/scripts/test-ui-maintenance-125.mjs
++++ b/scripts/test-ui-maintenance-125.mjs
+@@ -34,8 +34,10 @@ try {
+  assert.ok(await page.evaluate(()=>window.__qa.ctx.ui.state.toasts.every(t=>!t.text.includes('已删除'))))
+  await page.goto(base+'/scripts/ui-fixture/features.html');await page.waitForFunction(()=>window.__qa?.featuresReady)
+  await page.route('**/sticker-directory?*',r=>r.fulfill({json:{data:[],total:0}}))
+- await page.getByRole('button',{name:'通讯录',exact:true}).click();await page.getByRole('button',{name:'查看 MAX 的资料',exact:true}).first().click();await page.locator('.pf-highlights').waitFor()
+- const compact=await page.locator('.pf-highlights').evaluate(el=>({h:el.getBoundingClientRect().height,ratio:el.getBoundingClientRect().width/el.parentElement.clientWidth}));assert.ok(compact.h<90);assert.ok(compact.ratio<.85)
+- await page.setViewportSize({width:320,height:760});assert.ok(await page.locator('.pf').evaluate(el=>el.scrollWidth<=el.clientWidth+1));assert.deepEqual(errors,[])
++ await page.evaluate(()=>{const {ctx}=window.__qa;ctx.api.getUser=async id=>({id,name:'MAX',onlineDay:537,continuousOnlineDay:14,medalCount:2,registerTime:'2024-08-02',ipGeo:'江苏',profile:{introduction:'记录想法，分享日常。'}});ctx.api.baListByCreate=async()=>[{id:925,name:'笔记 / 随感'},{id:926,name:'生活碎片'}]})
++ await page.getByRole('button',{name:'通讯录',exact:true}).click();await page.getByRole('button',{name:'查看 MAX 的资料',exact:true}).first().click();await page.locator('.pf-highlights').waitFor();await page.locator('.pf-mask').evaluate(async el=>{await Promise.all(el.getAnimations({subtree:true}).map(a=>a.finished.catch(()=>{})))})
++ if(process.env.UI_QA_SCREENSHOTS){await mkdir(process.env.UI_QA_SCREENSHOTS,{recursive:true});await page.screenshot({path:process.env.UI_QA_SCREENSHOTS+'/profile-1280.png'})}
++ const compact=await page.locator('.pf-highlights').evaluate(el=>({h:el.getBoundingClientRect().height,ratio:el.getBoundingClientRect().width/el.parentElement.clientWidth}));assert.ok(compact.h<90);assert.ok(compact.ratio>.85)
++ await page.setViewportSize({width:320,height:760});assert.ok(await page.locator('.pf').evaluate(el=>el.scrollWidth<=el.clientWidth+1));if(process.env.UI_QA_SCREENSHOTS)await page.screenshot({path:process.env.UI_QA_SCREENSHOTS+'/profile-320.png'});assert.deepEqual(errors,[])
+  console.log('PASS: distant quote loads/highlights; no false deletion warning; sender/body contrast >= 4.5 with pale custom accents over bright wallpaper in both themes; compact statistics at 1280/320px')
+ } finally {await browser.close();await server.close()}
+diff --git a/src-tauri/Cargo.lock b/src-tauri/Cargo.lock
+index c559857..67e33e7 100644
+--- a/src-tauri/Cargo.lock
++++ b/src-tauri/Cargo.lock
+@@ -4833,7 +4833,7 @@ dependencies = [
+ 
+ [[package]]
+ name = "yunhulaoda-desktop"
+-version = "1.0.25"
++version = "1.0.26"
+ dependencies = [
+  "base64 0.22.1",
+  "serde",
+diff --git a/src-tauri/Cargo.toml b/src-tauri/Cargo.toml
+index 5ae1e0c..d841c4d 100644
+--- a/src-tauri/Cargo.toml
++++ b/src-tauri/Cargo.toml
+@@ -1,6 +1,6 @@
+ [package]
+ name = "yunhulaoda-desktop"
+-version = "1.0.25"
++version = "1.0.26"
+ description = "云湖牢大版桌面客户端（Tauri 壳 + Node sidecar 服务）"
+ authors = ["yibanm"]
+ edition = "2021"
+diff --git a/src-tauri/tauri.conf.json b/src-tauri/tauri.conf.json
+index 5d1e892..e82f6f3 100644
+--- a/src-tauri/tauri.conf.json
++++ b/src-tauri/tauri.conf.json
+@@ -1,7 +1,7 @@
+ {
+   "$schema": "https://schema.tauri.app/config/2",
+   "productName": "YunhuLaoda",
+-  "version": "1.0.25",
++  "version": "1.0.26",
+   "identifier": "com.richkobe.yunhulaoda",
+   "build": {
+     "beforeBuildCommand": "",
+diff --git a/src/components/CommunityEditor.vue b/src/components/CommunityEditor.vue
+index 33f8577..c94cbad 100644
+--- a/src/components/CommunityEditor.vue
++++ b/src/components/CommunityEditor.vue
+@@ -1,17 +1,14 @@
+ <script setup lang="ts">
+-import { computed, ref, nextTick, watch, defineAsyncComponent } from 'vue'
++import { computed, ref, nextTick, defineAsyncComponent } from 'vue'
+ import Icon from '../console/components/Icon.vue'
+-import { renderMarkdown } from '../core/render'
+-import { fixResourceUrls } from '../core/res'
+-import { markdownEdit, type CommunityDraft } from '../core/community-drafts'
++import { type CommunityDraft } from '../core/community-drafts'
+ const MarkdownCanvas = defineAsyncComponent(() => import('./MarkdownCanvas.vue'))
+ const canvas = ref<any>(), richHistory = ref({ undo: false, redo: false })
+-const props = defineProps<{ draft: CommunityDraft; busy?: boolean; error?: string; savedAt?: number; detached?: boolean; uploading?: boolean; boards?: { id: number; name: string }[] }>()
+-const emit = defineEmits(['change', 'save', 'publish', 'close', 'detach', 'upload'])
+-const mode = ref('write'), source = ref<HTMLTextAreaElement>(), preview = ref<HTMLElement>(), outlineOpen = ref(false), focus = ref(false)
++const props = defineProps<{ draft: CommunityDraft; busy?: boolean; error?: string; savedAt?: number; detached?: boolean; expanded?: boolean; uploading?: boolean }>()
++const emit = defineEmits(['change', 'save', 'publish', 'close', 'detach', 'expand', 'upload'])
++const source = ref<HTMLTextAreaElement>(), outlineOpen = ref(false)
+ const findOpen = ref(false), find = ref(''), replacement = ref(''), linkOpen = ref(false), linkUrl = ref('https://'), linkLabel = ref(''), linkImage = ref(false)
+ const history = ref<string[]>([props.draft.content]), cursor = ref(0)
+-const html = computed(() => props.draft.contentType === 1 ? '' : renderMarkdown(props.draft.content))
+ const headings = computed(() => props.draft.content.split('\n').map((line, index) => ({ line, index, match: /^(#{1,6})\s+(.+)/.exec(line) })).filter(x => x.match).slice(0, 100))
+ const matches = computed(() => find.value ? props.draft.content.split(find.value).length - 1 : 0)
+ let selected = { start: 0, end: 0 }
+@@ -25,56 +22,64 @@ function change(content: string, record = true) {
+   }
+   emit('change', { content })
+ }
+-async function edit(before: string, after = '', placeholder = '文字') {
+-  if (props.busy || props.draft.contentType === 1) return
+-  if (mode.value === 'write') { canvas.value?.format(before); return }
+-  const next = markdownEdit(props.draft.content, selected.start, selected.end, before, after, placeholder)
+-  change(next.text); mode.value = mode.value === 'preview' ? 'source' : mode.value
+-  await nextTick(); source.value?.focus(); source.value?.setSelectionRange(next.start, next.end); remember()
++function edit(before: string, _after = '', _placeholder = '文字') {
++  if (!props.busy && props.draft.contentType !== 1) canvas.value?.format(before)
++}
++function undo(redo = false) {
++  if (props.busy) return
++  if (props.draft.contentType !== 1) { redo ? canvas.value?.redo() : canvas.value?.undo(); return }
++  const index = cursor.value + (redo ? 1 : -1)
++  if (index < 0 || index >= history.value.length) return
++  cursor.value = index; change(history.value[index], false)
+ }
+-function undo(redo = false) { if (mode.value === 'write' && props.draft.contentType !== 1) { redo ? canvas.value?.redo() : canvas.value?.undo(); return }; const index = cursor.value + (redo ? 1 : -1); if (index < 0 || index >= history.value.length) return; cursor.value = index; change(history.value[index], false) }
+ function key(e: KeyboardEvent) {
+   if (e.defaultPrevented || e.isComposing) return
+-  remember()
+-  if (e.key === 'Tab' && (mode.value === 'source' || props.draft.contentType === 1)) { e.preventDefault(); void edit('  ', '', '') }
++  // Preserve normal selection, search and undo in title/link/search input fields.
++  const target = e.target as HTMLElement
++  const inBody = !!target.closest('.editor-workspace')
++  if (e.key === 'Tab' && target === source.value && !props.busy) {
++    e.preventDefault(); remember()
++    change(props.draft.content.slice(0, selected.start) + '  ' + props.draft.content.slice(selected.end))
++    const end = selected.start + 2; void nextTick(() => source.value?.setSelectionRange(end, end)); return
++  }
+   if (!(e.ctrlKey || e.metaKey)) return
+   const k = e.key.toLowerCase()
+-  if (['b', 'i', 's', 'f', 'h', 'z', 'y', 'k', 'enter'].includes(k)) e.preventDefault()
+-  if (k === 'b') void edit('**', '**')
+-  if (k === 'i') void edit('*', '*')
+-  if (k === 's') emit('save')
+-  if (k === 'enter' && !props.busy) emit('publish')
++  if (k === 's') { e.preventDefault(); if (!props.busy) emit('save'); return }
++  if (k === 'enter') { e.preventDefault(); if (!props.busy && !props.uploading) emit('publish'); return }
++  if (!inBody) return
++  remember()
++  if (['b', 'i', 'f', 'h', 'z', 'y', 'k'].includes(k)) e.preventDefault()
++  if (k === 'b') edit('**')
++  if (k === 'i') edit('*')
+   if (k === 'f' || k === 'h') findOpen.value = !findOpen.value
+   if (k === 'z') undo(e.shiftKey)
+   if (k === 'y') undo(true)
+-  if (k === 'k') openLink(false)
++  if (k === 'k' && props.draft.contentType !== 1) openLink(false)
+ }
+-function openLink(image: boolean) { linkImage.value = image; linkLabel.value = mode.value === 'write' ? canvas.value?.selectionText() || '' : props.draft.content.slice(selected.start, selected.end); linkOpen.value = true }
++function openLink(image: boolean) { linkImage.value = image; linkLabel.value = canvas.value?.selectionText() || ''; linkOpen.value = true }
+ function insertLink() {
++  if (props.busy) return
+   try {
+     const url = new URL(linkUrl.value)
+     if (!['https:', 'http:'].includes(url.protocol)) return
+     const label = linkLabel.value.replace(/[\[\]\n]/g, '') || (linkImage.value ? '图片' : '链接')
+-    if (mode.value === 'write' && props.draft.contentType !== 1) { canvas.value?.link(url.href, label, linkImage.value); linkOpen.value = false; return }
+-    change(props.draft.content.slice(0, selected.start) + (linkImage.value ? '!' : '') + '[' + label + '](' + url.href.replace(/\)/g, '%29') + ')' + props.draft.content.slice(selected.end))
+-    linkOpen.value = false
++    canvas.value?.link(url.href, label, linkImage.value); linkOpen.value = false
+   } catch { /* Invalid URL remains editable. */ }
+ }
+-function replaceAll() { if (mode.value === 'write' && props.draft.contentType !== 1) { canvas.value?.replaceAll(find.value, replacement.value); return }; if (find.value) change(props.draft.content.split(find.value).join(replacement.value)) }
+-async function findNext() {
++function replaceAll() { if (props.busy) return; if (props.draft.contentType !== 1) canvas.value?.replaceAll(find.value, replacement.value); else if (find.value) change(props.draft.content.split(find.value).join(replacement.value)) }
++function selectText(offset: number, length = 0) { source.value?.focus(); source.value?.setSelectionRange(offset, offset + length); remember() }
++function findNext() {
+   if (!find.value) return
+-  if (mode.value === 'write' && props.draft.contentType !== 1) { canvas.value?.findNext(find.value); return }
+-  mode.value = 'source'; await nextTick()
++  if (props.draft.contentType !== 1) { canvas.value?.findNext(find.value); return }
+   const from = source.value?.selectionEnd || 0
+   let index = props.draft.content.indexOf(find.value, from)
+   if (index < 0) index = props.draft.content.indexOf(find.value)
+-  if (index >= 0) { source.value?.focus(); source.value?.setSelectionRange(index, index + find.value.length); remember() }
++  if (index >= 0) selectText(index, find.value.length)
+ }
+-async function gotoLine(line: number) {
+-  if (mode.value === 'write' && props.draft.contentType !== 1) { canvas.value?.gotoHeading(headings.value.findIndex(h => h.index === line)); return }
+-  mode.value = 'source'; await nextTick()
+-  const offset = props.draft.content.split('\n').slice(0, line).reduce((sum, value) => sum + value.length + 1, 0)
+-  source.value?.focus(); source.value?.setSelectionRange(offset, offset); if (source.value) source.value.scrollTop = line * 26; remember()
++function gotoLine(line: number) {
++  if (props.draft.contentType !== 1) { canvas.value?.gotoHeading(headings.value.findIndex(h => h.index === line)); return }
++  selectText(props.draft.content.split('\n').slice(0, line).reduce((sum, value) => sum + value.length + 1, 0))
++  if (source.value) source.value.scrollTop = line * 26
+ }
+ function exportMd() {
+   const blob = new Blob([props.draft.title + '\n\n' + props.draft.content], { type: 'text/markdown;charset=utf-8' }), url = URL.createObjectURL(blob)
+@@ -82,50 +87,61 @@ function exportMd() {
+ }
+ async function importMd(ev: Event) {
+   const input = ev.target as HTMLInputElement, file = input.files?.[0]
+-  if (file && file.size <= 800000) change(await file.text())
++  if (file && file.size <= 800000 && !props.busy) change(await file.text())
+   input.value = ''
+ }
+ function upload(ev: Event) { const el = ev.target as HTMLInputElement; if (el.files?.[0]) emit('upload', el.files[0]); el.value = '' }
+-watch(html, async () => { await nextTick(); fixResourceUrls(preview.value) })
+ </script>
+ 
+ <template>
+-  <section class="community-editor" :class="{ 'editor-focus': focus }" aria-label="文章编辑器" @keydown="key">
+-    <header class="editor-top"><div><small>{{ draft.boardName }} · {{ draft.postId ? '编辑文章' : '新文章' }}</small><strong>把想法写下来</strong></div><div class="editor-buttons"><button type="button" title="导出 Markdown" aria-label="导出 Markdown" @click="exportMd"><Icon name="download" :size="17" /></button><button type="button" :aria-label="detached ? '返回主窗口编辑' : '在独立窗口编辑'" :disabled="busy" @click="emit('detach')"><Icon :name="detached ? 'collapse' : 'expand'" :size="17" /></button><button type="button" aria-label="关闭编辑器" :disabled="busy" @click="emit('close')"><Icon name="close" :size="19" /></button></div></header>
++  <section class="community-editor" aria-label="文章编辑器" @keydown="key">
++    <header class="editor-top">
++      <div class="editor-context"><Icon name="pencil" :size="17" /><span>{{ draft.postId ? '编辑文章' : '撰写文章' }}</span><span class="editor-board" :title="draft.boardName">{{ draft.boardName || '未关联板块' }}</span></div>
++      <div class="editor-buttons">
++        <button type="button" title="导出 Markdown 文件" aria-label="导出 Markdown" @click="exportMd"><Icon name="download" :size="16" /><span class="file-action-text">导出</span></button>
++        <button v-if="!detached" type="button" :title="expanded ? '恢复窗口内编辑器大小' : '填满当前软件窗口'" :aria-label="expanded ? '还原编辑器大小' : '窗口内展开'" :aria-pressed="!!expanded" @click="emit('expand')"><Icon :name="expanded ? 'collapse' : 'expand'" :size="16" /><span>{{ expanded ? '还原大小' : '窗口内展开' }}</span></button>
++        <button type="button" :title="detached ? '移回主窗口继续编辑' : '在独立窗口继续编辑，可移至软件外'" :aria-label="detached ? '返回主窗口编辑' : '在独立窗口编辑'" :disabled="busy" @click="emit('detach')"><Icon name="windowOut" :size="16" /><span>{{ detached ? '返回主窗口' : '独立窗口' }}</span></button>
++        <button type="button" class="editor-close" title="关闭编辑器" aria-label="关闭编辑器" :disabled="busy" @click="emit('close')"><Icon name="close" :size="18" /></button>
++      </div>
++    </header>
+     <input class="editor-title" :value="draft.title" aria-label="文章标题" placeholder="文章标题" maxlength="200" :disabled="busy" @input="emit('change', { title: ($event.target as HTMLInputElement).value })" />
+     <div class="editor-toolbar" role="toolbar" aria-label="Markdown 工具栏" @pointerdown="remember">
+-      <button type="button" aria-label="撤销" title="撤销 Ctrl+Z" :disabled="busy || (mode === 'write' && draft.contentType !== 1 ? !richHistory.undo : cursor === 0)" @click="undo()"><Icon name="undo" :size="16" /></button><button type="button" aria-label="重做" title="重做 Ctrl+Y" :disabled="busy || (mode === 'write' && draft.contentType !== 1 ? !richHistory.redo : cursor >= history.length - 1)" @click="undo(true)">↪</button>
++      <button type="button" aria-label="撤销" title="撤销 Ctrl+Z" :disabled="busy || (draft.contentType !== 1 ? !richHistory.undo : cursor === 0)" @click="undo()"><Icon name="undo" :size="16" /></button><button type="button" aria-label="重做" title="重做 Ctrl+Y" :disabled="busy || (draft.contentType !== 1 ? !richHistory.redo : cursor >= history.length - 1)" @click="undo(true)"><Icon name="redo" :size="16" /></button>
+       <select aria-label="插入标题" :disabled="busy || draft.contentType === 1" value="" @change="edit(($event.target as HTMLSelectElement).value, '', '标题'); ($event.target as HTMLSelectElement).value = ''"><option value="" disabled>标题</option><option v-for="n in 6" :key="n" :value="'#'.repeat(n) + ' '">H{{ n }}</option></select>
+       <button aria-label="加粗" title="加粗 Ctrl+B" :disabled="busy" @click="edit('**', '**')"><b>B</b></button><button aria-label="斜体" title="斜体 Ctrl+I" :disabled="busy" @click="edit('*', '*')"><i>I</i></button><button aria-label="删除线" title="删除线" :disabled="busy" @click="edit('~~', '~~')"><s>S</s></button><button aria-label="下划线" title="下划线" :disabled="busy" @click="edit('<u>', '</u>')"><u>U</u></button><button aria-label="高亮" title="高亮" :disabled="busy" @click="edit('<mark>', '</mark>')">荧光</button>
+       <span class="tool-separator"></span><button aria-label="引用" title="引用" :disabled="busy" @click="edit('\n> ', '\n')"><Icon name="quote" :size="16" /></button><button aria-label="无序列表" title="无序列表" :disabled="busy" @click="edit('\n- ', '\n', '列表项')">• 列表</button><button aria-label="有序列表" title="有序列表" :disabled="busy" @click="edit('\n1. ', '\n', '列表项')">1. 列表</button><button aria-label="任务列表" title="任务列表" :disabled="busy" @click="edit('\n- [ ] ', '\n', '待办事项')">☐ 待办</button><button aria-label="行内代码" title="行内代码" :disabled="busy" @click="edit('`', '`', 'code')">&lt;/&gt;</button><button aria-label="代码块" title="代码块" :disabled="busy" @click="edit('\n```text\n', '\n```\n', '代码')">代码块</button>
+       <button aria-label="插入链接" title="链接 Ctrl+K" :disabled="busy" @click="openLink(false)"><Icon name="link" :size="16" /></button><button aria-label="插入图片链接" title="图片链接" :disabled="busy" @click="openLink(true)"><Icon name="image" :size="16" /></button><label class="editor-file" title="上传图片"><Icon name="plus" :size="16" />图片<input type="file" accept="image/*" hidden :disabled="busy || uploading" aria-label="上传文章图片" @change="upload" /></label>
+-      <button aria-label="插入表格" title="插入表格" :disabled="busy" @click="edit('\n| 列一 | 列二 |\n| --- | --- |\n| ', ' | 内容 |\n', '内容')">表格</button><button aria-label="插入分隔线" title="分隔线" :disabled="busy" @click="edit('\n\n---\n', '', '')">―</button><button aria-label="查找替换" title="查找替换 Ctrl+F" @click="findOpen = !findOpen"><Icon name="search" :size="16" /></button><button aria-label="文章大纲" :aria-pressed="outlineOpen" @click="outlineOpen = !outlineOpen"><Icon name="menu" :size="16" /></button><button aria-label="专注写作" :aria-pressed="focus" @click="focus = !focus"><Icon name="collapse" :size="16" /></button>
++      <span class="tool-separator"></span><label class="editor-file editor-import">导入 .md<input type="file" accept=".md,.txt,.markdown" hidden aria-label="导入 Markdown" :disabled="busy" @change="importMd" /></label>
++      <button aria-label="插入表格" title="插入表格" :disabled="busy" @click="edit('\n| 列一 | 列二 |\n| --- | --- |\n| ', ' | 内容 |\n', '内容')">表格</button><button aria-label="插入分隔线" title="分隔线" :disabled="busy" @click="edit('\n\n---\n', '', '')">―</button><button aria-label="查找替换" title="查找替换 Ctrl+F" @click="findOpen = !findOpen"><Icon name="search" :size="16" /></button><button aria-label="文章大纲" :aria-pressed="outlineOpen" @click="outlineOpen = !outlineOpen"><Icon name="menu" :size="16" /><span>大纲</span></button>
+     </div>
+     <Transition name="editor-bar"><form v-if="linkOpen" class="editor-find" @submit.prevent="insertLink"><input v-model="linkLabel" aria-label="链接文字" placeholder="文字或图片说明" /><input v-model="linkUrl" aria-label="链接地址" type="url" required placeholder="https://" /><button type="submit">插入</button><button type="button" @click="linkOpen = false">取消</button></form></Transition>
+     <Transition name="editor-bar"><div v-if="findOpen" class="editor-find"><input v-model="find" aria-label="查找文字" placeholder="查找文字" /><input v-model="replacement" aria-label="替换文字" placeholder="替换为" /><small>{{ matches }} 处</small><button type="button" @click="findNext">下一处</button><button type="button" :disabled="!find || busy" @click="replaceAll">全部替换</button><button type="button" aria-label="关闭查找" @click="findOpen = false">×</button></div></Transition>
+-    <div class="editor-view-controls"><nav aria-label="编辑视图"><button v-for="v in [{ id: 'write', name: '写作' }, { id: 'source', name: '源码' }, { id: 'preview', name: '阅读' }]" :key="v.id" :aria-pressed="mode === v.id" @click="mode = v.id">{{ v.name }}</button></nav><label>板块<select aria-label="发布板块" :value="draft.baId" :disabled="busy" @change="emit('change', { baId: Number(($event.target as HTMLSelectElement).value) })"><option :value="0">选择发布板块</option><option v-if="draft.baId && !boards?.some(b => Number(b.id) === draft.baId)" :value="draft.baId">{{ draft.boardName || draft.baId }}</option><option v-for="b in boards || []" :key="b.id" :value="b.id">{{ b.name }}</option></select></label><label>格式<select aria-label="文章格式" :value="draft.contentType" :disabled="busy" @change="emit('change', { contentType: Number(($event.target as HTMLSelectElement).value) })"><option :value="2">Markdown</option><option :value="1">纯文本</option></select></label><label class="editor-file">导入 .md<input type="file" accept=".md,.txt,.markdown" hidden aria-label="导入 Markdown" :disabled="busy" @change="importMd" /></label></div>
+-    <div class="editor-workspace" :class="'view-' + mode">
+-      <aside v-if="outlineOpen" class="editor-outline" aria-label="文章大纲"><strong>大纲</strong><button v-for="h in headings" :key="h.index" :style="{ paddingLeft: (h.match![1].length - 1) * 10 + 6 + 'px' }" @click="gotoLine(h.index)">{{ h.match![2] }}</button><p v-if="!headings.length">使用标题组织文章</p></aside>
+-      <MarkdownCanvas v-if="draft.contentType !== 1" v-show="mode === 'write'" ref="canvas" :model-value="draft.content" :disabled="busy" @update:model-value="change" @history="richHistory = $event" />
+-      <textarea v-show="mode === 'source' || (mode === 'write' && draft.contentType === 1)" ref="source" class="editor-source" :value="draft.content" aria-label="文章源码" placeholder="开始写作… 使用工具栏快速插入格式。" :disabled="busy" spellcheck="false" maxlength="200000" @input="change(($event.target as HTMLTextAreaElement).value); remember()" @select="remember" @keyup="remember" @click="remember"></textarea>
+-      <article v-if="mode === 'preview'" ref="preview" class="editor-preview" aria-label="文章预览"><template v-if="draft.contentType === 1"><p class="plain-preview">{{ draft.content || '开始写作后，这里显示文章。' }}</p></template><div v-else v-html="html || '<p>开始写作后，这里显示文章。</p>'"></div></article>
++    <div class="editor-workspace">
++      <Transition name="editor-outline"><aside v-if="outlineOpen" class="editor-outline" aria-label="文章大纲"><strong>大纲</strong><button v-for="h in headings" :key="h.index" :style="{ paddingLeft: (h.match![1].length - 1) * 10 + 6 + 'px' }" @click="gotoLine(h.index)">{{ h.match![2] }}</button><p v-if="!headings.length">使用标题组织文章</p></aside></Transition>
++      <MarkdownCanvas v-if="draft.contentType !== 1" ref="canvas" :model-value="draft.content" :disabled="busy" @update:model-value="change" @history="richHistory = $event" />
++      <textarea v-else ref="source" class="editor-source" :value="draft.content" aria-label="文章正文" placeholder="开始写作…" :disabled="busy" spellcheck="false" maxlength="200000" @input="change(($event.target as HTMLTextAreaElement).value); remember()" @select="remember" @keyup="remember" @click="remember"></textarea>
+     </div>
+     <footer class="editor-bottom"><div class="editor-save-status"><span>{{ draft.content.length }} 字符</span><span role="status">{{ uploading ? '正在上传图片…' : savedAt ? '云端草稿已保存 ' + new Date(savedAt).toLocaleTimeString() : '未保存到云端' }}</span></div><div class="editor-submit"><button type="button" class="secondary" :disabled="busy" @click="emit('save')">保存草稿</button><button type="button" :disabled="busy || uploading || !draft.title.trim() || !draft.content.trim()" @click="emit('publish')">{{ busy ? '发布中…' : draft.postId ? '更新文章' : '发布文章' }}</button></div></footer>
+-    <p v-if="error" class="editor-error" role="alert">{{ error }}</p>
++    <Transition name="editor-bar"><p v-if="error" class="editor-error" role="alert">{{ error }}</p></Transition>
+   </section>
+ </template>
+ 
+ <style scoped>
+ .community-editor { display:flex; flex-direction:column; width:100%; height:100%; min-height:0; color:var(--fg); background:var(--card); font-size:13px; }
+-.community-editor button,.editor-file,.community-editor select { background:var(--card2); color:var(--fg); border:1px solid var(--line); border-radius:8px; padding:6px 10px; font:inherit; cursor:pointer; }
+-.community-editor button:hover,.editor-file:hover { background:var(--acc-soft); color:var(--acc); }.community-editor button:disabled { opacity:.45; cursor:default; }
+-.editor-top { display:flex; align-items:center; justify-content:space-between; gap:10px; padding:16px 22px; border-bottom:1px solid var(--line); }.editor-top small { display:block; color:var(--fg2); margin-bottom:5px; }.editor-top strong { font-size:18px; }.editor-buttons { display:flex; gap:5px; }.editor-buttons button { display:grid; place-items:center; padding:7px; background:transparent; }
+-.editor-title { padding:24px clamp(20px,5vw,76px) 20px; font-size:28px; font-weight:650; color:var(--fg); border:0; border-radius:0; width:100%; background:transparent; box-sizing:border-box; outline:0; }
+-.editor-toolbar { display:flex; flex-wrap:wrap; gap:3px; padding:8px 18px; border-block:1px solid var(--line); background:var(--card); }.editor-toolbar button { min-width:29px; height:30px; padding:5px 8px; display:inline-flex; align-items:center; justify-content:center; border-color:transparent; background:transparent; font-size:12px; }.editor-toolbar select { padding:3px; max-width:65px; }.editor-file { display:inline-flex; gap:4px; align-items:center; font-size:12px; }.tool-separator { border-left:1px solid var(--line); margin:3px; }
+-.editor-view-controls { display:flex; align-items:center; gap:14px; padding:9px 18px; color:var(--fg2); font-size:11px; flex-wrap:wrap; }.editor-view-controls nav { display:flex; gap:3px; margin-right:auto; }.editor-view-controls button { border:0; background:transparent; font-size:12px; }.editor-view-controls button[aria-pressed=true] { background:var(--acc-soft); color:var(--acc); }.editor-view-controls label { display:flex; gap:5px; align-items:center; }.editor-view-controls select { font-size:11px; padding:3px; }
+-.editor-workspace { display:flex; flex:1; min-height:0; overflow:hidden; border-block:1px solid var(--line); }.editor-source { flex:1; min-width:0; resize:none; border:0; border-radius:0; background:var(--bg); color:var(--fg); padding:24px; font:14px/1.9 ui-monospace,Consolas,monospace; outline:0; tab-size:2; }.editor-preview { flex:1; min-width:0; overflow:auto; padding:24px 32px; font-size:15px; line-height:1.9; overflow-wrap:anywhere; border-left:0; }.editor-preview :deep(img) { max-width:100%; height:auto; border-radius:8px; }.editor-preview :deep(pre) { overflow:auto; background:var(--card2); padding:16px; border-radius:9px; }.editor-preview :deep(table) { display:block; max-width:100%; overflow:auto; border-collapse:collapse; }.editor-preview :deep(td),.editor-preview :deep(th) { padding:8px; border:1px solid var(--line); }.editor-preview :deep(blockquote) { border-left:3px solid var(--acc); padding-left:16px; margin-left:0; color:var(--fg2); }.editor-preview :deep(mark) { background:var(--acc-soft); color:var(--fg); }.plain-preview { white-space:pre-wrap; }.editor-outline { width:160px; flex-shrink:0; overflow:auto; padding:15px 10px; border-right:1px solid var(--line); }.editor-outline strong { display:block; padding:5px; }.editor-outline button { display:block; width:100%; text-align:left; font-size:12px; background:transparent; border:0; overflow-wrap:anywhere; }.editor-outline p { color:var(--fg2); font-size:11px; }
+-.editor-find { display:flex; gap:6px; align-items:center; padding:10px 18px; flex-wrap:wrap; }.editor-find input { flex:1; width:80px; min-width:60px; background:var(--bg); color:var(--fg); border:1px solid var(--line); padding:7px; border-radius:7px; }.editor-bottom { display:flex; justify-content:space-between; align-items:center; gap:12px; padding:12px 20px; flex-wrap:wrap; }.editor-save-status { display:flex; flex-wrap:wrap; align-items:center; gap:10px; font-size:11px; color:var(--fg2); }.editor-save-status select { font-size:11px; padding:3px; margin-left:5px; }.editor-submit { display:flex; gap:7px; margin-left:auto; }.editor-submit button:last-child { background:var(--acc); color:var(--on-acc,#202020); }.editor-error { color:var(--err); font-size:12px; margin:0; padding:10px 20px; background:var(--card2); }.editor-focus .editor-top,.editor-focus .editor-view-controls { display:none; }
+-.editor-bar-enter-active,.editor-bar-leave-active { transition:opacity .15s,transform .15s; }.editor-bar-enter-from,.editor-bar-leave-to { opacity:0; transform:translateY(-5px); }
+-@media(max-width:650px) { .editor-top { padding:12px; }.editor-title { padding:16px; font-size:21px; }.editor-toolbar { padding:7px; gap:2px; max-height:105px; overflow:auto; }.editor-toolbar button { padding:4px 6px; }.editor-source,.editor-preview { padding:16px; }.editor-outline { width:110px; }.editor-bottom { padding:10px; gap:8px; }.editor-save-status { gap:7px; } }
++.community-editor button,.editor-file,.community-editor select { background:var(--card2); color:var(--fg); border:1px solid var(--line); border-radius:7px; padding:6px 9px; font:inherit; cursor:pointer; transition:background .16s,color .16s,border-color .16s,box-shadow .16s,transform .16s; }
++.community-editor button:hover,.editor-file:hover { background:var(--acc-soft); color:var(--fg); border-color:var(--acc); }.community-editor button:active { transform:translateY(1px); }.community-editor button:disabled { opacity:.45; cursor:default; }.community-editor button:focus-visible,.editor-file:focus-within { outline:2px solid var(--acc); outline-offset:2px; }
++.editor-top { display:flex; align-items:center; justify-content:space-between; gap:10px; padding:10px 18px; border-bottom:1px solid var(--line); min-width:0; }
++.editor-context { display:flex; align-items:center; gap:8px; min-width:0; font-weight:600; }.editor-context > svg { flex-shrink:0; color:var(--fg2); }.editor-context > span { white-space:nowrap; }.editor-context .editor-board { min-width:0; max-width:220px; overflow:hidden; text-overflow:ellipsis; color:var(--fg2); font-size:12px; font-weight:400; padding-left:10px; border-left:1px solid var(--line); }
++.editor-buttons { display:flex; gap:6px; flex-shrink:0; }.editor-buttons button { display:inline-flex; align-items:center; justify-content:center; gap:6px; min-height:30px; padding:5px 8px; background:transparent; font-size:11px; white-space:nowrap; }.editor-buttons .editor-close { border-color:transparent; }.editor-buttons .editor-close:hover { color:var(--err); }
++.editor-title { flex-shrink:0; height:57px; padding:12px 24px; font-size:23px; line-height:1.35; font-weight:650; color:var(--fg); border:0; border-radius:0; width:100%; background:transparent; box-sizing:border-box; outline:0; transition:background .18s; }.editor-title::placeholder { color:var(--fg2); }.editor-title:focus { background:color-mix(in srgb,var(--acc) 3%,var(--card)); }
++.editor-toolbar { flex-shrink:0; display:flex; flex-wrap:wrap; align-items:center; gap:3px; padding:6px 14px; border-block:1px solid var(--line); background:var(--card); }.editor-toolbar button { gap:5px; min-width:29px; height:29px; padding:4px 7px; display:inline-flex; align-items:center; justify-content:center; border-color:transparent; background:transparent; font-size:12px; }.editor-toolbar button[aria-pressed=true] { background:var(--acc-soft); border-color:var(--line); }.editor-toolbar select { padding:3px; max-width:65px; }.editor-file { display:inline-flex; gap:4px; align-items:center; font-size:11px; padding:5px 7px; background:transparent; }.tool-separator { align-self:stretch; border-left:1px solid var(--line); margin:4px; }
++.editor-workspace { display:flex; flex:1; min-height:0; overflow:hidden; }.editor-source { flex:1; min-width:0; resize:none; border:0; border-radius:0; background:var(--card); color:var(--fg); padding:22px 24px; font-family:inherit; font-size:15px; line-height:1.85; outline:0; tab-size:2; }
++.editor-outline { width:170px; flex-shrink:0; box-sizing:border-box; overflow:auto; padding:15px 10px; border-right:1px solid var(--line); background:var(--card2); }.editor-outline strong { display:block; padding:5px; }.editor-outline button { display:block; width:100%; text-align:left; font-size:12px; background:transparent; border:0; overflow-wrap:anywhere; }.editor-outline p { color:var(--fg2); font-size:11px; }
++.editor-find { flex-shrink:0; display:flex; gap:6px; align-items:center; padding:8px 18px; flex-wrap:wrap; overflow:hidden; box-sizing:border-box; }.editor-find input { flex:1; width:80px; min-width:60px; background:var(--bg); color:var(--fg); border:1px solid var(--line); padding:7px; border-radius:7px; }
++.editor-bottom { flex-shrink:0; display:flex; justify-content:space-between; align-items:center; gap:10px; padding:9px 18px; flex-wrap:wrap; border-top:1px solid var(--line); }.editor-save-status { display:flex; flex-wrap:wrap; align-items:center; gap:10px; font-size:11px; color:var(--fg2); }.editor-submit { display:flex; gap:7px; margin-left:auto; }.editor-submit button:last-child { background:var(--acc); color:var(--on-acc,#202020); }.editor-error { flex-shrink:0; color:var(--err); font-size:12px; margin:0; padding:10px 20px; background:var(--card2); }
++.editor-bar-enter-active,.editor-bar-leave-active { transition:opacity .18s,transform .18s,max-height .18s,padding .18s; max-height:180px; }.editor-bar-enter-from,.editor-bar-leave-to { opacity:0; transform:translateY(-5px); max-height:0; padding-block:0; }
++.editor-outline-enter-active,.editor-outline-leave-active { transition:width .22s,padding .22s,opacity .18s,transform .22s; }.editor-outline-enter-from,.editor-outline-leave-to { width:0; padding-inline:0; opacity:0; transform:translateX(-8px); }
++@media(max-width:760px) { .editor-top { flex-wrap:wrap; gap:7px; padding:9px 12px; }.editor-context { flex:1; }.editor-context .editor-board { max-width:140px; }.editor-buttons { margin-left:auto; flex-wrap:wrap; }.editor-buttons button { padding:5px 6px; }.file-action-text { display:none; } }
++@media(max-width:480px) { .editor-top { gap:6px; }.editor-context { flex-basis:100%; }.editor-buttons { width:100%; margin:0; }.editor-buttons .editor-close { margin-left:auto; }.editor-title { padding:10px 16px; height:49px; font-size:21px; }.editor-toolbar { padding:5px 8px; gap:2px; max-height:98px; overflow:auto; }.editor-toolbar button { padding:4px 6px; }.editor-source { padding:16px; }.editor-outline { width:110px; }.editor-bottom { padding:9px 10px; gap:8px; }.editor-save-status { gap:7px; } }
+ @media(prefers-reduced-motion:reduce) { * { transition:none !important; } }
+ </style>
+diff --git a/src/components/CommunityEditorHost.vue b/src/components/CommunityEditorHost.vue
+index 6afd29e..e042011 100644
+--- a/src/components/CommunityEditorHost.vue
++++ b/src/components/CommunityEditorHost.vue
+@@ -1,19 +1,20 @@
+ <script setup lang="ts">
+-import { inject, ref, watch, nextTick, onBeforeUnmount, computed } from 'vue'
++import { inject, ref, watch, onBeforeUnmount, shallowRef } from 'vue'
+ import CommunityEditor from './CommunityEditor.vue'
+ import { PANEL_COLORS, newPanelId } from '../core/ai-panel'
+ const ctx = inject<any>('ctx'), cm = ctx.community, s = cm.state
+-const dialog = ref<HTMLDialogElement>(), detached = ref(false), uploading = ref(false)
++const dialog = ref<HTMLDialogElement>(), detached = ref(false), uploading = ref(false), expanded = ref(false), visible = ref(false)
+ let bus: BroadcastChannel | undefined, popup: Window | null = null
+ let monitor: ReturnType<typeof setInterval> | undefined, observer: MutationObserver | undefined
+ let ack = 0, offNative: (() => void) | undefined
+-const boards = computed(() => [...new Map([...(s.list || []), ...(s.mine || []), ...(s.viewing ? [s.viewing] : [])].map(b => [Number(b.id), { id: Number(b.id), name: b.name || String(b.id) }])).values()])
++const renderedDraft = shallowRef(s.editor)
++watch(() => s.editor, value => { if (value) renderedDraft.value = value })
+ const native = !!(window as any).__TAURI_INTERNALS__
+ const invoke = (command: string, args?: any) => (window as any).__TAURI__.core.invoke(command, args)
+ function snapshot() {
+   if (!bus) return
+   const styles = getComputedStyle(document.documentElement)
+-  bus.postMessage({ type: 'snapshot', ack, draft: s.editor ? { ...s.editor } : null, busy: s.publishing || s.savingDraft, boards: boards.value, uploading: uploading.value,
++  bus.postMessage({ type: 'snapshot', ack, draft: s.editor ? { ...s.editor } : null, busy: s.publishing || s.savingDraft, uploading: uploading.value,
+     error: s.editorError, savedAt: s.savedAt, theme: document.documentElement.dataset.theme,
+     colors: Object.fromEntries([...PANEL_COLORS, '--err', '--warn', '--on-acc'].map(k => [k, styles.getPropertyValue(k)])),
+     locked: !!ctx.lock?.isLocked })
+@@ -27,7 +28,6 @@ function change(patch: any) {
+   }
+   if (patch?.contentType === 1 || patch?.contentType === 2) s.editor.contentType = patch.contentType
+   s.savedAt = 0
+-  if (Number.isSafeInteger(patch?.baId) && patch.baId > 0 && boards.value.some(b => b.id === patch.baId)) { s.editor.baId = patch.baId; s.editor.boardName = boards.value.find(b => b.id === patch.baId)?.name || '' }
+ }
+ async function image(file: File) {
+   const draft = s.editor
+@@ -82,17 +82,19 @@ async function detach() {
+     snapshot()
+   } catch (e: any) { await dock(); s.editorError = '独立窗口打开失败：' + e.message }
+ }
+-watch(() => !!s.editor && !detached.value && !ctx.lock?.isLocked, async visible => { await nextTick(); if (visible && !dialog.value?.open) dialog.value?.showModal(); if (!visible && dialog.value?.open) dialog.value.close() })
+-watch(() => s.editor?.id, id => { if (!id) void dock() })
++watch(() => !!s.editor && !detached.value && !ctx.lock?.isLocked, value => { if (value) renderedDraft.value = s.editor; visible.value = value }, { immediate: true })
++watch(() => s.editor?.id, id => { expanded.value = false; if (!id) void dock() })
++function showDialog() { dialog.value?.showModal() }
++function hideDialog() { dialog.value?.close(); if (!s.editor) renderedDraft.value = null }
+ watch(() => [s.editor?.title, s.editor?.content, s.editor?.contentType, s.editor?.baId, s.publishing, s.savingDraft, s.savedAt, s.editorError, uploading.value], snapshot)
+-watch(() => ctx.lock?.isLocked, locked => { if (locked) void dock() })
++watch(() => ctx.lock?.isLocked, locked => { if (locked) { dialog.value?.close(); renderedDraft.value = null; void dock() } })
+ function preventLoss(e: BeforeUnloadEvent) { if (cm.editorDirty()) { e.preventDefault(); e.returnValue = '' } }
+ window.addEventListener('beforeunload', preventLoss)
+ onBeforeUnmount(() => { void dock(); window.removeEventListener('beforeunload', preventLoss) })
+ </script>
+ <template>
+-  <Teleport to="body"><dialog ref="dialog" class="community-editor-dialog" aria-label="撰写文章" @cancel.prevent="cm.closeEditor()"><CommunityEditor v-if="s.editor" :key="s.editor.id" :draft="s.editor" :busy="s.publishing || s.savingDraft" :boards="boards" :error="s.editorError" :saved-at="s.savedAt" :uploading="uploading" @change="change" @save="cm.saveDraft()" @publish="!uploading && cm.publish()" @upload="image" @close="cm.closeEditor()" @detach="detach" /></dialog></Teleport>
++  <Teleport to="body"><Transition name="editor-dialog" appear @enter="showDialog" @after-leave="hideDialog"><dialog v-show="visible" ref="dialog" class="community-editor-dialog" :class="{ 'is-expanded': expanded }" aria-label="撰写文章" @cancel.prevent="cm.closeEditor()"><CommunityEditor v-if="renderedDraft" :key="renderedDraft.id" :draft="renderedDraft" :expanded="expanded" :busy="s.publishing || s.savingDraft" :error="s.editorError" :saved-at="s.savedAt" :uploading="uploading" @change="change" @save="cm.saveDraft()" @publish="!uploading && cm.publish()" @upload="image" @close="cm.closeEditor()" @expand="expanded = !expanded" @detach="detach" /></dialog></Transition></Teleport>
+ </template>
+ <style scoped>
+-.community-editor-dialog { width:min(1240px,96vw); height:92dvh; max-width:none; max-height:none; padding:0; border:1px solid var(--line); border-radius:18px; background:var(--card); color:var(--fg); overflow:hidden; box-shadow:0 24px 90px #0005; }.community-editor-dialog[open] { animation:editor-appear .2s ease-out; }.community-editor-dialog::backdrop { background:#0006; }@keyframes editor-appear { from { opacity:0; transform:translateY(12px) scale(.99); } to { opacity:1; transform:none; } }@media(max-width:650px) { .community-editor-dialog { width:100vw; height:100dvh; margin:0; border:0; border-radius:0; } }@media(prefers-reduced-motion:reduce) { .community-editor-dialog[open] { animation:none; } }
++.community-editor-dialog { width:min(1240px,96vw); height:92dvh; max-width:none; max-height:none; padding:0; border:1px solid var(--line); border-radius:14px; background:var(--card); color:var(--fg); overflow:hidden; box-shadow:0 24px 90px #0005; transition:width .24s,height .24s,border-radius .24s; }.community-editor-dialog.is-expanded { width:100vw; height:100dvh; border-radius:0; border-width:0; }.community-editor-dialog::backdrop { background:#0006; transition:background .2s; }.editor-dialog-enter-active,.editor-dialog-leave-active { transition:opacity .2s,transform .24s,width .24s,height .24s,border-radius .24s; }.editor-dialog-enter-from,.editor-dialog-leave-to { opacity:0; transform:translateY(12px) scale(.985); }.editor-dialog-enter-from::backdrop,.editor-dialog-leave-to::backdrop { background:#0000; }@media(max-width:650px) { .community-editor-dialog { width:100vw; height:100dvh; margin:0; border:0; border-radius:0; } }@media(prefers-reduced-motion:reduce) { .community-editor-dialog { transition:none; } }
+ </style>
+diff --git a/src/components/FloatingCommunityEditor.vue b/src/components/FloatingCommunityEditor.vue
+index 461739b..c6279bd 100644
+--- a/src/components/FloatingCommunityEditor.vue
++++ b/src/components/FloatingCommunityEditor.vue
+@@ -17,5 +17,5 @@ const timer = setInterval(() => { bus.postMessage({ type: 'ready' }); if (Date.n
+ bus.postMessage({ type: 'ready' })
+ onBeforeUnmount(() => { clearInterval(timer); bus.close() })
+ </script>
+-<template><div class="floating-editor"><CommunityEditor v-if="state?.draft" :key="state.draft.id" :draft="state.draft" :busy="state.busy" :boards="state.boards" :error="state.error" :saved-at="state.savedAt" :uploading="state.uploading" detached @change="patch => { Object.assign(state.draft, patch); command('change', { patch }) }" @save="command('save')" @publish="command('publish')" @upload="file => command('upload', { file })" @close="command('close')" @detach="command('detach')" /><p v-else role="status">正在连接主窗口，或当前账号已锁定/退出。</p></div></template>
++<template><div class="floating-editor"><CommunityEditor v-if="state?.draft" :key="state.draft.id" :draft="state.draft" :busy="state.busy" :error="state.error" :saved-at="state.savedAt" :uploading="state.uploading" detached @change="patch => { Object.assign(state.draft, patch); command('change', { patch }) }" @save="command('save')" @publish="command('publish')" @upload="file => command('upload', { file })" @close="command('close')" @detach="command('detach')" /><p v-else role="status">正在连接主窗口，或当前账号已锁定/退出。</p></div></template>
+ <style scoped>.floating-editor { height:100dvh; width:100%; background:var(--card); color:var(--fg); overflow:hidden; }.floating-editor > p { padding:25px; }</style>
+diff --git a/src/components/ImageEditor.vue b/src/components/ImageEditor.vue
+index 6e2c144..dc2aa79 100644
+--- a/src/components/ImageEditor.vue
++++ b/src/components/ImageEditor.vue
+@@ -269,13 +269,13 @@ onUnmounted(() => { disposed = true; controller.abort(); stopGif(); observer?.di
+             <div v-else-if="tool === 'brush'" class="ied-panel"><h3>画笔标注</h3><p class="ied-hint">在图片上按住拖动绘制；每一笔都可以撤销。GIF 标注会应用到所有帧。</p><label class="ied-check">画笔颜色<input aria-label="画笔颜色" type="color" v-model="brushColor" /></label><label class="ied-slider">笔宽（图片高度的百分比）<span>{{ brushSize }}%</span><input aria-label="画笔粗细" type="range" min=".2" max="15" step=".2" v-model.number="brushSize" /></label><button class="ghost small" :disabled="!design?.strokes.length" @click="apply({ strokes: [] })">清除画笔</button></div>
+             <div v-else-if="tool === 'metadata'" class="ied-panel" aria-label="EXIF 隐私设置">
+               <h3>清除 EXIF</h3><p class="ied-hint">移除设备、拍摄时间、GPS 和内嵌缩略图，生成新副本。XMP 等其他元数据保持不变。</p>
+-              <p v-if="!metadata" class="ied-hint">正在读取 EXIF…</p><p v-else-if="!metadata.hasExif" class="ied-hint">当前文件未检测到标准 EXIF。</p>
++              <p v-if="!metadata" class="ied-hint">正在读取 EXIF…</p><p v-else-if="!metadata.hasExif || metadata.parseError" class="ied-hint">EXIF：无</p>
+               <p v-else-if="!metadata.canClean" class="ied-hint">此格式暂不支持安全清除 EXIF。</p>
+               <p v-if="metadata?.orientation !== 1 && metadata?.hasExif" class="ied-hint">含方向信息：清除时校正显示方向并导出 PNG。</p>
+-              <button class="ghost small" :disabled="working || !metadata?.hasExif || !metadata?.canClean || !!cleaned || !!metadata?.parseError" @click="cleanExif">{{ cleaned ? 'EXIF 已清除' : '清除 EXIF' }}</button>
++              <button class="ghost small" :disabled="working || !metadata?.canClean" @click="cleanExif">清除 EXIF</button>
+               <button v-if="cleaned" class="ghost small" :disabled="working" @click="saveCleanCopy">保存副本</button>
+               <button v-if="cleaned && allowSend" class="ghost small" :disabled="working" @click="useCleaned">加入待发送附件</button>
+-              <p v-if="metadata?.parseError" class="ied-hint">{{ metadata.parseError }}</p><p v-if="metadataStatus" class="ied-hint ied-metadata-status" role="status">{{ metadataStatus }}</p>
++              <p v-if="metadataStatus" class="ied-hint ied-metadata-status" role="status">{{ metadataStatus }}</p>
+             </div>
+           </aside>
+           <div class="ied-preview-area"><div ref="previewStage" class="ied-preview" @wheel="wheel">
+diff --git a/src/components/ImageProperties.vue b/src/components/ImageProperties.vue
+index 951e04a..4f465d1 100644
+--- a/src/components/ImageProperties.vue
++++ b/src/components/ImageProperties.vue
+@@ -60,8 +60,7 @@ onBeforeUnmount(() => { disposed = true; request?.abort(); window.removeEventLis
+                 <dt>大小</dt><dd>{{ sizeLabel(info.size) }}</dd><dt v-if="props.file?.lastModified">本地文件修改时间</dt><dd v-if="props.file?.lastModified">{{ new Date(props.file.lastModified).toLocaleString() }}</dd>
+               </dl>
+               <div class="properties-exif-head"><h3>EXIF / 元数据 <span>{{ allRows.length }} 个字段</span></h3><input v-if="allRows.length" v-model="search" aria-label="搜索 EXIF" placeholder="搜索属性…" /></div>
+-              <p v-if="info.parseError" class="properties-error">{{ info.parseError }}</p><p v-if="info.metadataError" class="properties-note">{{ info.metadataError }}</p>
+-              <p v-if="!info.hasExif" class="properties-note">{{ info.format === '其他' ? '此格式暂不支持 EXIF 读取。' : info.format === 'GIF' ? 'GIF 不含标准 EXIF；动画数据保持原样。' : '当前文件未检测到标准 EXIF。' }}</p>
++              <p v-if="!Object.keys(info.exif).length" class="properties-note">EXIF：无</p>
+               <dl v-if="rows.length" class="properties-tags"><template v-for="row in rows" :key="row.group + '.' + row.key"><dt :title="row.group + '.' + row.key">{{ row.label }}<small>{{ row.group }} · {{ row.key }}</small></dt><dd><details v-if="row.value.length > 220 || isBinary(row.raw)" @toggle="expandRow(row.group + '.' + row.key, ($event.target as HTMLDetailsElement).open)"><summary>{{ row.value.slice(0, 160) }}{{ row.value.length > 160 ? '…' : '' }}</summary><pre v-if="expanded.has(row.group + '.' + row.key)">{{ propertyValue(row.raw, true) }}</pre></details><template v-else>{{ row.value }}</template></dd></template></dl>
+               <p v-if="allRows.length && !rows.length" class="properties-note">没有匹配的字段。</p>
+               <p class="properties-note">设备型号、软件、GPS 与拍摄信息优先显示。厂商私有数据以原始内容提供；清除 EXIF 请使用图片编辑器。</p>
+diff --git a/src/components/MarkdownCanvas.vue b/src/components/MarkdownCanvas.vue
+index 056511f..3162423 100644
+--- a/src/components/MarkdownCanvas.vue
++++ b/src/components/MarkdownCanvas.vue
+@@ -105,8 +105,8 @@ defineExpose({ format, link, findNext, replaceAll, gotoHeading, undo: () => edit
+ </script>
+ <template><div class="markdown-canvas"><EditorContent :editor="editor" /></div></template>
+ <style scoped>
+-.markdown-canvas { flex:1; min-width:0; overflow:auto; padding:30px clamp(20px,5vw,76px) 90px; font-size:15px; line-height:1.85; color:var(--fg); background:var(--card); scroll-behavior:smooth; }
+-.markdown-canvas :deep(.tiptap) { outline:none; min-height:280px; max-width:760px; margin-inline:auto; overflow-wrap:anywhere; white-space:pre-wrap; }
++.markdown-canvas { flex:1; min-width:0; overflow:auto; padding:22px 24px 72px; font-size:15px; line-height:1.85; color:var(--fg); background:var(--card); scroll-behavior:smooth; }
++.markdown-canvas :deep(.tiptap) { outline:none; min-height:280px; max-width:900px; margin-inline:auto; overflow-wrap:anywhere; white-space:pre-wrap; }
+ .markdown-canvas :deep(.tiptap > :first-child) { margin-top:0; }.markdown-canvas :deep(p) { margin:0 0 .8em; }
+ .markdown-canvas :deep(.tiptap > p:only-child:has(br.ProseMirror-trailingBreak)::before) { content:attr(data-placeholder); color:var(--fg2); pointer-events:none; float:left; height:0; }
+ .markdown-canvas :deep(h1),.markdown-canvas :deep(h2),.markdown-canvas :deep(h3) { line-height:1.4; margin:1.4em 0 .7em; font-weight:650; }.markdown-canvas :deep(h1) { font-size:1.9em; }.markdown-canvas :deep(h2) { font-size:1.5em; }.markdown-canvas :deep(h3) { font-size:1.25em; }
+diff --git a/src/components/MessageElements.vue b/src/components/MessageElements.vue
+index df9b91c..9263c4d 100644
+--- a/src/components/MessageElements.vue
++++ b/src/components/MessageElements.vue
+@@ -310,7 +310,8 @@ function onWheel(e: WheelEvent) {
+  *    记录本次是否真拖过（位移>3px），拖过则吞掉紧随的那一次 click。 */
+ let justDragged = false
+ function startPan(e: MouseEvent) {
+-  if (e.button !== 0 || zoom.value <= 1) return
++  if (e.button !== 0 || propertiesOpen.value) return
++  e.preventDefault()
+   if (viewer.value?.kind === 'video' && e.offsetY >= (e.currentTarget as HTMLElement).clientHeight - 48) return
+   stopPan?.()
+   const sx = e.clientX, sy = e.clientY
+@@ -324,12 +325,14 @@ function startPan(e: MouseEvent) {
+   const up = () => {
+     window.removeEventListener('mousemove', move)
+     window.removeEventListener('mouseup', up)
++    window.removeEventListener('blur', up)
+     stopPan = undefined
+     // 稍后清标记：click 在 mouseup 之后同步派发，下一个宏任务再复位才吞得到
+     setTimeout(() => { justDragged = false }, 0)
+   }
+   window.addEventListener('mousemove', move)
+   window.addEventListener('mouseup', up)
++  window.addEventListener('blur', up)
+   stopPan = up
+ }
+ /** 灯箱关闭点击的统一守卫：刚拖过图则吞掉这次 click */
+@@ -546,7 +549,7 @@ watch(() => props.elements, fix, { deep: true })
+     <div v-if="viewer" class="viewer-mask" :class="{ 'video-full': videoFull }" @click.self="closeViewerGuarded" @wheel="onWheel">
+       <img v-if="viewer.kind === 'image'" :src="viewer.url" alt=""
+            :style="{ transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})` }"
+-           class="viewer-img" @click.self="closeViewerGuarded"
++           class="viewer-img" draggable="false" @dragstart.prevent
+            @mousedown.prevent="startPan" @dblclick="zoom = zoom > 1 ? 1 : 2" />
+       <video v-else ref="viewerVideo" :src="viewer.url" controls autoplay :style="{ transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})` }" @mousedown="startPan"></video>
+       <div class="viewer-bar">
+@@ -649,7 +652,7 @@ img.media { width: min(320px, 100%, var(--media-natural-width, 320px), var(--med
+   display: grid; place-items: center; cursor: zoom-out; backdrop-filter: blur(3px);
+   overflow: hidden;
+ }
+-.viewer-img { transition: transform .08s linear; cursor: grab; }
++.viewer-img { cursor: grab; user-select:none; -webkit-user-drag:none; }.viewer-img:active { cursor:grabbing; }
+ .viewer-mask img, .viewer-mask video {
+   max-width: 92vw; max-height: 86vh; border-radius: 8px;
+   box-shadow: 0 20px 60px rgba(0, 0, 0, .6);
+diff --git a/src/components/ProfilePanel.vue b/src/components/ProfilePanel.vue
+index caf0904..338b217 100644
+--- a/src/components/ProfilePanel.vue
++++ b/src/components/ProfilePanel.vue
+@@ -173,7 +173,7 @@ function profileKey(e: KeyboardEvent) {
+       <div class="pf-body pf-skeleton" v-if="loading" role="status" aria-label="正在加载用户资料"><span class="skeleton-avatar"></span><span></span><span></span><span></span></div>
+ 
+       <div class="pf-body" v-else-if="data" :key="data.id">
+-        <div class="pf-top">
++        <section class="pf-identity" aria-label="用户概览"><div class="pf-top">
+           <img :src="data.avatar ? resUrl(data.avatar) : fallbackAvatar(data.name)"
+                @error="(e: any) => (e.target.src = fallbackAvatar(data.name))" alt="" />
+           <div>
+@@ -190,7 +190,7 @@ function profileKey(e: KeyboardEvent) {
+           </div>
+         </div>
+ 
+-        <div v-if="!data.isBot" class="pf-highlights"><div><strong>{{ data.onlineDay ?? '—' }}</strong><span>在线天数</span></div><div><strong>{{ data.medalCount ?? 0 }}</strong><span>获得勋章</span></div><div><strong>{{ userBas.length }}</strong><span>创建板块</span></div></div>
++        <div v-if="!data.isBot" class="pf-highlights"><div><strong>{{ data.onlineDay ?? '—' }}</strong><span>在线天数</span></div><div><strong>{{ data.medalCount ?? 0 }}</strong><span>获得勋章</span></div><div><strong>{{ userBas.length }}</strong><span>创建板块</span></div></div></section>
+         <p class="dim small" v-if="data._note">{{ data._note }}</p>
+ 
+         <!-- 机器人资料（/v1/bot/bot-info） -->
+@@ -212,8 +212,7 @@ function profileKey(e: KeyboardEvent) {
+ 
+         <div class="pf-grid" v-if="!data.isBot">
+           <div class="kv"><span class="k">注册时间</span><span>{{ data.registerTime || '—' }}</span></div>
+-          <div class="kv"><span class="k">在线天数</span><span>{{ data.onlineDay ?? '—' }} 天（连续 {{ data.continuousOnlineDay ?? '—' }}）</span></div>
+-          <div class="kv"><span class="k">勋章</span><span>{{ data.medalCount ?? 0 }} 枚</span></div>
++          <div class="kv"><span class="k">连续在线</span><span>{{ data.continuousOnlineDay ?? '—' }} 天</span></div>
+           <div class="kv"><span class="k">IP 归属地</span><span>{{ data.ipGeo || '—' }}</span></div>
+           <div class="kv" v-if="data.profile?.gender"><span class="k">性别</span><span>{{ GENDER[data.profile.gender] || '—' }}</span></div>
+           <div class="kv" v-if="data.profile?.birthday"><span class="k">生日</span><span>{{ new Date(data.profile.birthday * 1000).toLocaleDateString() }}</span></div>
+@@ -280,19 +279,19 @@ function profileKey(e: KeyboardEvent) {
+ .pf > header .grow { flex: 1; }
+ .pf-x { background: transparent; color: var(--fg2); font-size: 20px; padding: 0 8px; line-height: 1; }
+ .pf-x:hover { color: var(--err); background: transparent; }
+-.pf-body { flex: 1; overflow: auto; padding: 24px; scrollbar-gutter:stable; animation:profile-content .2s ease-out; }
+-.pf-top { display: flex; gap: 16px; align-items: center; padding:12px 0 21px; }
+-.pf-top img { width: 80px; height: 80px; border-radius: 25px; flex-shrink:0; border:3px solid var(--card2); object-fit: cover; background: var(--card2); }
+-.pf-name { overflow-wrap:anywhere; flex-wrap:wrap; font-size: 22px; font-weight: 600; display: flex; align-items: center; gap: 6px; }
++.pf-body { flex: 1; overflow: auto; padding: 18px; scrollbar-gutter:stable; animation:profile-content .2s ease-out; }
++.pf-identity { padding:16px; border:1px solid var(--line); border-radius:14px; background:var(--card); }.pf-top { display:flex; gap:13px; align-items:center; padding:0; }.pf-top > div { min-width:0; flex:1; }
++.pf-top img { width: 58px; height: 58px; border-radius: 18px; flex-shrink:0; border:1px solid var(--line); object-fit: cover; background: var(--card2); }
++.pf-name { overflow-wrap:anywhere; flex-wrap:wrap; font-size: 19px; font-weight: 650; display: flex; align-items: center; gap: 6px; }
+ .pf-name em { font-style: normal; font-size: 11px; border-radius: 5px; padding: 1px 6px; }
+ .pf-name em.vip { color: var(--warn); background: color-mix(in srgb, var(--warn) 18%, transparent); }
+ .pf-name em.ban { color: var(--err); background: color-mix(in srgb, var(--err) 18%, transparent); }
+ .pf-name em.bot { color: var(--acc); background: var(--acc-soft); }
+ .pf-tags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 5px; }
+ .pf-tag { font-size: 11px; border-radius: 5px; padding: 1px 6px; }
+-.pf-grid { display:grid; grid-template-columns:1fr; gap:0; margin-top:18px; padding:8px 16px; background:var(--card2); border:1px solid var(--line); border-radius:16px; }
+-.kv { display: flex; gap: 10px; font-size:13px; padding:11px 0; border-bottom:1px solid var(--line); }
+-.kv:last-child { border-bottom:0; }.kv > span:last-child { min-width:0; overflow-wrap:anywhere; }.kv .k { flex: 0 0 80px; color: var(--fg2); font-size: 12.5px; }
++.pf-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:14px 18px; margin-top:14px; padding:14px 16px; background:var(--card2); border:1px solid var(--line); border-radius:16px; }
++.kv { display:flex; flex-direction:column; gap:5px; font-size:13px; min-width:0; }
++.kv:last-child { border-bottom:0; }.kv > span:last-child { min-width:0; overflow-wrap:anywhere; }.kv .k { flex: 0 0 auto; color: var(--fg2); font-size: 12.5px; }
+ .pf-intro { margin-top: 14px; }
+ .pf-intro .lab { font-size: 12.5px; color: var(--fg2); margin-bottom: 4px; }
+ .pf-intro p { margin: 0; font-size: 13px; white-space: pre-wrap; background: var(--card2); padding: 10px; border-radius: 8px; }
+@@ -303,5 +302,5 @@ function profileKey(e: KeyboardEvent) {
+ .ba-chip { transition:background .16s, border-color .16s, transform .16s;  display: inline-flex; align-items: center; gap: 5px; font-size: 12px; padding: 4px 9px; border-radius: 999px; border: 1px solid var(--line); background: transparent; color: var(--fg); cursor: pointer; }
+ .ba-chip:hover { background:var(--acc-soft); transform:translateY(-1px);  border-color: var(--acc); color: var(--acc); }
+ .ba-chip img, .ba-ic { width: 18px; height: 18px; border-radius: 5px; object-fit: cover; display: inline-flex; align-items: center; justify-content: center; background: var(--card2); font-size: 11px; }
+-.pf-heading-icon { display:grid; place-items:center; color:var(--acc); background:var(--acc-soft); width:32px; height:32px; border-radius:10px; }.pf > header b { font-size:13px; letter-spacing:.5px; }.pf-x { display:grid; place-items:center; width:30px; height:30px; border-radius:9px; }.pf-id { display:inline-flex; align-items:center; gap:7px; background:transparent; color:var(--fg2); font-size:11px; padding:5px 0; }.pf-id:hover { color:var(--acc); background:transparent; }.pf-highlights { width:80%; margin-inline:auto; box-sizing:border-box; display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); background:var(--acc-soft); border-radius:13px; padding:13px 4px; }.pf-highlights > div { display:flex; align-items:center; flex-direction:column; gap:4px; border-right:1px solid var(--line); }.pf-highlights > div:last-child { border:0; }.pf-highlights strong { font-size:17px; font-weight:650; }.pf-highlights span { color:var(--fg2); font-size:9px; }.pf-skeleton { display:flex; flex-direction:column; gap:18px; }.pf-skeleton span { display:block; height:34px; border-radius:9px; background:var(--card2); }.pf-skeleton .skeleton-avatar { width:80px; height:80px; border-radius:25px; }.pf-intro .lab,.pf-ba .lab { font-weight:600; color:var(--fg); margin-bottom:10px; }.pf-intro p { line-height:1.8; padding:14px; border-radius:13px; }.pf-actions button { display:inline-flex; align-items:center; justify-content:center; border-radius:10px; min-height:34px; padding:8px 12px; }.pf-actions .danger { color:var(--err); }.profile-panel-enter-active,.profile-panel-leave-active { transition:opacity .2s ease; }.profile-panel-enter-active .pf,.profile-panel-leave-active .pf { transition:transform .25s cubic-bezier(.2,.7,.3,1); }.profile-panel-enter-from,.profile-panel-leave-to { opacity:0; }.profile-panel-enter-from .pf,.profile-panel-leave-to .pf { transform:translateX(100%); }@keyframes profile-content { from { opacity:0; transform:translateY(7px); } to { opacity:1; transform:none; } }@media(max-width:480px) { .pf { width:100%; border-left:0; }.pf-body { padding:18px; }.pf-name { font-size:21px; } }@media(prefers-reduced-motion:reduce) { *, .profile-panel-enter-active .pf,.profile-panel-leave-active .pf { transition:none !important; animation:none !important; } }
++.pf-heading-icon { display:grid; place-items:center; color:var(--acc); background:var(--acc-soft); width:32px; height:32px; border-radius:10px; }.pf > header b { font-size:13px; letter-spacing:.5px; }.pf-x { display:grid; place-items:center; width:30px; height:30px; border-radius:9px; }.pf-id { display:inline-flex; align-items:center; gap:7px; background:transparent; color:var(--fg2); font-size:11px; padding:5px 0; }.pf-id:hover { color:var(--acc); background:transparent; }.pf-highlights { width:100%; box-sizing:border-box; display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); background:transparent; margin-top:15px; border-top:1px solid var(--line); padding:12px 0 0; }.pf-highlights > div { display:flex; align-items:center; flex-direction:column; gap:4px; border-right:1px solid var(--line); }.pf-highlights > div:last-child { border:0; }.pf-highlights strong { font-size:16px; font-weight:650; }.pf-highlights span { color:var(--fg2); font-size:11px; }.pf-skeleton { display:flex; flex-direction:column; gap:18px; }.pf-skeleton span { display:block; height:34px; border-radius:9px; background:var(--card2); }.pf-skeleton .skeleton-avatar { width:80px; height:80px; border-radius:25px; }.pf-intro .lab,.pf-ba .lab { font-weight:600; color:var(--fg); margin-bottom:10px; }.pf-intro p { line-height:1.8; padding:14px; border-radius:13px; }.pf-actions button { display:inline-flex; align-items:center; justify-content:center; border-radius:10px; min-height:34px; padding:8px 12px; }.pf-actions .danger { color:var(--err); }.profile-panel-enter-active,.profile-panel-leave-active { transition:opacity .2s ease; }.profile-panel-enter-active .pf,.profile-panel-leave-active .pf { transition:transform .25s cubic-bezier(.2,.7,.3,1); }.profile-panel-enter-from,.profile-panel-leave-to { opacity:0; }.profile-panel-enter-from .pf,.profile-panel-leave-to .pf { transform:translateX(100%); }@keyframes profile-content { from { opacity:0; transform:translateY(7px); } to { opacity:1; transform:none; } }@media(max-width:480px) { .pf { width:100%; border-left:0; }.pf-body { padding:18px; }.pf-name { font-size:19px; }.pf-body { padding:12px; }.pf-identity { padding:14px; } }@media(prefers-reduced-motion:reduce) { *, .profile-panel-enter-active .pf,.profile-panel-leave-active .pf { transition:none !important; animation:none !important; } }
+ </style>
+diff --git a/src/console/components/Icon.vue b/src/console/components/Icon.vue
+index b990906..777103a 100644
+--- a/src/console/components/Icon.vue
++++ b/src/console/components/Icon.vue
+@@ -38,6 +38,8 @@ const PATHS = {
+   forward: 'M15 5l7 7-7 7M22 12H3',
+   copy: 'M9 9h10v12H9zM5 3h10v4M5 3v12h4',
+   undo: 'M3 7v6h6M3 13a9 9 0 1 0 3-7.7L3 8',
++  redo: 'M21 7v6h-6M21 13a9 9 0 1 1-3-7.7L21 8',
++  windowOut: 'M14 3h7v7M21 3l-9 9M10 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-5',
+   check: 'M20 6L9 17l-5-5',
+   close: 'M6 6l12 12M18 6L6 18',
+   /* ---- 下面这批是补的：原来 robot 没定义（回落成 page，跟板块撞）、
+diff --git a/src/core/image-properties.ts b/src/core/image-properties.ts
+index db3d1cb..cd6dd29 100644
+--- a/src/core/image-properties.ts
++++ b/src/core/image-properties.ts
+@@ -73,7 +73,7 @@ export async function readImageProperties(file: File): Promise<ImageProperties>
+         Object.assign(exif, tags)
+         const raw = tags.ifd0?.Orientation
+         if (raw != null) { if (raw < 1 || raw > 8) throw new Error('方向信息无效'); orientation = raw }
+-      } catch { parseError = '检测到 EXIF，但部分信息损坏或无法解析；不会将其显示为“无 EXIF”。' }
++      } catch { parseError = '无' }
+     }
+   }
+   // Read the whole container as well: XMP/IPTC/ICC are outside the TIFF/EXIF block.
+@@ -90,14 +90,15 @@ export async function readImageProperties(file: File): Promise<ImageProperties>
+   const size = await imageMetadata(typed)
+   return { format: info.format, mime: typed.type || 'application/octet-stream', ...size, size: file.size,
+     exif, metadata, hasExif: info.exif.length > 0, orientation, animated: info.animated,
+-    canClean: ['JPEG', 'PNG', 'WebP'].includes(info.format), parseError, metadataError }
++    canClean: ['JPEG', 'PNG', 'WebP', 'GIF'].includes(info.format), parseError, metadataError }
+ }
+ /** Pure container rewrite; all non-EXIF bytes, including animation, remain unchanged. */
+ export function stripExifBytes(bytes: Uint8Array): Uint8Array {
+   const info = inspect(bytes)
++  if (info.format === 'GIF') return bytes.slice() // GIF has no standard EXIF; retain every animation byte.
+   if (!['JPEG', 'PNG', 'WebP'].includes(info.format)) throw new Error('此格式暂不支持安全清除 EXIF')
+   const removed = info.parts.filter(p => p.kind === 'EXIF')
+-  if (!removed.length) return bytes.slice()
++  if (!removed.length && info.format !== 'WebP') return bytes.slice()
+   const result = new Uint8Array(bytes.length - removed.reduce((n, p) => n + p.end - p.start, 0))
+   let from = 0, to = 0
+   for (const part of removed) { result.set(bytes.subarray(from, part.start), to); to += part.start - from; from = part.end }
+@@ -112,10 +113,8 @@ export function stripExifBytes(bytes: Uint8Array): Uint8Array {
+ export async function clearImageExif(file: File): Promise<File> {
+   const info = await readImageProperties(file)
+   if (!info.canClean) throw new Error('此格式暂不支持安全清除 EXIF；原文件保持不变')
+-  if (info.parseError) throw new Error('无法确认 EXIF 方向信息，请先用图片编辑器导出副本')
+-  if (!info.hasExif) throw new Error('此图片没有可清除的标准 EXIF')
+   let blob: Blob
+-  if (info.orientation !== 1) {
++  if (info.orientation !== 1 || info.parseError && !info.animated) {
+     if (info.animated) throw new Error('该动图含旋转方向信息，暂不支持在保留动画的同时清除 EXIF')
+     // Browsers apply all 8 EXIF orientations while decoding; bake the visible pixels into lossless PNG.
+     const url = URL.createObjectURL(file), image = new Image()
+@@ -129,7 +128,7 @@ export async function clearImageExif(file: File): Promise<File> {
+       canvas.width = canvas.height = 0
+     } finally { image.removeAttribute('src'); URL.revokeObjectURL(url) }
+   } else blob = new Blob([stripExifBytes(new Uint8Array(await file.arrayBuffer())) as BlobPart], { type: info.mime })
+-  const extension = blob.type === 'image/png' ? 'png' : info.format === 'JPEG' ? 'jpg' : 'webp'
++  const extension = blob.type === 'image/png' ? 'png' : info.format === 'JPEG' ? 'jpg' : info.format === 'GIF' ? 'gif' : 'webp'
+   const name = (file.name.replace(/\.[^.]*$/, '').replace(/[\\/:*?"<>|]/g, '_') || 'image') + '_no-exif.' + extension
+   const output = new File([blob], name, { type: blob.type })
+   const verified = await readImageProperties(output)
+@@ -143,14 +142,29 @@ export const exifLabels: Record<string, string> = {
+   Artist: '作者', Copyright: '版权', ImageDescription: '描述', UserComment: '用户备注', MakerNote: '厂商数据',
+ }
+ export function propertyValue(value: any, full = false): string {
+-  if (value instanceof Date) return value.toLocaleString()
++  if (value == null || typeof value === 'number' && !Number.isFinite(value)) return '无'
++  if (value instanceof Date) return Number.isFinite(value.getTime()) ? value.toLocaleString() : '无'
+   if (ArrayBuffer.isView(value)) {
+     if (!full && value.byteLength > 256) return `[${value.byteLength.toLocaleString()} 字节二进制数据，展开查看原始内容]`
+     return Array.from(new Uint8Array(value.buffer, value.byteOffset, value.byteLength), n => n.toString(16).padStart(2, '0')).join(' ')
+   }
+-  if (Array.isArray(value)) return value.map(v => propertyValue(v, full)).join(', ')
+-  if (value && typeof value === 'object') return JSON.stringify(value, null, 2)
+-  return String(value ?? '')
++  if (Array.isArray(value)) return value.length ? value.map(v => propertyValue(v, full)).join(', ') : '无'
++  if (value && typeof value === 'object') { try { return JSON.stringify(value, null, 2) || '无' } catch { return '无' } }
++  return String(value).replace(/\0/g, '').trim() || '无'
++}
++const gpsDirections: Record<string, string> = { N: '北纬', S: '南纬', E: '东经', W: '西经' }
++function gpsValue(key: string, value: any, siblings: Record<string, any>) {
++  if (/^GPS(Latitude|Longitude)Ref$/.test(key)) return gpsDirections[String(value).replace(/\0/g, '').trim().toUpperCase()] || '无'
++  if (!/^(GPSLatitude|GPSLongitude|latitude|longitude)$/.test(key)) return propertyValue(value)
++  const latitude = /latitude/i.test(key), limit = latitude ? 90 : 180
++  const dms = Array.isArray(value) || ArrayBuffer.isView(value) ? Array.from(value as ArrayLike<number>) : null
++  const decimal = dms ? Number(dms[0]) + Number(dms[1]) / 60 + Number(dms[2]) / 3600 : Number(value)
++  if (value == null || value === '' || !Number.isFinite(decimal) || Math.abs(decimal) > limit || dms && (dms.length !== 3 || dms.some(n => !Number.isFinite(n) || n < 0) || dms[1] >= 60 || dms[2] >= 60)) return '无'
++  const ref = String(siblings[latitude ? 'GPSLatitudeRef' : 'GPSLongitudeRef'] || '').replace(/\0/g, '').trim().toUpperCase()
++  const validRef = latitude ? /^[NS]$/.test(ref) : /^[EW]$/.test(ref)
++  const direction = validRef ? gpsDirections[ref] : !dms ? gpsDirections[latitude ? decimal < 0 ? 'S' : 'N' : decimal < 0 ? 'W' : 'E'] : ''
++  const coordinate = dms ? `${dms[0]}° ${dms[1]}′ ${Number(dms[2].toFixed(4))}″` : `${Number(Math.abs(decimal).toFixed(7))}°`
++  return direction ? `${direction} ${coordinate}` : `${coordinate}（方向：无）`
+ }
+ function decodeExifComment(value: any) {
+   if (!ArrayBuffer.isView(value)) return value
+@@ -164,13 +178,13 @@ function decodeExifComment(value: any) {
+ }
+ export function imagePropertyRows(metadata: Record<string, any>) {
+   const rows: { group: string; key: string; label: string; value: string; raw: any }[] = []
+-  function visit(value: any, path: string[]) {
++  function visit(value: any, path: string[], siblings: Record<string, any> = {}) {
+     if (value && typeof value === 'object' && !(value instanceof Date) && !Array.isArray(value) && !ArrayBuffer.isView(value)) {
+-      for (const [key, child] of Object.entries(value)) if (key !== 'errors') visit(child, [...path, key])
+-    } else if (value !== undefined && value !== null) {
++      for (const [key, child] of Object.entries(value)) if (key !== 'errors') visit(child, [...path, key], value)
++    } else {
+       const key = path.at(-1) || '', group = path.slice(0, -1).join('.')
+       if (key === 'UserComment') value = decodeExifComment(value)
+-      rows.push({ group, key, label: exifLabels[key] || key, value: propertyValue(value), raw: value })
++      rows.push({ group, key, label: exifLabels[key] || key, value: gpsValue(key, value, siblings), raw: value })
+     }
+   }
+   visit(metadata, [])
+diff --git a/src/plugins/community.ts b/src/plugins/community.ts
+index 09884bb..b0deff8 100644
+--- a/src/plugins/community.ts
++++ b/src/plugins/community.ts
+@@ -357,6 +357,7 @@ export const communityPlugin = {
+       if (state.editor && editorDirty()) { state.editorError = '请先保存当前草稿或关闭编辑器'; return false }
+       state.editor = draft ? { ...draft } : { id: crypto.randomUUID(), owner: owner(), baId: Number(state.viewing.id), boardName: state.viewing.name,
+         postId: post?.id, title: post?.title || '', content: post?.content || '', contentType: Number(post?.contentType || 2), updatedAt: Date.now() }
++      if (!state.editor.baId && state.viewing?.id) { state.editor.baId = Number(state.viewing.id); state.editor.boardName = state.viewing.name }
+       if (state.editor.owner !== owner()) { state.editor = null; return false }
+       savedFingerprint = draft || post ? fingerprint(state.editor) : fingerprint({ ...state.editor, title: '', content: '' })
+       state.savedAt = draft?.cloudId ? draft.updatedAt : 0; state.editorError = ''; return true
+@@ -366,7 +367,7 @@ export const communityPlugin = {
+       try {
+         const detail = draft.cloudId ? await api.baGetDraft(draft.cloudId, 0) : null
+         if (identity !== identityRequest || request !== editorRequest || draft.owner !== owner()) return false
+-        return openEditor(detail ? asCloudDraft({ ...detail, ba: detail.ba || { name: draft.boardName } }) : draft)
++        return openEditor(detail ? asCloudDraft({ ...detail, baId: detail.baId || detail.ba?.id || draft.baId, ba: detail.ba || { name: draft.boardName } }) : draft)
+       } catch (e: any) { if (identity === identityRequest) state.draftsError = '打开云端草稿失败：' + e.message; return false }
+     }
+     async function closeEditor() {
+@@ -382,7 +383,7 @@ export const communityPlugin = {
+     async function publish() {
+       const d = state.editor, identity = identityRequest
+       if (!d || state.publishing || state.savingDraft || d.owner !== owner()) return false
+-      if (!d.baId) { state.editorError = '请先为草稿选择发布板块'; return false }
++      if (!d.baId) { state.editorError = '请先进入要发布的板块，再打开这份草稿'; return false }
+       if (!d.title.trim() || !d.content.trim()) { state.editorError = '请填写标题和正文'; return false }
+       if (d.title.length > 200 || d.content.length > 200000) { state.editorError = '标题最多 200 字，正文最多 20 万字'; return false }
+       state.publishing = true; state.editorError = ''

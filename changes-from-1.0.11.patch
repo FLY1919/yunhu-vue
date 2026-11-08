@@ -1,0 +1,1096 @@
+diff --git a/package.json b/package.json
+--- a/package.json
++++ b/package.json
+@@ -1,7 +1,7 @@
+ {
+   "name": "yunhu-vue",
+   "private": true,
+-  "version": "1.0.11",
++  "version": "1.0.12",
+   "type": "module",
+   "description": "云湖牢大版 · Vue3 + 真 cordis 插件内核 + Satori 协议 + WebDAV 网关（仅供学习交流）",
+   "scripts": {
+@@ -26,7 +26,9 @@
+     "test:ui-features": "node scripts/test-ui-features.mjs",
+     "test:ui-recall": "node scripts/test-ui-recall.mjs",
+     "test:ui-stickers": "node scripts/test-ui-sticker-panel.mjs",
+-    "test:ui-scroll": "node scripts/test-ui-chat-scroll.mjs"
++    "test:ui-scroll": "node scripts/test-ui-chat-scroll.mjs",
++    "test:ui-bot-buttons": "node scripts/test-ui-bot-buttons.mjs",
++    "test:ui-notifications": "node scripts/test-ui-notifications.mjs"
+   },
+   "dependencies": {
+     "@capacitor/core": "^8.5.2",
+diff --git a/package-lock.json b/package-lock.json
+--- a/package-lock.json
++++ b/package-lock.json
+@@ -1,12 +1,12 @@
+ {
+   "name": "yunhu-vue",
+-  "version": "1.0.11",
++  "version": "1.0.12",
+   "lockfileVersion": 3,
+   "requires": true,
+   "packages": {
+     "": {
+       "name": "yunhu-vue",
+-      "version": "1.0.11",
++      "version": "1.0.12",
+       "dependencies": {
+         "@capacitor/core": "^8.5.2",
+         "@jodit/image-editor": "0.2.5",
+diff --git a/src-tauri/Cargo.toml b/src-tauri/Cargo.toml
+--- a/src-tauri/Cargo.toml
++++ b/src-tauri/Cargo.toml
+@@ -1,6 +1,6 @@
+ [package]
+ name = "yunhulaoda-desktop"
+-version = "1.0.11"
++version = "1.0.12"
+ description = "云湖牢大版桌面客户端（Tauri 壳 + Node sidecar 服务）"
+ authors = ["yibanm"]
+ edition = "2021"
+diff --git a/src-tauri/Cargo.lock b/src-tauri/Cargo.lock
+--- a/src-tauri/Cargo.lock
++++ b/src-tauri/Cargo.lock
+@@ -4833,7 +4833,7 @@
+ 
+ [[package]]
+ name = "yunhulaoda-desktop"
+-version = "1.0.11"
++version = "1.0.12"
+ dependencies = [
+  "base64 0.22.1",
+  "serde",
+diff --git a/src-tauri/tauri.conf.json b/src-tauri/tauri.conf.json
+--- a/src-tauri/tauri.conf.json
++++ b/src-tauri/tauri.conf.json
+@@ -1,7 +1,7 @@
+ {
+   "$schema": "https://schema.tauri.app/config/2",
+   "productName": "YunhuLaoda",
+-  "version": "1.0.11",
++  "version": "1.0.12",
+   "identifier": "com.richkobe.yunhulaoda",
+   "build": {
+     "beforeBuildCommand": "",
+diff --git a/src/satori/element.ts b/src/satori/element.ts
+--- a/src/satori/element.ts
++++ b/src/satori/element.ts
+@@ -94,21 +94,28 @@
+     default: out.push(h('unknown', { contentType, content }))
+   }
+   const el = out[0]
+-  // content.buttons（字段2）：消息内按钮，形态容错 JSON 数组 / 换行分隔文本
++  // 云湖 buttons 是二维数组：每个子数组是一行，不能把数组转成 "[object Object]"。
+   if (content.buttons) {
+-    let btns: any[] = []
++    let raw: any = content.buttons
+     try {
+-      const j = JSON.parse(content.buttons)
+-      btns = Array.isArray(j) ? j : []
++      if (typeof raw === 'string') raw = JSON.parse(raw)
+     } catch {
+-      btns = String(content.buttons).split('\n').filter(Boolean).map((t: string) => ({ text: t }))
+-    }
+-    for (const b of btns) {
+-      out.push(h('button', {
+-        text: b.text || b.label || b.name || String(b),
+-        id: b.id ?? b.buttonId ?? '',
+-        value: b.value ?? '',
+-      }))
++      raw = String(content.buttons).split('\n').filter(Boolean)
++    }
++    const values: any[] = Array.isArray(raw) ? raw : []
++    const rows: any[][] = values.some(Array.isArray) ? values.map(row => Array.isArray(row) ? row : [row]) : [values]
++    const str = (v: any) => typeof v === 'string' || typeof v === 'number' ? String(v) : ''
++    for (let rowIndex = 0; rowIndex < rows.length; rowIndex++) {
++      for (const item of rows[rowIndex]) {
++        const b = item && typeof item === 'object' && !Array.isArray(item) ? item : { text: str(item) }
++        const label = str(b.text) || str(b.label) || str(b.name)
++        if (!label || label.includes('[object Object]')) continue
++        const action = b.actionType ?? b.action_type
++        out.push(h('button', {
++          text: label, id: str(b.id ?? b.buttonId ?? b.button_id), value: str(b.value),
++          url: str(b.url), actionType: action === undefined || action === null ? null : Number(action), rowIndex,
++        }))
++      }
+     }
+   }
+   if (el && quote) el.attrs = { ...el.attrs, quote }
+diff --git a/src/components/MessageElements.vue b/src/components/MessageElements.vue
+--- a/src/components/MessageElements.vue
++++ b/src/components/MessageElements.vue
+@@ -19,6 +19,7 @@
+ import A2uiNode from './A2uiNode.vue'
+ import Icon from '../console/components/Icon.vue'
+ import { saveImageCopy } from '../core/save-image'
++import { openExternalUrl } from '../core/links'
+ const ImageEditor = defineAsyncComponent(() => import('./ImageEditor.vue'))
+ 
+ const props = defineProps<{
+@@ -43,7 +44,20 @@
+   catch { return null }
+ })
+ 
+-const list = computed(() => props.elements || [])
++const list = computed<Element[]>(() => {
++  const result: Element[] = []
++  for (const el of props.elements || []) {
++    if (el.type === 'button' && Number.isInteger(el.attrs.rowIndex)) {
++      let row = result[result.length - 1]
++      if (!row || row.type !== 'button-row' || row.attrs.rowIndex !== el.attrs.rowIndex) {
++        row = { type: 'button-row', attrs: { rowIndex: el.attrs.rowIndex }, children: [] }
++        result.push(row)
++      }
++      row.children.push(el)
++    } else result.push(el)
++  }
++  return result
++})
+ 
+ /**
+  * A2UI 完整版：HTML 里内嵌的按钮（data-a2ui-action）也要能点。
+@@ -312,16 +326,36 @@
+ }
+ function closePost() { postView.value = null }
+ 
+-/** 消息内按钮点击 → /v1/msg/button-report 回报（审计补齐死路径） */
++/** 消息按钮：1=链接，2=复制，3=回调；旧插件生成的无类型按钮仍按回调处理。 */
+ async function onMsgButton(el: any) {
+   const m = props.msg
+   if (!m) return
+   try {
++    const type = el.attrs.actionType
++    if (type === 1) {
++      if (!el.attrs.url) throw new Error('按钮没有可打开的链接')
++      const link = new URL(el.attrs.url)
++      if (link.protocol === 'yunhu:' && link.hostname === 'chat-add') await openYunhuLink(link.href)
++      else await openExternalUrl(link.href)
++      return
++    }
++    if (type === 2) {
++      if (!navigator.clipboard?.writeText) throw new Error('当前环境不支持复制')
++      await navigator.clipboard.writeText(String(el.attrs.value ?? ''))
++      ctx.ui?.toast?.('已复制', 'success')
++      return
++    }
++    if (type !== 3 && type !== null && type !== undefined) throw new Error('不支持的按钮类型')
++    const current = ctx.chat?.state?.current
++    const chatId = m.chatId || current?.id
++    const chatType = m.chatType || current?.type
++    const userId = ctx.auth?.state?.user?.id
++    if (!m.id || !chatId || !chatType || !userId) throw new Error('消息或账号信息不完整')
++    const value = type === null || type === undefined ? (el.attrs.value || el.attrs.text || '') : (el.attrs.value ?? '')
+     await ctx.api.buttonReport({
+-      chatId: m.chatId, chatType: m.chatType || ctx.chat?.state?.current?.type || 1,
+-      msgId: m.id, buttonId: el.attrs.id || '', value: el.attrs.value || el.attrs.text || '',
++      chatId, chatType, msgId: m.id, userId: String(userId), value: String(value),
+     })
+-  } catch { /* 回报失败不打断用户 */ }
++  } catch (e: any) { ctx.ui?.toast?.('按钮操作失败：' + (e?.message || '未知错误'), 'error') }
+ }
+ 
+ /**
+@@ -411,6 +445,9 @@
+       </template>
+ 
+       <!-- 云湖扩展 -->
++      <div v-else-if="el.type === 'button-row'" class="msg-btn-row">
++        <button v-for="(button, j) in el.children" :key="j" class="msg-btn" @click="onMsgButton(button)">{{ button.attrs.text }}</button>
++      </div>
+       <button v-else-if="el.type === 'button'" class="msg-btn"
+               @click="onMsgButton(el)">{{ el.attrs.text || el.attrs.content || '按钮' }}</button>
+       <span v-else-if="el.type === 'tip'" class="tip">{{ el.attrs.content }}</span>
+@@ -509,6 +546,9 @@
+ <style scoped>
+ .els { display: block; }
+ .els > * { vertical-align: bottom; }
++.msg-btn-row { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
++.msg-btn { flex: 1 1 auto; min-width: 0; max-width: 100%; padding: 6px 12px; border: 1px solid var(--line2); border-radius: 8px; background: var(--acc-soft); color: var(--acc); font-size: 12px; white-space: normal; overflow-wrap: anywhere; }
++.msg-btn:hover { background: var(--acc); color: var(--on-acc); }
+ 
+ .quote {
+   display: flex; align-items: baseline; gap: 6px; margin-bottom: 5px;
+diff --git a/src/plugins/api.ts b/src/plugins/api.ts
+--- a/src/plugins/api.ts
++++ b/src/plugins/api.ts
+@@ -140,8 +140,8 @@
+         return routes
+       },
+ 
+-      async stickyList() {
+-        const r = assertOk(await request('/v1/sticky/list', { body: {} }))
++      async stickyList({ timeout = 60000 } = {}) {
++        const r = assertOk(await request('/v1/sticky/list', { body: {}, timeout }))
+         return (r.data?.sticky || []).filter((x: any) => !x.delFlag).map((x: any) => ({
+           id: String(x.chatId), type: Number(x.chatType), name: x.chatName,
+           avatar: x.avatarUrl, pinned: true, stickyId: x.id, pinSort: Number(x.sort) || 0,
+@@ -150,11 +150,11 @@
+       async setPinned(chatId: string, chatType: number, pinned: boolean) {
+         return assertOk(await request(pinned ? '/v1/sticky/add' : '/v1/sticky/delete', { body: { chatId, chatType } }))
+       },
+-      async conversations() {
++      async conversations({ timeout = 60000 } = {}) {
+         // 置顶是独立列表，不能从消息时间或未读数猜测。置顶接口失败不丢失普通列表。
+         const [r, pins] = await Promise.all([
+-          request('/v1/conversation/list', { body: new Uint8Array() }).then(assertOk),
+-          api.stickyList().catch(() => null),
++          request('/v1/conversation/list', { body: new Uint8Array(), timeout }).then(assertOk),
++          api.stickyList({ timeout }).catch(() => null),
+         ])
+         const list = pb.each(r.pb, 2).map(d => ({
+           id: pb.str(d, 1), type: pb.num(d, 2),
+@@ -174,9 +174,9 @@
+         return list
+       },
+ 
+-      async messages(chatId, chatType, count = 30) {
++      async messages(chatId, chatType, count = 30, { timeout = 60000 } = {}) {
+         const body = pb.build(pb.fNum(2, count), pb.fNum(4, chatType), pb.fStr(5, chatId))
+-        const r = assertOk(await request('/v1/msg/list-message', { body }))
++        const r = assertOk(await request('/v1/msg/list-message', { body, timeout }))
+         return pb.each(r.pb, 2).map(decodeMsg).sort((a, b) => a.ts - b.ts)
+       },
+ 
+@@ -236,8 +236,8 @@
+        * 机器人资料：POST /v1/bot/bot-info  BotInfoRequest{ id=2 } → BotData
+        * （机器人不是「用户」，get-user 会返回「该用户不存在」，必须走这个）
+        */
+-      async botInfo(botId: string) {
+-        const r = assertOk(await request('/v1/bot/bot-info', { body: pb.build(pb.fStr(2, botId)) }))
++      async botInfo(botId: string, { timeout = 60000 } = {}) {
++        const r = assertOk(await request('/v1/bot/bot-info', { body: pb.build(pb.fStr(2, botId)), timeout }))
+         const d = pb.msg(r.pb, 2)
+         return {
+           isBot: true,
+@@ -730,8 +730,8 @@
+        * 群信息：POST /v1/group/info  GroupInfoRequest{ group_id=2 }
+        * 字段号严格按 full.proto#GroupData（之前猜错了，avatar/introduction 全串位）
+        */
+-      async groupInfo(groupId: string) {
+-        const r = assertOk(await request('/v1/group/info', { body: pb.build(pb.fStr(2, groupId)) }))
++      async groupInfo(groupId: string, { timeout = 60000 } = {}) {
++        const r = assertOk(await request('/v1/group/info', { body: pb.build(pb.fStr(2, groupId)), timeout }))
+         const d = pb.msg(r.pb, 2)
+         return {
+           id: pb.str(d, 1),
+@@ -1224,8 +1224,8 @@
+        * 获取任意用户信息（含注册时间/在线天数/VIP/勋章/IP归属地等）。
+        * proto: GetUserRequest { string id = 2 }
+        */
+-      async getUser(id: string) {
+-        const r = assertOk(await request('/v1/user/get-user', { body: pb.build(pb.fStr(2, id)) }))
++      async getUser(id: string, { timeout = 60000 } = {}) {
++        const r = assertOk(await request('/v1/user/get-user', { body: pb.build(pb.fStr(2, id)), timeout }))
+         const d = pb.msg(r.pb, 2)
+         const p = pb.msg(d, 19)
+         return {
+@@ -1272,12 +1272,15 @@
+       },
+ 
+       /** 普通按钮消息回报 */
+-      async buttonReport({ chatId, chatType, msgId, buttonId, value }) {
++      async buttonReport({ chatId, chatType, msgId, userId, value }) {
++        // ButtonReportRequest：消息 ID=2、会话类型=3、会话 ID=4、当前用户 ID=5、按钮值=6。
+         const body = pb.build(
+-          pb.fStr(1, msgId || ''), pb.fStr(2, chatId || ''),
+-          pb.fNum(3, chatType || 0), pb.fStr(4, buttonId || ''), pb.fStr(5, value || ''),
++          pb.fStr(2, msgId || ''), pb.fNum(3, chatType || 0), pb.fStr(4, chatId || ''),
++          pb.fStr(5, userId || ''), pb.fStr(6, value ?? ''),
+         )
+-        return request('/v1/msg/button-report', { body })
++        const result = await request('/v1/msg/button-report', { body })
++        if (result.http < 200 || result.http >= 300) throw new Error(`HTTP ${result.http}`)
++        return assertOk(result)
+       },
+     }
+ 
+diff --git a/src/plugins/chat.ts b/src/plugins/chat.ts
+--- a/src/plugins/chat.ts
++++ b/src/plugins/chat.ts
+@@ -68,6 +68,7 @@
+     let disposed = false
+     let accountVersion = 0
+     let liveVersion = 0
++    let windowMinimized = false
+     const liveRevisions = new Map<string, number>()
+     const conversationRevisions = new Map<string, number>()
+     const reconcileTimers = new Map<string, ReturnType<typeof setTimeout>>()
+@@ -108,9 +109,12 @@
+       menuFor: null as string | null,
+     })
+     // A selected conversation is only read while its chat page is actually visible in the foreground.
+-    const viewingConversation = () => !!state.current && !document.hidden && document.hasFocus?.() !== false
++    const viewingConversation = () => !!state.current && !document.hidden && !windowMinimized && document.hasFocus?.() !== false
+       && !(ctx as any).lock?.isLocked
+       && (!ctx.console || ctx.console.state.currentPage === '/')
++    // 可见聊天保持安静，即使 WebView 偶尔错误报告失焦；最小化/锁定则允许通知。
++    const showingConversation = (channel: any) => state.current?.id === channel.id && state.current?.type === channel.type
++      && (!ctx.console || ctx.console.state.currentPage === '/') && !document.hidden && !windowMinimized && !(ctx as any).lock?.isLocked
+     function readCurrent() {
+       if (!viewingConversation()) return
+       const cur = state.current
+@@ -276,7 +280,10 @@
+       pendingConversationSettings.set(id, { [field]: !active })
+       saveGroups()
+       state.conversations = sortConvs(state.conversations)
+-      if (field === 'noDisturb' && !active) ctx.ui?.dismissMessages((key: string) => key === `chat:${c?.type}:${id}`)
++      if (field === 'noDisturb' && !active) {
++        cancelPendingNotification(id)
++        ctx.ui?.dismissMessages((key: string) => key === `chat:${c?.type}:${id}`)
++      }
+       try {
+         if (field === 'pinned' && c && api.setPinned) await api.setPinned(id, c.type, !active)
+         if (field === 'noDisturb' && api.noNotify) await api.noNotify(id, !active)
+@@ -480,20 +487,48 @@
+ 
+     let conversationSnapshotReady = false
+     const notificationFlights = new Set<string>()
+-    async function pollNotification(channel: any, account: number) {
++    const notificationPollRetries = new Map<string, ReturnType<typeof setTimeout>>()
++    const notificationPollEpochs = new Map<string, number>()
++    type PendingNotification = { key: string; account: number; session: any; message: any; known: any; attempt: number; timer?: ReturnType<typeof setTimeout> }
++    const pendingNotifications = new Map<string, PendingNotification>()
++    const retryBase = Math.max(5, Number(config.notificationRetryMs) || 1500)
++    function cancelPendingNotification(id: string, type?: number) {
++      for (const [key, pending] of pendingNotifications) {
++        if (String(pending.session.channel.id) === String(id) && (type === undefined || pending.session.channel.type === type)) {
++          clearTimeout(pending.timer); pendingNotifications.delete(key)
++        }
++      }
++      for (const kind of type === undefined ? [1, 2, 3] : [Number(type)]) {
++        const key = `${accountVersion}:${kind}:${id}`
++        clearTimeout(notificationPollRetries.get(key)); notificationPollRetries.delete(key)
++        notificationPollEpochs.set(key, (notificationPollEpochs.get(key) || 0) + 1)
++      }
++      while (notificationPollEpochs.size > 1000) notificationPollEpochs.delete(notificationPollEpochs.keys().next().value)
++    }
++    async function pollNotification(channel: any, account: number, attempt = 0) {
+       const key = `${account}:${channel.type}:${channel.id}`
+       if (notificationFlights.has(key)) return
++      clearTimeout(notificationPollRetries.get(key)); notificationPollRetries.delete(key)
+       notificationFlights.add(key)
++      const epoch = notificationPollEpochs.get(key) || 0
+       try {
+-        const list = await api.messages(channel.id, channel.type, 1)
+-        if (disposed || account !== accountVersion || isMuted(channel.id)) return
++        const list = await api.messages(channel.id, channel.type, 1, { timeout: 5000 })
++        if (disposed || account !== accountVersion || epoch !== (notificationPollEpochs.get(key) || 0) || isMuted(channel.id)) return
+         const latest = list[list.length - 1]
+-        if (!latest?.id) return
++        if (!latest?.id) throw new Error('最新消息尚未就绪')
+         applySession({
+           id: latest.id, channel, user: { id: latest.senderId, name: latest.sender, avatar: latest.avatar },
+           timestamp: latest.ts, raw: latest, quoteId: latest.quoteId, elements: parse(latest.content || {}, latest.type),
+         }, 'created', true)
+-      } catch { /* 网络故障不产生额外错误通知，下次列表变化时继续兜底 */ }
++      } catch {
++        // 列表未读数已更新，即使后续计数不再变化也要重试，不能永久丢失这条通知。
++        if (!disposed && account === accountVersion && epoch === (notificationPollEpochs.get(key) || 0) && !isMuted(channel.id) && attempt < 4) {
++          notificationPollRetries.set(key, setTimeout(() => {
++            notificationPollRetries.delete(key)
++            void pollNotification(channel, account, attempt + 1)
++          }, retryBase * 2 ** attempt))
++        }
++      }
+       finally { notificationFlights.delete(key) }
+     }
+     async function loadConversations(silent = false) {
+@@ -502,7 +537,7 @@
+       state.loadingConvs = true
+       try {
+         const revision = liveVersion
+-        const list = await api.conversations()
++        const list = await api.conversations(silent ? { timeout: 8000 } : undefined)
+         if (disposed || account !== accountVersion) return
+         for (const c of list) Object.assign(c, pendingConversationSettings.get(c.id) || {})
+         const previous = new Map(state.conversations.map((c: any) => [`${c.type}:${c.id}`, c]))
+@@ -516,7 +551,9 @@
+         // 首次加载只建立基线，避免把启动前的历史未读当成新通知。
+         const notify = conversationSnapshotReady ? list.filter((c: any) => {
+           const old = previous.get(`${c.type}:${c.id}`)
+-          return !(c.noDisturb ?? isMuted(c.id)) && !convGroups.hidden.includes(c.id) && c.unread > (old?.unread || 0) && (!old || c.ts > old.ts)
++          const unreadIncreased = c.unread > (old?.unread || 0)
++          const newerUnread = old && c.unread > 0 && c.ts > old.ts
++          return !(c.noDisturb ?? isMuted(c.id)) && !convGroups.hidden.includes(c.id) && (unreadIncreased || newerUnread)
+         }) : []
+         conversationSnapshotReady = true
+         // 本地隐藏（删除会话）过滤 + 置顶排序
+@@ -538,9 +575,12 @@
+           if (convGroups.marked.includes(c.id) && state.current?.id !== c.id) c.unread = Math.max(c.unread || 0, 1)
+         }
+         saveSnapshot(sorted)
+-        // 只有确实增长的未读才补拉一条消息，以拿到可准确跳转的 ID。
+-        // 串行执行，避免大量会话同时变化时冲击上游。
+-        ;(async () => { for (const c of notify) { if (disposed || account !== accountVersion) break; await pollNotification(c, account) } })()
++        // 少量并发补拉，避免一个慢会话阻塞所有其他会话。
++        const queue = notify.slice()
++        const workers = Math.min(queue.length, 4)
++        for (let i = 0; i < workers; i++) void (async () => {
++          while (queue.length && !disposed && account === accountVersion) await pollNotification(queue.shift(), account)
++        })()
+       } catch (e: any) {
+         if (!silent && !disposed && account === accountVersion) ctx.emit('ui/toast', { text: '会话列表加载失败：' + e.message, 'type': 'error' })
+       } finally { if (account === accountVersion) state.loadingConvs = false }
+@@ -579,6 +619,11 @@
+       state.loadingConvs = false
+       conversationSnapshotReady = false
+       notificationFlights.clear()
++      for (const timer of notificationPollRetries.values()) clearTimeout(timer)
++      notificationPollRetries.clear()
++      notificationPollEpochs.clear()
++      for (const pending of pendingNotifications.values()) clearTimeout(pending.timer)
++      pendingNotifications.clear()
+       conversationRevisions.clear()
+     }
+     ctx.on('auth/logout', clearBackgroundWork)
+@@ -679,6 +724,7 @@
+     function atBottom() { return bottomFlag }
+ 
+     async function open(chat: any) {
++      cancelPendingNotification(chat.id, chat.type)
+       const sameChannel = state.current?.id === chat.id && state.current?.type === chat.type
+       rememberWindow()
+       const version = ++viewVersion
+@@ -1075,25 +1121,62 @@
+       }
+     }
+ 
+-    async function notifyIncoming(session: any, message: any, known: any) {
+-      const account = accountVersion
+-      let conv = known
+-      // Unknown conversations require server metadata before deciding whether to notify.
+-      if (!conv || (conv.noDisturb === undefined && (api.groupInfo || api.getUser || api.botInfo))) {
+-        try {
+-          const list = await api.conversations()
+-          conv = list.find((c: any) => c.id === session.channel.id && c.type === session.channel.type) || conv
+-          if (conv && conv.noDisturb === undefined) {
+-            const info = conv.type === 2 ? await api.groupInfo(conv.id) : conv.type === 3 ? await api.botInfo(conv.id) : await api.getUser(conv.id)
+-            conv = { ...conv, ...info, name: conv.name || info.name }
+-          }
+-        } catch { return } // Do not notify until mute status can be confirmed.
+-      }
+-      if (disposed || account !== accountVersion || conv?.noDisturb || isMuted(session.channel.id)) return
+-      if (state.current?.id === session.channel.id && state.current?.type === session.channel.type && ctx.console?.state.currentPage === '/') return
++    function notifyIncoming(session: any, message: any, known: any) {
++      const key = `${session.channel.type}:${session.channel.id}`
++      const previous = pendingNotifications.get(key)
++      if (previous) clearTimeout(previous.timer)
++      // 同一会话只保留最新待通知消息；较慢的旧资料请求不能覆盖新通知。
++      const entry: PendingNotification = { key, account: accountVersion, session, message, known, attempt: 0 }
++      pendingNotifications.set(key, entry)
++      while (pendingNotifications.size > 100) {
++        const oldest = pendingNotifications.keys().next().value
++        clearTimeout(pendingNotifications.get(oldest)?.timer)
++        pendingNotifications.delete(oldest)
++      }
++      void deliverIncoming(entry)
++    }
++    async function notificationMetadata(channel: any, known: any) {
++      const getter = channel.type === 2 ? api.groupInfo : channel.type === 3 ? api.botInfo : api.getUser
++      const requests: Promise<any>[] = []
++      if (typeof getter === 'function') requests.push(Promise.resolve().then(() => getter.call(api, channel.id, { timeout: 5000 })).then((info: any) => {
++        if (typeof info?.noDisturb !== 'boolean') throw new Error('会话免打扰状态未知')
++        return { ...known, ...info, name: known?.name || info.name }
++      }))
++      if (typeof api.conversations === 'function') requests.push(Promise.resolve().then(() => api.conversations({ timeout: 5000 })).then((list: any[]) => {
++        const hit = list.find((c: any) => String(c.id) === String(channel.id) && Number(c.type) === Number(channel.type))
++        if (typeof hit?.noDisturb !== 'boolean') throw new Error('会话免打扰状态未知')
++        return { ...known, ...hit }
++      }))
++      if (!requests.length) throw new Error('无法获取会话信息')
++      return Promise.any(requests)
++    }
++    async function deliverIncoming(entry: PendingNotification) {
++      const valid = () => !disposed && entry.account === accountVersion && pendingNotifications.get(entry.key) === entry
++      const { session, message } = entry
++      if (!valid()) return
++      if (isMuted(session.channel.id) || showingConversation(session.channel)) { pendingNotifications.delete(entry.key); return }
++      let conv = state.conversations.find((c: any) => c.id === session.channel.id && c.type === session.channel.type) || entry.known
++      const hasInfoApi = !!(api.groupInfo || api.getUser || api.botInfo)
++      if (!conv || (conv.noDisturb === undefined && hasInfoApi)) {
++        try { conv = await notificationMetadata(session.channel, conv) }
++        catch {
++          if (!valid()) return
++          if (entry.attempt >= 4) { pendingNotifications.delete(entry.key); return }
++          const delay = retryBase * 2 ** entry.attempt++
++          entry.timer = setTimeout(() => { entry.timer = undefined; void deliverIncoming(entry) }, delay)
++          return
++        }
++      }
++      if (!valid()) return
++      const live = state.conversations.find((c: any) => c.id === session.channel.id && c.type === session.channel.type)
++      if (live && live.noDisturb === undefined && typeof conv?.noDisturb === 'boolean') live.noDisturb = conv.noDisturb
++      if ((live?.noDisturb ?? conv?.noDisturb) || isMuted(session.channel.id) || showingConversation(session.channel)) {
++        pendingNotifications.delete(entry.key); return
++      }
+       const channel = { id: session.channel.id, type: session.channel.type,
+-        name: conv?.name || session.channel.name || (session.channel.type === 1 ? session.user.name : '') || '新会话',
+-        avatar: conv?.avatar || session.channel.avatar }
++        name: live?.name || conv?.name || session.channel.name || (session.channel.type === 1 ? session.user.name : '') || '新会话',
++        avatar: live?.avatar || conv?.avatar || session.channel.avatar }
++      pendingNotifications.delete(entry.key)
+       ctx.ui?.toast(`${session.user.name || session.user.id}：${previewOf(message) || '[新消息]'}`, 'message', 6500, {
+         title: channel.name, avatar: channel.avatar,
+         key: `chat:${channel.type}:${channel.id}`,
+@@ -1161,14 +1244,13 @@
+         loadConversations(true)
+         timer = setInterval(() => {
+           tick++
+-          // E5：后台不轮询，但回到前台要立刻对账一次（visibilitychange 里触发）
+-          if (document.hidden) return
++          // 后台仍检查未读：WS 断线时不能让最小化窗口完全失去通知。
+           // 当前消息每次 tick 对账，WS 丢包或历史定位后也不会停止刷新；
+           // WS 在线时会话列表降频，消息请求由 messageFlightVersion 合并。
+           const ws: any = (ctx as any).ws
+           const online = !!ws?.online
+           if (!online || tick % 5 === 0) loadConversations(true)
+-          if (state.current) loadMessages(true)
++          if (!document.hidden && !windowMinimized && state.current) loadMessages(true)
+         }, pollMs)
+       }, { immediate: true })
+       // E5：回到前台立即对账（不等下一个 tick，最长 20s 的陈旧窗口消失）
+@@ -1179,10 +1261,18 @@
+           if (state.current) loadMessages(true)
+         }
+       }
++      const onMinimized = (event: Event) => {
++        windowMinimized = (event as CustomEvent).detail === true
++        if (!windowMinimized && auth.state.status === 'ready') {
++          readCurrent(); loadConversations(true)
++          if (state.current) loadMessages(true)
++        }
++      }
+       document.addEventListener('visibilitychange', onVis)
+       window.addEventListener('focus', readCurrent)
++      window.addEventListener('yh-window-minimized', onMinimized)
+       const unwatchPage = watch(() => ctx.console?.state.currentPage, readCurrent)
+-      return () => { unwatch(); unwatchPage(); stop(); document.removeEventListener('visibilitychange', onVis); window.removeEventListener('focus', readCurrent) }
++      return () => { unwatch(); unwatchPage(); stop(); document.removeEventListener('visibilitychange', onVis); window.removeEventListener('focus', readCurrent); window.removeEventListener('yh-window-minimized', onMinimized) }
+     })
+ 
+     /* 输入区按钮由插件贡献 —— 这批是 chat 插件自带的（默认序：文本/MD/HTML → 表情 → 图片 → 视频 → 文件） */
+diff --git a/src/plugins/ui.ts b/src/plugins/ui.ts
+--- a/src/plugins/ui.ts
++++ b/src/plugins/ui.ts
+@@ -30,7 +30,9 @@
+     })
+     let seq = 0
+     let disposed = false
++    let windowMinimized = false
+     const instance = Math.random().toString(36).slice(2, 10)
++    const nativeTimeoutMs = Math.max(10, Number(config.nativeTimeoutMs) || 8000)
+     const nativeToasts = new Map<number, NativeToast>()
+     const native = createNativeNotifications((id) => {
+       const toast = [...nativeToasts.values()].find(t => t.nativeId === id)
+@@ -48,6 +50,7 @@
+       }
+     })
+     const timers = new Map<number, ReturnType<typeof setTimeout>>()
++    const hiddenMessageDelays = new Map<number, number>()
+     let confirmResolve: ((ok: boolean) => void) | null = null
+ 
+     const ui = {
+@@ -78,10 +81,14 @@
+           nativeToasts.set(id, toast)
+           // 通知中心的点击回调保留到用户操作；不能按软件内 Toast 的几秒超时移除。
+           while (nativeToasts.size > 100) ui.dismiss(nativeToasts.keys().next().value)
++          // 桥接调用偶发不返回时，不能让消息永远卡在等待中；迟到的原生通知随后会被撤销。
++          timers.set(id, setTimeout(() => fallback(toast, 'Windows 通知响应超时'), nativeTimeoutMs))
+           void native.show(toast.nativeId, options.title || '云湖牢大版', text, () => nativeToasts.has(id), options.avatar).then(() => {
+             if (disposed || !nativeToasts.has(id)) void native.dismiss(toast.nativeId)
+             else { state.nativeNotificationsAvailable = true; state.notificationError = '' }
+-          }).catch(e => fallback(toast, e?.message || String(e)))
++          }).catch(e => fallback(toast, e?.message || String(e))).finally(() => {
++            clearTimeout(timers.get(id)); timers.delete(id)
++          })
+           return id
+         }
+         return showToast(text, type, ms, options)
+@@ -112,6 +119,7 @@
+         }
+         clearTimeout(timers.get(id))
+         timers.delete(id)
++        hiddenMessageDelays.delete(id)
+         const i = state.toasts.findIndex((t: any) => t.id === id)
+         if (i >= 0) state.toasts.splice(i, 1)
+       },
+@@ -148,9 +156,20 @@
+       if (existing) Object.assign(existing, toast)
+       else state.toasts.push(toast)
+       clearTimeout(timers.get(id))
+-      timers.set(id, setTimeout(() => ui.dismiss(id), ms))
++      timers.delete(id)
++      hiddenMessageDelays.delete(id)
++      // 软件内消息在隐藏、最小化或锁屏时无法看到，恢复可见后才开始计时。
++      if (type === 'message' && (document.hidden || windowMinimized || (ctx as any).lock?.isLocked)) hiddenMessageDelays.set(id, ms)
++      else timers.set(id, setTimeout(() => ui.dismiss(id), ms))
+       while (state.toasts.length > 5) ui.dismiss(state.toasts[0].id)
+       return id
++    }
++    function resumeHiddenMessages() {
++      if (document.hidden || windowMinimized || (ctx as any).lock?.isLocked) return
++      for (const [id, ms] of hiddenMessageDelays) {
++        hiddenMessageDelays.delete(id)
++        if (state.toasts.some((t: any) => t.id === id)) timers.set(id, setTimeout(() => ui.dismiss(id), ms))
++      }
+     }
+ 
+     function applyTheme(t: string) { document.documentElement.dataset.theme = t }
+@@ -170,20 +189,27 @@
+         openExternalUrl(link.href).catch((e) => ui.toast('打开链接失败：' + e.message, 'error'))
+       }
+       document.addEventListener('click', onExternalClick)
++      const onMinimized = (event: Event) => { windowMinimized = (event as CustomEvent).detail === true; resumeHiddenMessages() }
++      window.addEventListener('yh-window-minimized', onMinimized)
++      document.addEventListener('visibilitychange', resumeHiddenMessages)
+       return () => {
+         disposed = true
+         for (const id of [...nativeToasts.keys()]) ui.dismiss(id)
+         native.dispose()
+         mq?.removeEventListener?.('change', onSys)
+         document.removeEventListener('click', onExternalClick)
++        window.removeEventListener('yh-window-minimized', onMinimized)
++        document.removeEventListener('visibilitychange', resumeHiddenMessages)
+         for (const timer of timers.values()) clearTimeout(timer)
+         timers.clear()
++        hiddenMessageDelays.clear()
+         state.toasts = []
+         ui.resolveConfirm(false)
+       }
+     })
+ 
+     ctx.on('ui/toast', ({ text, type, ms, ...options }: any) => ui.toast(text, type, ms, options))
++    ctx.on('app/unlock' as any, resumeHiddenMessages)
+     ctx.on('auth/logout', () => {
+       for (const t of [...state.toasts, ...nativeToasts.values()]) ui.dismiss(t.id)
+     })
+diff --git a/scripts/test-chat-regressions.mjs b/scripts/test-chat-regressions.mjs
+--- a/scripts/test-chat-regressions.mjs
++++ b/scripts/test-chat-regressions.mjs
+@@ -26,7 +26,7 @@
+     export { groupTagStyle, messageGroupTags } from './src/core/group-tag.ts';
+     export { groupAdminPlugin } from './src/plugins/group-admin.ts';
+     export { decodePush } from './src/plugins/ws.ts';
+-    export { render as renderElements } from './src/satori/element.ts';
++    export { render as renderElements, parse as parseElements } from './src/satori/element.ts';
+     export { createRecallCache } from './src/core/recall-cache.ts';
+     export { default as Composer } from './src/components/Composer.vue';
+     export { default as ChatView } from './src/components/ChatView.vue';
+@@ -44,7 +44,7 @@
+     })
+   } }],
+ })
+-const { chatPlugin, apiPlugin, pb, uiPlugin, themePlugin, PRESETS, themePalette, contrast, messagePreview, messageQuote, linkify, fixResourceUrls, openExternalUrl, rankSearchResults, groupTagStyle, messageGroupTags, groupAdminPlugin, decodePush, renderElements, createRecallCache, Sidebar, Composer, StickerPanel, ChatView } = await import(pathToFileURL(bundle))
++const { chatPlugin, apiPlugin, pb, uiPlugin, themePlugin, PRESETS, themePalette, contrast, messagePreview, messageQuote, linkify, fixResourceUrls, openExternalUrl, rankSearchResults, groupTagStyle, messageGroupTags, groupAdminPlugin, decodePush, renderElements, parseElements, createRecallCache, Sidebar, Composer, StickerPanel, ChatView } = await import(pathToFileURL(bundle))
+ 
+ class MemoryStorage {
+   data = new Map()
+@@ -64,7 +64,7 @@
+ const channel = (id, type = 2) => ({ id, type, name: id })
+ const turn = async () => { await Promise.resolve(); await nextTick(); await Promise.resolve() }
+ 
+-function harness(overrides = {}, storage = new MemoryStorage()) {
++function harness(overrides = {}, storage = new MemoryStorage(), chatConfig = {}, uiConfig = {}) {
+   globalThis.localStorage = storage
+   const listeners = new Map(), cleanups = [], emitted = []
+   const api = {
+@@ -90,8 +90,8 @@
+     effect(fn) { const cleanup = fn(); if (cleanup) cleanups.push(cleanup); return cleanup },
+     inject() {},
+   }
+-  uiPlugin.apply(ctx)
+-  chatPlugin.apply(ctx)
++  uiPlugin.apply(ctx, uiConfig)
++  chatPlugin.apply(ctx, chatConfig)
+   return { ctx, chat: ctx.chat, api, emitted, listeners, dispose() {
+     for (const fn of cleanups.reverse()) fn()
+     listeners.clear()
+@@ -164,6 +164,40 @@
+ }
+ 
+ try {
++  await test('nested cloud bot buttons retain rows, labels and each distinct action without object coercion', () => {
++    const rows = [[{ text: '打开', actionType: 1, url: 'https://example.com/path' },
++      { text: '复制', actionType: 2, value: '复制内容' }], [{ text: '签到', actionType: 3, value: 'sign-in' }]]
++    for (const buttons of [JSON.stringify(rows), rows]) {
++      const elements = parseElements({ text: '机器人消息', buttons }, 1)
++      const parsed = elements.filter(x => x.type === 'button').map(x => x.attrs)
++      assert.deepEqual(parsed.map(x => [x.text, x.rowIndex, x.actionType]), [['打开', 0, 1], ['复制', 0, 2], ['签到', 1, 3]])
++      assert.equal(parsed[0].url, 'https://example.com/path')
++      assert.equal(parsed[1].value, '复制内容')
++      assert.equal(parsed[2].value, 'sign-in')
++    }
++    assert.deepEqual(parseElements({ buttons: JSON.stringify([[{}, { text: '正常', action_type: 3, value: 0 }]]) }, 1)
++      .filter(x => x.type === 'button').map(x => [x.attrs.text, x.attrs.value]), [['正常', '0']])
++    assert.deepEqual(parseElements({ buttons: JSON.stringify([{ label: '旧格式', value: 'x' }]) }, 1)
++      .filter(x => x.type === 'button').map(x => x.attrs.text), ['旧格式'])
++  })
++  await test('button report uses the documented protobuf fields and exposes server failure', async () => {
++    const previousFetch = globalThis.fetch, sent = [], ctx = { set(key, value) { this[key] = value } }
++    apiPlugin.apply(ctx, { base: '/api' })
++    globalThis.fetch = async (url, init) => { sent.push([url, pb.decode(init.body)]); return new Response(JSON.stringify({ code: 1 })) }
++    try {
++      await ctx.api.buttonReport({ msgId: 'message-id', chatType: 2, chatId: 'group-id', userId: 'self-id', value: 'sign-in' })
++      const [url, request] = sent[0]
++      assert.ok(url.endsWith('/v1/msg/button-report'))
++      assert.equal(request[1], undefined)
++      assert.equal(pb.str(request, 2), 'message-id')
++      assert.equal(pb.num(request, 3), 2)
++      assert.equal(pb.str(request, 4), 'group-id')
++      assert.equal(pb.str(request, 5), 'self-id')
++      assert.equal(pb.str(request, 6), 'sign-in')
++      globalThis.fetch = async () => new Response(JSON.stringify({ code: 403, msg: '回调被拒绝' }))
++      await assert.rejects(ctx.api.buttonReport({ msgId: 'x', chatType: 1, chatId: 'y', userId: 'z', value: '' }), /回调被拒绝/)
++    } finally { globalThis.fetch = previousFetch }
++  })
+   await test('located messages keep their highlight on target clicks, clear on outside click/Escape, and release listeners', async () => {
+     const h = harness(), previousElement = globalThis.Element, previousCSS = globalThis.CSS
+     globalThis.Element = class { closest() { return this.located ? this : null } }
+@@ -801,6 +835,69 @@
+       h.chat.toggleMute('normal'); assert.equal(h.ctx.ui.state.toasts.length, 0)
+     } finally { h.dispose() }
+   })
++  await test('a minimized selected conversation notifies, while the visible selected conversation remains quiet', async () => {
++    const h = harness(); await h.chat.open(channel('current'))
++    const minimize = value => { const e = new Event('yh-window-minimized'); Object.defineProperty(e, 'detail', { value }); window.dispatchEvent(e) }
++    try {
++      h.chat.state.conversations = [{ ...channel('current'), unread: 0, noDisturb: false }]
++      minimize(true)
++      h.ctx.emit('message-created', session('current', 'while-minimized'))
++      assert.equal(h.ctx.ui.state.toasts.length, 1)
++      assert.equal(h.chat.state.conversations[0].unread, 1)
++      h.ctx.ui.dismissMessages(); minimize(false)
++      h.ctx.emit('message-created', session('current', 'while-visible'))
++      assert.equal(h.ctx.ui.state.toasts.length, 0)
++    } finally { minimize(false); h.dispose() }
++  })
++  await test('unresolved conversation metadata retries after transient failures and still respects mute', async () => {
++    for (const muted of [false, true]) {
++      let calls = 0
++      const h = harness({
++        conversations: async () => { throw new Error('list offline') },
++        groupInfo: async id => { if (++calls === 1) throw new Error('temporary failure'); return { id, name: '目标会话', noDisturb: muted } },
++      }, new MemoryStorage(), { notificationRetryMs: 5 })
++      try {
++        h.chat.state.conversations = [{ ...channel('b'), noDisturb: undefined }]
++        h.ctx.emit('message-created', session('b', 'retry-message'))
++        await new Promise(resolve => setTimeout(resolve, 40))
++        assert.ok(calls >= 2)
++        assert.equal(h.ctx.ui.state.toasts.length, muted ? 0 : 1)
++        if (!muted) assert.match(h.ctx.ui.state.toasts[0].text, /retry-message/)
++      } finally { h.dispose() }
++    }
++  })
++  await test('a slow older metadata lookup cannot replace the newer notification', async () => {
++    const slow = deferred(); let calls = 0
++    const h = harness({ conversations: async () => [], groupInfo: async () => ++calls === 1 ? slow.promise : { noDisturb: false } })
++    try {
++      h.chat.state.conversations = [{ ...channel('b'), noDisturb: undefined }]
++      h.ctx.emit('message-created', session('b', 'older'))
++      await turn()
++      h.ctx.emit('message-created', session('b', 'newer'))
++      await new Promise(resolve => setTimeout(resolve, 10))
++      assert.equal(h.ctx.ui.state.toasts.length, 1)
++      assert.match(h.ctx.ui.state.toasts[0].text, /newer/)
++      slow.resolve({ noDisturb: false }); await turn()
++      assert.equal(h.ctx.ui.state.toasts.length, 1)
++      assert.match(h.ctx.ui.state.toasts[0].text, /newer/)
++    } finally { h.dispose() }
++  })
++  await test('muting, opening, or logging out invalidates pending notification metadata', async () => {
++    for (const action of ['mute', 'open', 'logout']) {
++      const slow = deferred()
++      const h = harness({ conversations: async () => [], groupInfo: () => slow.promise })
++      try {
++        h.chat.state.conversations = [{ ...channel('b'), noDisturb: undefined }]
++        h.ctx.emit('message-created', session('b', 'pending'))
++        await turn()
++        if (action === 'mute') h.chat.toggleMute('b')
++        else if (action === 'open') { await h.chat.open(channel('b')); await h.chat.open(channel('other')) }
++        else h.ctx.emit('auth/logout')
++        slow.resolve({ noDisturb: false }); await turn(); await turn()
++        assert.equal(h.ctx.ui.state.toasts.length, 0, action)
++      } finally { h.dispose() }
++    }
++  })
+   await test('clicking a Toast navigates to the correct conversation and exact older message', async () => {
+     const h = harness({ messages: async () => [message('latest')], messagesAround: async (_id, _type, mid) => [message(mid)] })
+     await h.chat.open(channel('a')); h.ctx.console.state.currentPage = '/settings'
+@@ -928,6 +1025,47 @@
+       assert.equal(h.ctx.ui.state.toasts.length, 0)
+     } finally { h.dispose(); await host.flush(); host.restore() }
+   })
++  await test('a stuck Windows notification falls back once and dismisses a late native completion', async () => {
++    const pending = deferred(), host = nativeHost({ show: () => pending.promise })
++    const h = harness({}, new MemoryStorage(), {}, { nativeTimeoutMs: 15 })
++    try {
++      await host.flush(); h.ctx.ui.testNotification(); await host.flush()
++      assert.equal(h.ctx.ui.state.toasts.length, 0)
++      await new Promise(resolve => setTimeout(resolve, 40))
++      assert.equal(h.ctx.ui.state.toasts.length, 1)
++      assert.match(h.ctx.ui.state.notificationError, /超时/)
++      pending.resolve(); await host.flush()
++      assert.equal(host.visible.size, 0)
++      assert.equal(h.ctx.ui.state.toasts.length, 1)
++    } finally { h.dispose(); await host.flush(); host.restore() }
++  })
++  await test('a Windows fallback waits for a minimized window to return before expiring', async () => {
++    const pending = deferred(), host = nativeHost({ show: () => pending.promise })
++    const h = harness({}, new MemoryStorage(), {}, { nativeTimeoutMs: 15 })
++    const minimize = value => { const e = new Event('yh-window-minimized'); Object.defineProperty(e, 'detail', { value }); window.dispatchEvent(e) }
++    try {
++      await host.flush(); minimize(true)
++      h.ctx.ui.toast('最小化期间的消息', 'message', 20, { key: 'room' })
++      await new Promise(resolve => setTimeout(resolve, 80))
++      assert.equal(h.ctx.ui.state.toasts.length, 1)
++      pending.resolve(); await host.flush()
++      assert.equal(host.visible.size, 0)
++      minimize(false)
++      await new Promise(resolve => setTimeout(resolve, 40))
++      assert.equal(h.ctx.ui.state.toasts.length, 0)
++    } finally { minimize(false); h.dispose(); await host.flush(); host.restore() }
++  })
++  await test('in-app messages received while locked wait until unlock before timing out', async () => {
++    const h = harness(); h.ctx.lock = { isLocked: true }
++    try {
++      h.ctx.ui.toast('锁屏期间的消息', 'message', 15, { key: 'room' })
++      await new Promise(resolve => setTimeout(resolve, 35))
++      assert.equal(h.ctx.ui.state.toasts.length, 1)
++      h.ctx.lock.isLocked = false; h.ctx.emit('app/unlock')
++      await new Promise(resolve => setTimeout(resolve, 30))
++      assert.equal(h.ctx.ui.state.toasts.length, 0)
++    } finally { h.dispose() }
++  })
+   await test('logout and mode changes cancel in-flight native notifications when the OS call completes', async () => {
+     for (const cancel of ['logout', 'mode', 'dispose']) {
+       const pending = deferred(), host = nativeHost({ show: () => pending.promise }), h = harness()
+@@ -987,6 +1125,22 @@
+       assert.equal(host.visible.size, 0)
+     } finally { h.dispose(); await host.flush(); host.restore() }
+   })
++  await test('a minimized active conversation sends one Windows notification that opens the correct message', async () => {
++    const host = nativeHost(), h = harness()
++    const minimize = value => { const e = new Event('yh-window-minimized'); Object.defineProperty(e, 'detail', { value }); window.dispatchEvent(e) }
++    try {
++      await host.flush(); await h.chat.open(channel('a'))
++      h.chat.state.conversations = [{ ...channel('a'), noDisturb: false }]
++      minimize(true)
++      h.ctx.emit('message-created', session('a', 'win-minimized'))
++      h.ctx.emit('message-created', session('a', 'win-minimized'))
++      await host.flush()
++      assert.equal(host.shown().length, 1)
++      host.emit('message-notification-activated', host.shown()[0].id); await host.flush()
++      assert.equal(h.chat.state.current.id, 'a')
++      assert.equal(h.chat.state.locateId, 'win-minimized')
++    } finally { minimize(false); h.dispose(); await host.flush(); host.restore() }
++  })
+   await test('the displayed conversation stays quiet even when WebView reports lost focus', async () => {
+     const host = nativeHost(), h = harness()
+     document.hasFocus = () => false
+@@ -1021,6 +1175,46 @@
+       await h.ctx.ui.activate(h.ctx.ui.state.toasts[0].id)
+       assert.equal(h.chat.state.current.id, 'b')
+       assert.equal(h.chat.state.locateId, 'new-from-poll')
++    } finally { h.dispose() }
++  })
++  await test('polling retries a failed latest-message request even when the unread count no longer changes', async () => {
++    let round = 0, messages = 0
++    const h = harness({ conversations: async () => [{ ...channel('b'), noDisturb: false, ts: 100, unread: round++ ? 1 : 0 }],
++      messages: async () => { if (++messages === 1) throw new Error('temporary'); return [message('retried-latest')] },
++    }, new MemoryStorage(), { notificationRetryMs: 5 })
++    try {
++      await h.chat.loadConversations(true)
++      await h.chat.loadConversations(true)
++      await new Promise(resolve => setTimeout(resolve, 40))
++      assert.equal(messages, 2)
++      assert.equal(h.ctx.ui.state.toasts.length, 1)
++      assert.match(h.ctx.ui.state.toasts[0].text, /retried-latest/)
++    } finally { h.dispose() }
++  })
++  await test('background polling detects unread changes while the WebSocket is offline', async () => {
++    let round = 0
++    const h = harness({ conversations: async () => [{ ...channel('b'), noDisturb: false, ts: 50, unread: round++ ? 1 : 0 }],
++      messages: async () => [message('background-polled')],
++    }, new MemoryStorage(), { pollMs: 20, notificationRetryMs: 5 })
++    try {
++      document.hidden = true
++      h.ctx.auth.state.status = 'ready'
++      await new Promise(resolve => setTimeout(resolve, 85))
++      assert.ok(round >= 2)
++      assert.equal(h.ctx.ui.state.toasts.length, 1)
++      assert.match(h.ctx.ui.state.toasts[0].text, /background-polled/)
++    } finally { document.hidden = false; h.dispose() }
++  })
++  await test('opening a conversation invalidates an in-flight notification poll for already-read messages', async () => {
++    const pending = deferred(); let round = 0
++    const h = harness({ conversations: async () => [{ ...channel('b'), noDisturb: false, ts: 100, unread: round++ ? 1 : 0 }],
++      messages: async (_id, _type, count) => count === 1 ? pending.promise : [message('already-read')],
++    })
++    try {
++      await h.chat.loadConversations(true); await h.chat.loadConversations(true)
++      await h.chat.open(channel('b')); await h.chat.open(channel('other'))
++      pending.resolve([message('already-read')]); await turn()
++      assert.equal(h.ctx.ui.state.toasts.length, 0)
+     } finally { h.dispose() }
+   })
+   await test('a late conversation request cannot repopulate state after logout', async () => {
+diff --git a/scripts/test-ui-bot-buttons.mjs b/scripts/test-ui-bot-buttons.mjs
+new file mode 100644
+--- /dev/null
++++ b/scripts/test-ui-bot-buttons.mjs
+@@ -0,0 +1,50 @@
++// Browser regression against the actual message renderer, with offline bot data.
++import assert from 'node:assert/strict'
++import { createServer } from 'vite'
++import vue from '@vitejs/plugin-vue'
++const { chromium } = await import(process.env.PLAYWRIGHT_MODULE || 'playwright')
++const server = await createServer({ root: process.cwd(), configFile: false, plugins: [vue()], server: { host: '127.0.0.1', port: 0 }, logLevel: 'error' })
++await server.listen()
++const browser = await chromium.launch({ headless: true, executablePath: process.env.CHROMIUM_EXECUTABLE || undefined, args: ['--no-sandbox', '--disable-dev-shm-usage', '--disable-gpu'] })
++const page = await browser.newPage({ viewport: { width: 1200, height: 800 } })
++const errors = []
++page.on('pageerror', error => errors.push(error.message))
++try {
++  await page.goto(`http://127.0.0.1:${server.httpServer.address().port}/scripts/ui-fixture/index.html`)
++  await page.waitForFunction(() => !!window.__qa)
++  await page.evaluate(() => {
++    const rows = [[{ text: '复制按钮', actionType: 2, value: '复制的内容' },
++      { text: '打开链接', actionType: 1, url: 'https://example.com/test' }],
++      [{ text: '签到', actionType: 3, value: 'checkin' }, { text: '打开群', actionType: 1, url: 'yunhu://chat-add?id=12345&type=group' }, { text: '旧格式按钮' }]]
++    window.__qa.buttonCalls = []
++    window.__qa.ctx.api.buttonReport = async data => { window.__qa.buttonCalls.push(data) }
++    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: async text => { window.__qa.copied = text } } })
++    window.open = url => { window.__qa.opened = url; return null }
++    window.__qa.messages.push({ id: 'bot-buttons', type: 1, ts: Date.now() + 20, senderId: 'bot', sender: '机器人',
++      content: { text: '机器人消息', buttons: JSON.stringify(rows) } })
++  })
++  await page.locator('.convs .cname').filter({ hasText: '云湖群' }).click()
++  const message = page.locator('[data-mid="bot-buttons"]')
++  await message.waitFor()
++  assert.equal(await message.locator('.msg-btn-row').count(), 2)
++  assert.deepEqual(await message.locator('.msg-btn').allTextContents(), ['复制按钮', '打开链接', '签到', '打开群', '旧格式按钮'])
++  assert.equal((await message.textContent()).includes('[object Object]'), false)
++  await message.getByRole('button', { name: '复制按钮' }).click()
++  assert.equal(await page.evaluate(() => window.__qa.copied), '复制的内容')
++  await message.getByRole('button', { name: '打开链接' }).click()
++  assert.equal(await page.evaluate(() => window.__qa.opened), 'https://example.com/test')
++  await message.getByRole('button', { name: '签到' }).click()
++  assert.deepEqual(await page.evaluate(() => window.__qa.buttonCalls), [{ chatId: 'normal', chatType: 2, msgId: 'bot-buttons', userId: 'me', value: 'checkin' }])
++  await message.getByRole('button', { name: '旧格式按钮' }).click()
++  assert.equal(await page.evaluate(() => window.__qa.buttonCalls.at(-1).value), '旧格式按钮')
++  await message.getByRole('button', { name: '打开群' }).click()
++  await page.locator('.post-mask').getByText(/群号 12345/).waitFor()
++  await page.locator('.post-mask').getByRole('button', { name: '关闭', exact: true }).click()
++  await page.evaluate(() => { window.__qa.ctx.api.buttonReport = async () => { throw new Error('回调失败') } })
++  await message.getByRole('button', { name: '签到' }).click()
++  await page.waitForFunction(() => window.__qa.ctx.ui.state.toasts.some(t => t.text.includes('回调失败')))
++  await page.setViewportSize({ width: 420, height: 800 })
++  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true)
++  assert.deepEqual(errors, [])
++  console.log('PASS: two button rows render correctly; link, clipboard, callback and failed callback use their proper paths')
++} finally { await browser.close(); await server.close() }
+diff --git a/scripts/test-ui-notifications.mjs b/scripts/test-ui-notifications.mjs
+new file mode 100644
+--- /dev/null
++++ b/scripts/test-ui-notifications.mjs
+@@ -0,0 +1,48 @@
++// Browser regression against the real in-app Toast component and chat service.
++import assert from 'node:assert/strict'
++import { createServer } from 'vite'
++import vue from '@vitejs/plugin-vue'
++const { chromium } = await import(process.env.PLAYWRIGHT_MODULE || 'playwright')
++const server = await createServer({ root: process.cwd(), configFile: false, plugins: [vue()], server: { host: '127.0.0.1', port: 0 }, logLevel: 'error' })
++await server.listen()
++const browser = await chromium.launch({ headless: true, executablePath: process.env.CHROMIUM_EXECUTABLE || undefined, args: ['--no-sandbox', '--disable-dev-shm-usage', '--disable-gpu'] })
++const page = await browser.newPage({ viewport: { width: 1200, height: 800 } })
++const errors = []
++page.on('pageerror', error => errors.push(error.message))
++try {
++  await page.goto(`http://127.0.0.1:${server.httpServer.address().port}/scripts/ui-fixture/notifications.html`)
++  await page.waitForFunction(() => !!window.__qa)
++  await page.locator('.convs .cname').filter({ hasText: '云湖群' }).click()
++  await page.waitForFunction(() => window.__qa.ctx.chat.state.current?.id === 'normal')
++  await page.evaluate(() => {
++    const { ctx } = window.__qa
++    ctx.chat.state.conversations.find(c => c.id === 'normal').noDisturb = false
++    ctx.ui.setNotificationMode('in-app')
++    window.__qa.push = id => ctx.emit('message-created', { id, channel: { id: 'normal', type: 2, name: '云湖群' },
++      user: { id: 'sender', name: '发件人' }, raw: { id, type: 1, senderId: 'sender', content: { text: id } }, timestamp: Date.now(), elements: [] })
++    window.__qa.push('visible-message')
++  })
++  assert.equal(await page.locator('.toast.message').count(), 0)
++  await page.evaluate(() => {
++    window.dispatchEvent(new CustomEvent('yh-window-minimized', { detail: true }))
++    window.__qa.push('minimized-message')
++    window.__qa.push('minimized-message')
++  })
++  const toast = page.locator('.toast.message')
++  await toast.waitFor()
++  assert.equal(await toast.count(), 1)
++  assert.match(await toast.textContent(), /minimized-message/)
++  await toast.locator('.toast-action').click()
++  await page.waitForFunction(() => window.__qa.ctx.chat.state.locateId === 'minimized-message')
++  await toast.waitFor({ state: 'detached' })
++  await page.evaluate(() => {
++    window.dispatchEvent(new CustomEvent('yh-window-minimized', { detail: false }))
++    window.__qa.ctx.chat.toggleMute('normal')
++    window.dispatchEvent(new CustomEvent('yh-window-minimized', { detail: true }))
++    window.__qa.push('muted-message')
++  })
++  await page.waitForTimeout(30)
++  assert.equal(await page.locator('.toast.message').count(), 0)
++  assert.deepEqual(errors, [])
++  console.log('PASS: real Toast UI shows one minimized-conversation notification, navigates to its message, and suppresses muted chats')
++} finally { await browser.close(); await server.close() }
+diff --git a/scripts/ui-fixture/notifications.html b/scripts/ui-fixture/notifications.html
+new file mode 100644
+--- /dev/null
++++ b/scripts/ui-fixture/notifications.html
+@@ -0,0 +1 @@
++<!doctype html><html lang="zh-CN" data-theme="dark" data-platform="web"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>通知回归</title></head><body><div id="app"></div><div id="notification-app"></div><script type="module" src="./notifications.ts"></script></body></html>
+diff --git a/scripts/ui-fixture/notifications.ts b/scripts/ui-fixture/notifications.ts
+new file mode 100644
+--- /dev/null
++++ b/scripts/ui-fixture/notifications.ts
+@@ -0,0 +1,6 @@
++import './fixture'
++import { createApp } from 'vue'
++import Toasts from '../../src/components/Toasts.vue'
++const app = createApp(Toasts).provide('ctx', (window as any).__qa.ctx)
++app.mount('#notification-app')
++window.addEventListener('beforeunload', () => app.unmount())
+diff --git a/RELEASE_NOTES_1.0.12.md b/RELEASE_NOTES_1.0.12.md
+new file mode 100644
+--- /dev/null
++++ b/RELEASE_NOTES_1.0.12.md
+@@ -0,0 +1,28 @@
++# YH LaoDa 1.0.12
++
++基于已交付的 1.0.11 完整源码修改，保留表情包管理、会话滚动和此前的功能。
++
++## 消息通知
++
++- 修正窗口最小化时仍把所选聊天误认为正在显示，导致当前聊天的新消息不通知的问题。可见的当前聊天仍不弹自己的消息通知。
++- 最小化或隐藏后保留低频会话列表对账；WebSocket 断开时也会继续检查未读消息，而不需要等窗口恢复前台。
++- 会话资料或最新消息临时请求失败时，有限次数重试；免打扰状态未确认前不发送通知。
++- 未读数量变化但时间戳相同、新时间戳出现但未读数量未增长的情况也可触发对账；保留消息 ID 去重，避免 WS 与轮询产生重复通知。
++- 同一会话旧资料请求迟到时不能覆盖更新的通知；打开会话、开启免打扰或退出账号会取消已失效的待通知任务。
++- Windows 原生通知桥接长时间无响应时转为软件内通知；窗口隐藏、最小化或锁屏时收到的软件内通知会等恢复可见后再开始计时。迟到的原生结果会被撤销。Windows 系统通知权限及专注模式仍由系统控制。
++
++## 机器人消息按钮
++
++- 正确解析二维按钮数组并按行渲染，避免显示 `[object Object]`。
++- 根据按钮类型分别处理网址/云湖群链接、复制和回调，错误时显示提示。
++- 依据 `yhchatAPI/src/full.proto` 的 `ButtonReportRequest` 修正消息 ID、会话类型、会话 ID、当前用户 ID 和按钮值的 Protobuf 字段；回调失败不再静默忽略。
++
++## 验证
++
++- `npm run typecheck`、`npm run build` 及服务端 sidecar 构建通过。
++- `npm run test:chat`：92 项通过，覆盖最小化、后台轮询、失败重试、去重、免打扰、通知超时回退、按钮解析和回调字段。
++- `npm run test:features`、`npm run test:settings`、`npm run test:recall` 通过。
++- Chromium 离线界面测试覆盖实际 Toast 展示和跳转、免打扰、机器人按钮行布局、复制、网址、云湖群链接、回调及失败提示；原有 UI、表情包和聊天滚动回归也通过。
++- Windows 主程序与安装包在 Linux 主机交叉编译并检查完整性；未在 Windows 实机或真实云湖账号上验证系统通知和机器人回调。
++
++源码包不含 `node_modules`、构建缓存、Windows 构建目标目录或 Node 运行时二进制；Windows 打包需按项目工作流准备 Node 与 WebView2 引导程序。

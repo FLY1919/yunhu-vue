@@ -1,0 +1,43 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "YunhuLaoda",
+  "version": "1.0.42",
+  "identifier": "com.richkobe.yunhulaoda",
+  "build": {
+    "beforeBuildCommand": "",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": [
+      "nsis"
+    ],
+    "resources": {
+      "resources/dist": "dist/",
+      "resources/node.exe": "node.exe",
+      "resources/server-bundle.mjs": "server-bundle.mjs"
+    },
+    "icon": [
+      "icons/icon.ico",
+      "icons/icon.png"
+    ],
+    "windows": {
+      "nsis": {
+        "installMode": "both",
+        "displayLanguageSelector": false,
+        "languages": [
+          "SimpChinese"
+        ],
+        "installerIcon": "icons/icon.ico",
+        "template": "nsis/installer.nsi"
+      }
+    }
+  }
+}

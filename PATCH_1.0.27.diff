@@ -1,0 +1,1786 @@
+diff --git a/.gitignore b/.gitignore
+index a1540fd..0a7567e 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -10,6 +10,7 @@ certs/
+ docs-site/.vitepress/dist
+ docs-site/.vitepress/cache
+ core.*
++!src/core/editor/core.ts
+ .claude/
+ 
+ # Local desktop build outputs
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index bb66cfb..75545f7 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -1,3 +1,11 @@
++## 1.0.27 — 2026-11-05
++
++- 续接 1.0.26，重构紧凑聊天输入区和实时写作/源文/双栏 Markdown 编辑器。
++- 共用格式工具、公式/代码/表格编辑，优化长文档输入与按需加载。
++- 聊天草稿同步与冲突处理，文章自动/手动云端保存及本机恢复副本保护。
++- 保留附件可靠发送、引用、输入法、独立窗口和退出端口清理。
++- 详细范围、验证结果和限制见 RELEASE_NOTES_1.0.27.md。
++
+ ## 1.0.26
+ 
+ EXIF 无效字段显示“无”，空/损坏 EXIF 可清除并显示 GPS 中文方向；图片原比例拖动；紧凑个人资料卡；文章编辑器仅保留写作、固定发布板块、扩大正文空间并恢复过渡动画。详见 RELEASE_NOTES_1.0.26.md。
+diff --git a/package-lock.json b/package-lock.json
+index 782f269..0aab409 100644
+--- a/package-lock.json
++++ b/package-lock.json
+@@ -1,12 +1,12 @@
+ {
+   "name": "yunhu-vue",
+-  "version": "1.0.26",
++  "version": "1.0.27",
+   "lockfileVersion": 3,
+   "requires": true,
+   "packages": {
+     "": {
+       "name": "yunhu-vue",
+-      "version": "1.0.26",
++      "version": "1.0.27",
+       "dependencies": {
+         "@capacitor/core": "^8.5.2",
+         "@jodit/image-editor": "0.2.5",
+@@ -28,9 +28,11 @@
+         "exifr": "^7.1.3",
+         "gifenc": "1.0.3",
+         "gifuct-js": "2.1.2",
++        "katex": "0.16.22",
+         "marked": "^18.0.14",
+         "qrcode": "^1.5.4",
+         "schemastery": "^3.18.0",
++        "shiki": "2.5.0",
+         "vue": "^3.5.13"
+       },
+       "devDependencies": {
+@@ -2059,7 +2061,6 @@
+       "version": "2.5.0",
+       "resolved": "https://registry.npmmirror.com/@shikijs/core/-/core-2.5.0.tgz",
+       "integrity": "sha512-uu/8RExTKtavlpH7XqnVYBrfBkUc20ngXiX9NSrBhOVZYv/7XQRKUyhtkeflY5QsxC0GbJThCerruZfsUaSldg==",
+-      "dev": true,
+       "license": "MIT",
+       "dependencies": {
+         "@shikijs/engine-javascript": "2.5.0",
+@@ -2074,7 +2075,6 @@
+       "version": "2.5.0",
+       "resolved": "https://registry.npmmirror.com/@shikijs/engine-javascript/-/engine-javascript-2.5.0.tgz",
+       "integrity": "sha512-VjnOpnQf8WuCEZtNUdjjwGUbtAVKuZkVQ/5cHy/tojVVRIRtlWMYVjyWhxOmIq05AlSOv72z7hRNRGVBgQOl0w==",
+-      "dev": true,
+       "license": "MIT",
+       "dependencies": {
+         "@shikijs/types": "2.5.0",
+@@ -2086,7 +2086,6 @@
+       "version": "2.5.0",
+       "resolved": "https://registry.npmmirror.com/@shikijs/engine-oniguruma/-/engine-oniguruma-2.5.0.tgz",
+       "integrity": "sha512-pGd1wRATzbo/uatrCIILlAdFVKdxImWJGQ5rFiB5VZi2ve5xj3Ax9jny8QvkaV93btQEwR/rSz5ERFpC5mKNIw==",
+-      "dev": true,
+       "license": "MIT",
+       "dependencies": {
+         "@shikijs/types": "2.5.0",
+@@ -2097,7 +2096,6 @@
+       "version": "2.5.0",
+       "resolved": "https://registry.npmmirror.com/@shikijs/langs/-/langs-2.5.0.tgz",
+       "integrity": "sha512-Qfrrt5OsNH5R+5tJ/3uYBBZv3SuGmnRPejV9IlIbFH3HTGLDlkqgHymAlzklVmKBjAaVmkPkyikAV/sQ1wSL+w==",
+-      "dev": true,
+       "license": "MIT",
+       "dependencies": {
+         "@shikijs/types": "2.5.0"
+@@ -2107,7 +2105,6 @@
+       "version": "2.5.0",
+       "resolved": "https://registry.npmmirror.com/@shikijs/themes/-/themes-2.5.0.tgz",
+       "integrity": "sha512-wGrk+R8tJnO0VMzmUExHR+QdSaPUl/NKs+a4cQQRWyoc3YFbUzuLEi/KWK1hj+8BfHRKm2jNhhJck1dfstJpiw==",
+-      "dev": true,
+       "license": "MIT",
+       "dependencies": {
+         "@shikijs/types": "2.5.0"
+@@ -2128,7 +2125,6 @@
+       "version": "2.5.0",
+       "resolved": "https://registry.npmmirror.com/@shikijs/types/-/types-2.5.0.tgz",
+       "integrity": "sha512-ygl5yhxki9ZLNuNpPitBWvcy9fsSKKaRuO4BAlMyagszQidxcpLAr0qiW/q43DtSIDxO6hEbtYLiFZNXO/hdGw==",
+-      "dev": true,
+       "license": "MIT",
+       "dependencies": {
+         "@shikijs/vscode-textmate": "^10.0.2",
+@@ -2139,7 +2135,6 @@
+       "version": "10.0.2",
+       "resolved": "https://registry.npmmirror.com/@shikijs/vscode-textmate/-/vscode-textmate-10.0.2.tgz",
+       "integrity": "sha512-83yeghZ2xxin3Nj8z1NMd/NCuca+gsYXswywDy5bHvwlWL8tpTQmzGeUuHd9FC3E/SBEMvzJRwWEOz5gGes9Qg==",
+-      "dev": true,
+       "license": "MIT"
+     },
+     "node_modules/@sindresorhus/is": {
+@@ -2959,7 +2954,6 @@
+       "version": "3.0.5",
+       "resolved": "https://registry.npmmirror.com/@types/hast/-/hast-3.0.5.tgz",
+       "integrity": "sha512-rp/ezSWaD1m44dPKICGhiskI13nVr7qTloFwDa/IYkhhf5nzwP+zIQcIJh3WIFSBOy/H1PzB40jPjMDksN4F+g==",
+-      "dev": true,
+       "license": "MIT",
+       "dependencies": {
+         "@types/unist": "*"
+@@ -3011,7 +3005,6 @@
+       "version": "4.0.4",
+       "resolved": "https://registry.npmmirror.com/@types/mdast/-/mdast-4.0.4.tgz",
+       "integrity": "sha512-kGaNbPh1k7AFzgpud/gMdvIm5xuECykRR+JnWKQno9TAXVa6WIVCGTPvYGekIDL4uwCZQSYbUxNBSb1aUo79oA==",
+-      "dev": true,
+       "license": "MIT",
+       "dependencies": {
+         "@types/unist": "*"
+@@ -3077,7 +3070,6 @@
+       "version": "3.0.3",
+       "resolved": "https://registry.npmmirror.com/@types/unist/-/unist-3.0.3.tgz",
+       "integrity": "sha512-ko/gIFJRv177XgZsZcBwnqJN5x/Gien8qNOn0D5bQU/zAzVf9Zt3BlcUiLqhV9y4ARk0GbT3tnUiPNgnTXzc/Q==",
+-      "dev": true,
+       "license": "MIT"
+     },
+     "node_modules/@types/web-bluetooth": {
+@@ -3091,7 +3083,6 @@
+       "version": "1.4.0",
+       "resolved": "https://registry.npmmirror.com/@ungap/structured-clone/-/structured-clone-1.4.0.tgz",
+       "integrity": "sha512-1mEZtMKPM09vDmQt5y7YvmN2+DFTP7Tg0EWXdic8/C6VRnpb33e4ghisCIE3WZjsE2N8mf+QV1Zqh7ZFYLWInQ==",
+-      "dev": true,
+       "license": "ISC"
+     },
+     "node_modules/@vitejs/plugin-vue": {
+@@ -4129,7 +4120,6 @@
+       "version": "2.0.1",
+       "resolved": "https://registry.npmmirror.com/ccount/-/ccount-2.0.1.tgz",
+       "integrity": "sha512-eyrF0jiFpY+3drT6383f1qhkbGsLSifNAjA61IUjZjmLCWjItY6LB9ft9YhoDgwfmclB2zhu51Lc7+95b8NRAg==",
+-      "dev": true,
+       "license": "MIT",
+       "funding": {
+         "type": "github",
+@@ -4170,7 +4160,6 @@
+       "version": "2.1.0",
+       "resolved": "https://registry.npmmirror.com/character-entities-html4/-/character-entities-html4-2.1.0.tgz",
+       "integrity": "sha512-1v7fgQRj6hnSwFpq1Eu0ynr/CDEw0rXo2B61qXrLNdHZmPKgb7fqS1a2JwF0rISo9q77jDI8VMEHoApn8qDoZA==",
+-      "dev": true,
+       "license": "MIT",
+       "funding": {
+         "type": "github",
+@@ -4181,7 +4170,6 @@
+       "version": "3.0.0",
+       "resolved": "https://registry.npmmirror.com/character-entities-legacy/-/character-entities-legacy-3.0.0.tgz",
+       "integrity": "sha512-RpPp0asT/6ufRm//AJVwpViZbGM/MkjQFxJccQRHmISF/22NBtsHqAWmL+/pmkPWoIUJdWyeVleTl1wydHATVQ==",
+-      "dev": true,
+       "license": "MIT",
+       "funding": {
+         "type": "github",
+@@ -4284,7 +4272,6 @@
+       "version": "2.0.3",
+       "resolved": "https://registry.npmmirror.com/comma-separated-tokens/-/comma-separated-tokens-2.0.3.tgz",
+       "integrity": "sha512-Fu4hJdvzeylCfQPp9SGWidpzrMs7tTrlu6Vb8XGaRGck8QSNZJJp538Wrb60Lax4fPwR64ViY468OIUTbRlGZg==",
+-      "dev": true,
+       "license": "MIT",
+       "funding": {
+         "type": "github",
+@@ -4534,7 +4521,6 @@
+       "version": "2.0.3",
+       "resolved": "https://registry.npmmirror.com/dequal/-/dequal-2.0.3.tgz",
+       "integrity": "sha512-0je+qPKHEMohvfRTCEo3CrPG6cAzAYgmzKyxRiYSSDkS6eGJdyVJm7WaYA5ECaAD9wLB2T4EEeymA5aFVcYXCA==",
+-      "dev": true,
+       "license": "MIT",
+       "engines": {
+         "node": ">=6"
+@@ -4552,7 +4538,6 @@
+       "version": "1.1.0",
+       "resolved": "https://registry.npmmirror.com/devlop/-/devlop-1.1.0.tgz",
+       "integrity": "sha512-RWmIqhcFf1lRYBvNmr7qTNuyCt/7/ns2jbpp1+PalgE/rDQcBT0fioSMUpJ93irlUhC5hrg4cYqe6U+0ImW0rA==",
+-      "dev": true,
+       "license": "MIT",
+       "dependencies": {
+         "dequal": "^2.0.0"
+@@ -4995,7 +4980,6 @@
+       "version": "1.0.0",
+       "resolved": "https://registry.npmmirror.com/emoji-regex-xs/-/emoji-regex-xs-1.0.0.tgz",
+       "integrity": "sha512-LRlerrMYoIDrT6jgpeZ2YYl/L8EulRTt5hQcYjy5AInh7HWXKimpqx68aknBFpGL2+/IcogTcaydJEgaTmOpDg==",
+-      "dev": true,
+       "license": "MIT"
+     },
+     "node_modules/end-of-stream": {
+@@ -5677,7 +5661,6 @@
+       "version": "9.0.5",
+       "resolved": "https://registry.npmmirror.com/hast-util-to-html/-/hast-util-to-html-9.0.5.tgz",
+       "integrity": "sha512-OguPdidb+fbHQSU4Q4ZiLKnzWo8Wwsf5bZfbvu7//a9oTYoqD/fWpe96NuHkoS9h0ccGOTe0C4NGXdtS0iObOw==",
+-      "dev": true,
+       "license": "MIT",
+       "dependencies": {
+         "@types/hast": "^3.0.0",
+@@ -5701,7 +5684,6 @@
+       "version": "3.0.0",
+       "resolved": "https://registry.npmmirror.com/hast-util-whitespace/-/hast-util-whitespace-3.0.0.tgz",
+       "integrity": "sha512-88JUN06ipLwsnv+dVn+OIYOvAuvBMy/Qoi6O7mQHxdPXpjy+Cd6xRkWwux7DKO+4sYILtLBRIKgsdpS2gQc7qw==",
+-      "dev": true,
+       "license": "MIT",
+       "dependencies": {
+         "@types/hast": "^3.0.0"
+@@ -5735,7 +5717,6 @@
+       "version": "3.0.0",
+       "resolved": "https://registry.npmmirror.com/html-void-elements/-/html-void-elements-3.0.0.tgz",
+       "integrity": "sha512-bEqo66MRXsUGxWHV5IP0PUiAWwoEjba4VCzg0LjFJBpchPaTfyfCKTG6bc5F8ucKec3q5y6qOdGyYTSBEvhCrg==",
+-      "dev": true,
+       "license": "MIT",
+       "funding": {
+         "type": "github",
+@@ -6010,6 +5991,31 @@
+         "graceful-fs": "^4.1.6"
+       }
+     },
++    "node_modules/katex": {
++      "version": "0.16.22",
++      "resolved": "https://registry.npmjs.org/katex/-/katex-0.16.22.tgz",
++      "integrity": "sha512-XCHRdUw4lf3SKBaJe4EvgqIuWwkPSo9XoeO8GjQW94Bp7TWv9hNhzZjZ+OH9yf1UmLygb7DIT5GSFQiyt16zYg==",
++      "funding": [
++        "https://opencollective.com/katex",
++        "https://github.com/sponsors/katex"
++      ],
++      "license": "MIT",
++      "dependencies": {
++        "commander": "^8.3.0"
++      },
++      "bin": {
++        "katex": "cli.js"
++      }
++    },
++    "node_modules/katex/node_modules/commander": {
++      "version": "8.3.0",
++      "resolved": "https://registry.npmjs.org/commander/-/commander-8.3.0.tgz",
++      "integrity": "sha512-OkTL9umf+He2DZkUq8f8J9of7yL6RJKI24dVITBmNfZBmri9zYZQrKkuXiKhyfPSu8tUhnVBB1iKXevvnlR4Ww==",
++      "license": "MIT",
++      "engines": {
++        "node": ">= 12"
++      }
++    },
+     "node_modules/keyv": {
+       "version": "4.5.4",
+       "resolved": "https://registry.npmmirror.com/keyv/-/keyv-4.5.4.tgz",
+@@ -6140,7 +6146,6 @@
+       "version": "13.2.1",
+       "resolved": "https://registry.npmmirror.com/mdast-util-to-hast/-/mdast-util-to-hast-13.2.1.tgz",
+       "integrity": "sha512-cctsq2wp5vTsLIcaymblUriiTcZd0CwWtCbLvrOzYCDZoWyMNV8sZ7krj09FSnsiJi3WVsHLM4k6Dq/yaPyCXA==",
+-      "dev": true,
+       "license": "MIT",
+       "dependencies": {
+         "@types/hast": "^3.0.0",
+@@ -6162,7 +6167,6 @@
+       "version": "2.1.1",
+       "resolved": "https://registry.npmmirror.com/micromark-util-character/-/micromark-util-character-2.1.1.tgz",
+       "integrity": "sha512-wv8tdUTJ3thSFFFJKtpYKOYiGP2+v96Hvk4Tu8KpCAsTMs6yi+nVmGh1syvSCsaxz45J6Jbw+9DD6g97+NV67Q==",
+-      "dev": true,
+       "funding": [
+         {
+           "type": "GitHub Sponsors",
+@@ -6183,7 +6187,6 @@
+       "version": "2.0.1",
+       "resolved": "https://registry.npmmirror.com/micromark-util-encode/-/micromark-util-encode-2.0.1.tgz",
+       "integrity": "sha512-c3cVx2y4KqUnwopcO9b/SCdo2O67LwJJ/UyqGfbigahfegL9myoEFoDYZgkT7f36T0bLrM9hZTAaAyH+PCAXjw==",
+-      "dev": true,
+       "funding": [
+         {
+           "type": "GitHub Sponsors",
+@@ -6200,7 +6203,6 @@
+       "version": "2.0.1",
+       "resolved": "https://registry.npmmirror.com/micromark-util-sanitize-uri/-/micromark-util-sanitize-uri-2.0.1.tgz",
+       "integrity": "sha512-9N9IomZ/YuGGZZmQec1MbgxtlgougxTodVwDzzEouPKo3qFWvymFHWcnDi2vzV1ff6kas9ucW+o3yzJK9YB1AQ==",
+-      "dev": true,
+       "funding": [
+         {
+           "type": "GitHub Sponsors",
+@@ -6222,7 +6224,6 @@
+       "version": "2.0.1",
+       "resolved": "https://registry.npmmirror.com/micromark-util-symbol/-/micromark-util-symbol-2.0.1.tgz",
+       "integrity": "sha512-vs5t8Apaud9N28kgCrRUdEed4UJ+wWNvicHLPxCa9ENlYuAY31M0ETy5y1vA33YoNPDFTghEbnh6efaE8h4x0Q==",
+-      "dev": true,
+       "funding": [
+         {
+           "type": "GitHub Sponsors",
+@@ -6239,7 +6240,6 @@
+       "version": "2.0.3",
+       "resolved": "https://registry.npmmirror.com/micromark-util-types/-/micromark-util-types-2.0.3.tgz",
+       "integrity": "sha512-oxB2Ik03hI0gv+VNn9tnh1t1YEe9MDPptViAEgfdf3YQHsn0pzGTgCdlSCJXcwhqm8phaEuM7zeEu3QQzVBrPg==",
+-      "dev": true,
+       "funding": [
+         {
+           "type": "GitHub Sponsors",
+@@ -6599,7 +6599,6 @@
+       "version": "3.1.1",
+       "resolved": "https://registry.npmmirror.com/oniguruma-to-es/-/oniguruma-to-es-3.1.1.tgz",
+       "integrity": "sha512-bUH8SDvPkH3ho3dvwJwfonjlQ4R80vjyvrU8YpxuROddv55vAEJrTuCuCVUhhsHbtlD9tGGbaNApGQckXhS8iQ==",
+-      "dev": true,
+       "license": "MIT",
+       "dependencies": {
+         "emoji-regex-xs": "^1.0.0",
+@@ -7059,7 +7058,6 @@
+       "version": "7.2.0",
+       "resolved": "https://registry.npmmirror.com/property-information/-/property-information-7.2.0.tgz",
+       "integrity": "sha512-IAtzIB6sUiWaJYrX9smp3V46pBGbBeLFRGdh25kg1334VcBlD8HzhPeNIWQH9zhGmo2itIe25EHt9dQP7G5hmg==",
+-      "dev": true,
+       "license": "MIT",
+       "funding": {
+         "type": "github",
+@@ -7381,7 +7379,6 @@
+       "version": "6.1.0",
+       "resolved": "https://registry.npmmirror.com/regex/-/regex-6.1.0.tgz",
+       "integrity": "sha512-6VwtthbV4o/7+OaAF9I5L5V3llLEsoPyq9P1JVXkedTP33c7MfCG0/5NOPcSJn0TzXcG9YUrR0gQSWioew3LDg==",
+-      "dev": true,
+       "license": "MIT",
+       "dependencies": {
+         "regex-utilities": "^2.3.0"
+@@ -7391,7 +7388,6 @@
+       "version": "6.0.2",
+       "resolved": "https://registry.npmmirror.com/regex-recursion/-/regex-recursion-6.0.2.tgz",
+       "integrity": "sha512-0YCaSCq2VRIebiaUviZNs0cBz1kg5kVS2UKUfNIx8YVs1cN3AV7NTctO5FOKBA+UT2BPJIWZauYHPqJODG50cg==",
+-      "dev": true,
+       "license": "MIT",
+       "dependencies": {
+         "regex-utilities": "^2.3.0"
+@@ -7401,7 +7397,6 @@
+       "version": "2.3.0",
+       "resolved": "https://registry.npmmirror.com/regex-utilities/-/regex-utilities-2.3.0.tgz",
+       "integrity": "sha512-8VhliFJAWRaUiVvREIiW2NXXTmHs4vMNnSzuJVhscgmGav3g9VDxLrQndI3dZZVVdp0ZO/5v0xmX516/7M9cng==",
+-      "dev": true,
+       "license": "MIT"
+     },
+     "node_modules/reggol": {
+@@ -7731,9 +7726,8 @@
+     },
+     "node_modules/shiki": {
+       "version": "2.5.0",
+-      "resolved": "https://registry.npmmirror.com/shiki/-/shiki-2.5.0.tgz",
++      "resolved": "https://registry.npmjs.org/shiki/-/shiki-2.5.0.tgz",
+       "integrity": "sha512-mI//trrsaiCIPsja5CNfsyNOqgAZUb6VpJA+340toL42UpzQlXpwRV9nch69X6gaUxrr9kaOOa6e3y3uAkGFxQ==",
+-      "dev": true,
+       "license": "MIT",
+       "dependencies": {
+         "@shikijs/core": "2.5.0",
+@@ -7850,7 +7844,6 @@
+       "version": "2.0.2",
+       "resolved": "https://registry.npmmirror.com/space-separated-tokens/-/space-separated-tokens-2.0.2.tgz",
+       "integrity": "sha512-PEGlAwrG8yXGXRjW32fGbg66JAlOAwbObuqVoJpv/mRgoWDQfgH1wDPvtzWyUSNAXBGSk8h755YDbbcEy3SH2Q==",
+-      "dev": true,
+       "license": "MIT",
+       "funding": {
+         "type": "github",
+@@ -7932,7 +7925,6 @@
+       "version": "4.0.4",
+       "resolved": "https://registry.npmmirror.com/stringify-entities/-/stringify-entities-4.0.4.tgz",
+       "integrity": "sha512-IwfBptatlO+QCJUo19AqvrPNqlVMpW9YEL2LIVY+Rpv2qsjCGxaDLNRgeGsQWJhfItebuJhsGSLjaBbNSQ+ieg==",
+-      "dev": true,
+       "license": "MIT",
+       "dependencies": {
+         "character-entities-html4": "^2.0.0",
+@@ -8216,7 +8208,6 @@
+       "version": "3.0.1",
+       "resolved": "https://registry.npmmirror.com/trim-lines/-/trim-lines-3.0.1.tgz",
+       "integrity": "sha512-kRj8B+YHZCc9kQYdWfJB2/oUl9rA99qbowYYBtr4ui4mZyAQ2JpvVBd/6U2YloATfqBhBTSMhTpgBHtU0Mf3Rg==",
+-      "dev": true,
+       "license": "MIT",
+       "funding": {
+         "type": "github",
+@@ -8308,7 +8299,6 @@
+       "version": "6.0.1",
+       "resolved": "https://registry.npmmirror.com/unist-util-is/-/unist-util-is-6.0.1.tgz",
+       "integrity": "sha512-LsiILbtBETkDz8I9p1dQ0uyRUWuaQzd/cuEeS1hoRSyW5E5XGmTzlwY1OrNzzakGowI9Dr/I8HVaw4hTtnxy8g==",
+-      "dev": true,
+       "license": "MIT",
+       "dependencies": {
+         "@types/unist": "^3.0.0"
+@@ -8322,7 +8312,6 @@
+       "version": "5.0.0",
+       "resolved": "https://registry.npmmirror.com/unist-util-position/-/unist-util-position-5.0.0.tgz",
+       "integrity": "sha512-fucsC7HjXvkB5R3kTCO7kUjRdrS0BJt3M/FPxmHMBOm8JQi2BsHAHFsy27E0EolP8rp0NzXsJ+jNPyDWvOJZPA==",
+-      "dev": true,
+       "license": "MIT",
+       "dependencies": {
+         "@types/unist": "^3.0.0"
+@@ -8336,7 +8325,6 @@
+       "version": "4.0.0",
+       "resolved": "https://registry.npmmirror.com/unist-util-stringify-position/-/unist-util-stringify-position-4.0.0.tgz",
+       "integrity": "sha512-0ASV06AAoKCDkS2+xw5RXJywruurpbC4JZSm7nr7MOt1ojAzvyyaO+UxZf18j8FCF6kmzCZKcAgN/yu2gm2XgQ==",
+-      "dev": true,
+       "license": "MIT",
+       "dependencies": {
+         "@types/unist": "^3.0.0"
+@@ -8350,7 +8338,6 @@
+       "version": "5.1.0",
+       "resolved": "https://registry.npmmirror.com/unist-util-visit/-/unist-util-visit-5.1.0.tgz",
+       "integrity": "sha512-m+vIdyeCOpdr/QeQCu2EzxX/ohgS8KbnPDgFni4dQsfSCtpz8UqDyY5GjRru8PDKuYn7Fq19j1CQ+nJSsGKOzg==",
+-      "dev": true,
+       "license": "MIT",
+       "dependencies": {
+         "@types/unist": "^3.0.0",
+@@ -8366,7 +8353,6 @@
+       "version": "6.0.2",
+       "resolved": "https://registry.npmmirror.com/unist-util-visit-parents/-/unist-util-visit-parents-6.0.2.tgz",
+       "integrity": "sha512-goh1s1TBrqSqukSc8wrjwWhL0hiJxgA8m4kFxGlQ+8FYQ3C/m11FcTs4YYem7V664AhHVvgoQLk890Ssdsr2IQ==",
+-      "dev": true,
+       "license": "MIT",
+       "dependencies": {
+         "@types/unist": "^3.0.0",
+@@ -8454,7 +8440,6 @@
+       "version": "6.0.3",
+       "resolved": "https://registry.npmmirror.com/vfile/-/vfile-6.0.3.tgz",
+       "integrity": "sha512-KzIbH/9tXat2u30jf+smMwFCsno4wHVdNmzFyL+T/L3UGqqk6JKfVqOFOZEpZSHADH1k40ab6NUIXZq422ov3Q==",
+-      "dev": true,
+       "license": "MIT",
+       "dependencies": {
+         "@types/unist": "^3.0.0",
+@@ -8469,7 +8454,6 @@
+       "version": "4.0.3",
+       "resolved": "https://registry.npmmirror.com/vfile-message/-/vfile-message-4.0.3.tgz",
+       "integrity": "sha512-QTHzsGd1EhbZs4AsQ20JX1rC3cOlt/IWJruk893DfLRr57lcnOeMaWG4K0JrRta4mIJZKth2Au3mM3u03/JWKw==",
+-      "dev": true,
+       "license": "MIT",
+       "dependencies": {
+         "@types/unist": "^3.0.0",
+@@ -9826,7 +9810,6 @@
+       "version": "2.0.4",
+       "resolved": "https://registry.npmmirror.com/zwitch/-/zwitch-2.0.4.tgz",
+       "integrity": "sha512-bXE4cR/kVZhKZX/RjPEflHaKVhUVl85noU3v6b8apfQEc1x4A+zBxjZ4lN8LqGd6WZ3dl98pY4o717VFmoPp+A==",
+-      "dev": true,
+       "license": "MIT",
+       "funding": {
+         "type": "github",
+diff --git a/package.json b/package.json
+index 4e3f2bf..e0ff5be 100644
+--- a/package.json
++++ b/package.json
+@@ -1,7 +1,7 @@
+ {
+   "name": "yunhu-vue",
+   "private": true,
+-  "version": "1.0.26",
++  "version": "1.0.27",
+   "type": "module",
+   "description": "云湖牢大版 · Vue3 + 真 cordis 插件内核 + Satori 协议 + WebDAV 网关（仅供学习交流）",
+   "scripts": {
+@@ -49,7 +49,9 @@
+     "test:ui-image-properties": "node scripts/test-ui-image-properties.mjs",
+     "test:ui-community-extended": "node scripts/test-ui-community-extended.mjs",
+     "test:sidecar-port": "node scripts/build-server-bundle.mjs && node scripts/test-sidecar-port.mjs",
+-    "test:image-delivery": "node scripts/test-image-delivery.mjs"
++    "test:image-delivery": "node scripts/test-image-delivery.mjs",
++    "test:editor": "node scripts/test-editor-core.mjs",
++    "test:ui-editor": "node scripts/test-ui-editor-rebuild.mjs"
+   },
+   "dependencies": {
+     "@capacitor/core": "^8.5.2",
+@@ -72,9 +74,11 @@
+     "exifr": "^7.1.3",
+     "gifenc": "1.0.3",
+     "gifuct-js": "2.1.2",
++    "katex": "0.16.22",
+     "marked": "^18.0.14",
+     "qrcode": "^1.5.4",
+     "schemastery": "^3.18.0",
++    "shiki": "2.5.0",
+     "vue": "^3.5.13"
+   },
+   "devDependencies": {
+diff --git a/scripts/test-community.mjs b/scripts/test-community.mjs
+index 2378591..1309b82 100644
+--- a/scripts/test-community.mjs
++++ b/scripts/test-community.mjs
+@@ -125,3 +125,28 @@ await test('cloud draft detail missing board ID preserves the original target bo
+  assert.equal(await f.cm.resumeDraft({id:'cloud:40',cloudId:40,owner:'test-user',baId:925,boardName:'笔记',title:'标题',content:'正文',contentType:2,updatedAt:1}),true)
+  assert.equal(f.s.editor.baId,925);assert.equal(f.s.editor.boardName,'笔记')
+ })
++await test('offline recovery opens the newer local backup instead of fetching an older cloud revision', async () => {
++ localValues.clear()
++ const backup={id:'local-recovery',cloudId:42,owner:'test-user',baId:925,boardName:'笔记',title:'恢复',content:'较新的本机内容',contentType:2,updatedAt:Date.now()}
++ localValues.set('yh.community.drafts.v1:test-user',JSON.stringify([backup]))
++ let reads=0;const f=fixture({baDrafts:async()=>{throw Error('offline')},baGetDraft:async()=>{reads++;throw Error('must not fetch')}})
++ await f.cm.refreshDrafts();assert.match(f.s.draftsError,/offline/);assert.equal(f.s.drafts.length,1)
++ assert.equal(await f.cm.resumeDraft(f.s.drafts[0]),true);assert.equal(f.s.editor.content,backup.content);assert.equal(reads,0)
++ localValues.clear()
++})
++await test('silent cloud saves remove matching recovery copies but keep changes made during the save', async () => {
++ localValues.clear();const d=deferred(),f=fixture({baSaveDraft:()=>d.promise});f.s.viewing={id:925};f.cm.openEditor();f.s.editor.content='snapshot'
++ const key='yh.community.drafts.v1:test-user';localValues.set(key,JSON.stringify([{...f.s.editor}]))
++ const save=f.cm.saveDraft({silent:true});f.s.editor.content='newer';localValues.set(key,JSON.stringify([{...f.s.editor}]))
++ d.resolve(42);await save;assert.equal(JSON.parse(localValues.get(key))[0].content,'newer');assert.equal(f.toasts.length,0)
++ f.api.baSaveDraft=async()=>43;await f.cm.saveDraft({silent:true});assert.deepEqual(JSON.parse(localValues.get(key)),[]);assert.equal(f.toasts.length,0)
++ localValues.clear()
++})
++await test('deleting a local recovery copy leaves a same-ID cloud draft untouched', async () => {
++ localValues.clear();let deletes=0;const f=fixture({baDeleteDraft:async()=>{deletes++}})
++ const draft={id:'cloud:42',cloudId:42,owner:'test-user',baId:925,title:'草稿',content:'本机较新',contentType:2,updatedAt:Date.now()}
++ localValues.set('yh.community.drafts.v1:test-user',JSON.stringify([draft]))
++ f.s.drafts=[{...draft,content:'云端旧内容'},{...draft,legacy:true}]
++ await f.cm.deleteDraft('cloud:42',true);assert.equal(deletes,0);assert.equal(f.s.drafts.length,1);assert.equal(f.s.drafts[0].content,'云端旧内容');assert.deepEqual(JSON.parse(localValues.get('yh.community.drafts.v1:test-user')),[])
++ localValues.clear()
++})
+diff --git a/scripts/test-ui-community-extended.mjs b/scripts/test-ui-community-extended.mjs
+index 0335ab3..83f205f 100644
+--- a/scripts/test-ui-community-extended.mjs
++++ b/scripts/test-ui-community-extended.mjs
+@@ -18,7 +18,7 @@ try {
+  const editor=page.getByRole('dialog',{name:'撰写文章',exact:true})
+  await editor.waitFor();await page.getByLabel('文章标题',{exact:true}).fill('测试文章')
+  const body=page.getByLabel('文章正文',{exact:true});await body.fill('写作内容')
+- assert.equal(await page.getByRole('button',{name:/^(写作|源码|阅读|专注写作)$/}).count(),0)
++ assert.equal(await page.getByRole('button',{name:/^(实时写作|源文|双栏)$/}).count(),3)
+  assert.equal(await page.getByLabel('发布板块',{exact:true}).count(),0)
+  const dimensions=await page.locator('.community-editor').evaluate(el=>({height:el.clientHeight,title:el.querySelector('.editor-title').getBoundingClientRect().height,body:el.querySelector('.editor-workspace').getBoundingClientRect().height}))
+  assert.ok(dimensions.title<=60);assert.ok(dimensions.body/dimensions.height>.65)
+@@ -32,7 +32,7 @@ try {
+  await page.waitForFunction(()=>window.__community.ctx.community.state.editor.content==='**写作内容**')
+  await page.getByRole('button',{name:'撤销',exact:true}).click();assert.equal(await page.evaluate(()=>window.__community.ctx.community.state.editor.content),'写作内容')
+  await page.getByRole('button',{name:'重做',exact:true}).click();assert.equal(await page.evaluate(()=>window.__community.ctx.community.state.editor.content),'**写作内容**')
+- await page.getByRole('button',{name:'插入表格',exact:true}).click();await page.locator('.markdown-canvas table').waitFor()
++ await page.getByRole('button',{name:'更多 Markdown 工具',exact:true}).click();await page.getByRole('menuitem',{name:'插入表格',exact:true}).click();await page.locator('.markdown-canvas table').waitFor()
+  await page.getByRole('button',{name:'查找替换',exact:true}).click();await page.getByLabel('查找文字').fill('内容');await page.getByLabel('替换文字').fill('笔记');await page.getByRole('button',{name:'全部替换',exact:true}).click();assert.match(await page.evaluate(()=>window.__community.ctx.community.state.editor.content),/笔记/)
+  await page.getByRole('button',{name:'关闭查找',exact:true}).click()
+  await page.getByLabel('导入 Markdown').setInputFiles({name:'writing.md',mimeType:'text/markdown',buffer:Buffer.from('# 我的笔记\n\n<script>window.editorEvil=true</script>\n\n- [ ] 待办事项\n\n正文')})
+@@ -45,7 +45,7 @@ try {
+  await shot('editor-dark')
+  await page.evaluate(()=>document.documentElement.dataset.theme='light');await shot('editor-light')
+  const color=await page.locator('.community-editor').evaluate(el=>getComputedStyle(el).color);assert.notEqual(color,'rgb(255, 255, 255)')
+- assert.equal(await page.getByLabel('草稿自动保存间隔').count(),0);assert.equal(await page.evaluate(()=>window.__community.calls.filter(c=>c[0]==='saveDraft').length),0)
++ assert.equal(await page.getByLabel('草稿自动保存间隔').count(),0);await page.waitForFunction(()=>window.__community.ctx.community.state.savedAt>0);assert.ok(await page.evaluate(()=>window.__community.calls.some(c=>c[0]==='saveDraft'&&c[1]===925)))
+  await page.getByRole('button',{name:'保存草稿',exact:true}).click();await page.waitForFunction(()=>window.__community.ctx.community.state.savedAt>0);await page.getByRole('button',{name:'关闭编辑器',exact:true}).click();await editor.waitFor({state:'hidden'})
+  await page.getByRole('button',{name:'关闭板块',exact:true}).click()
+  await page.getByRole('button',{name:'草稿',exact:true}).click();await page.locator('.draft-row button').first().click();await editor.waitFor()
+@@ -76,5 +76,5 @@ try {
+  await page.getByRole('button',{name:'保存草稿',exact:true}).click();await page.waitForFunction(()=>window.__community.ctx.community.state.savedAt>0);await page.getByRole('button',{name:'关闭编辑器',exact:true}).click();await editor.waitFor({state:'hidden'})
+  await page.reload();await page.getByRole('button',{name:'草稿',exact:true}).click();await page.locator('.draft-row button').first().click();await page.getByLabel('文章正文').waitFor();assert.equal(await page.evaluate(()=>window.__community.ctx.community.state.editor.content),'独立窗口输入并自动保存')
+  assert.deepEqual(errors,[])
+- console.log('PASS: toolbar/undo/redo/find/outline/sanitization/image upload; manual official cloud API mock drafts recover after close+reload; no automatic draft writes; failed/success publish; like/collect/comment/share; real group navigation; detached editor round-trip+theme synchronization; 1280/740/390/320 layout')
++ console.log('PASS: toolbar/undo/redo/find/outline/sanitization/image upload; manual and automatic official cloud API mock drafts recover after close+reload; failed/success publish; like/collect/comment/share; real group navigation; detached editor round-trip+theme synchronization; 1280/740/390/320 layout')
+ } finally {await context.close();await browser.close();await server.close()}
+diff --git a/src-tauri/Cargo.lock b/src-tauri/Cargo.lock
+index 67e33e7..0a331ee 100644
+--- a/src-tauri/Cargo.lock
++++ b/src-tauri/Cargo.lock
+@@ -4833,7 +4833,7 @@ dependencies = [
+ 
+ [[package]]
+ name = "yunhulaoda-desktop"
+-version = "1.0.26"
++version = "1.0.27"
+ dependencies = [
+  "base64 0.22.1",
+  "serde",
+diff --git a/src-tauri/Cargo.toml b/src-tauri/Cargo.toml
+index d841c4d..160b047 100644
+--- a/src-tauri/Cargo.toml
++++ b/src-tauri/Cargo.toml
+@@ -1,6 +1,6 @@
+ [package]
+ name = "yunhulaoda-desktop"
+-version = "1.0.26"
++version = "1.0.27"
+ description = "云湖牢大版桌面客户端（Tauri 壳 + Node sidecar 服务）"
+ authors = ["yibanm"]
+ edition = "2021"
+diff --git a/src-tauri/tauri.conf.json b/src-tauri/tauri.conf.json
+index e82f6f3..384942e 100644
+--- a/src-tauri/tauri.conf.json
++++ b/src-tauri/tauri.conf.json
+@@ -1,7 +1,7 @@
+ {
+   "$schema": "https://schema.tauri.app/config/2",
+   "productName": "YunhuLaoda",
+-  "version": "1.0.26",
++  "version": "1.0.27",
+   "identifier": "com.richkobe.yunhulaoda",
+   "build": {
+     "beforeBuildCommand": "",
+diff --git a/src/components/CommunityEditor.vue b/src/components/CommunityEditor.vue
+index c94cbad..0a5c737 100644
+--- a/src/components/CommunityEditor.vue
++++ b/src/components/CommunityEditor.vue
+@@ -1,47 +1,65 @@
+ <script setup lang="ts">
+-import { computed, ref, nextTick, defineAsyncComponent } from 'vue'
++import { computed, ref, nextTick, defineAsyncComponent, watch, onBeforeUnmount, inject, shallowRef } from 'vue'
+ import Icon from '../console/components/Icon.vue'
++import EditorToolbar from './EditorToolbar.vue'
++import MarkdownSource from './MarkdownSource.vue'
++import { createTextHistory, editorStats, downloadDocument, escapeHtml, type EditAction } from '../core/editor/core'
++const EditorPreview = defineAsyncComponent(() => import('./EditorPreview.vue'))
+ import { type CommunityDraft } from '../core/community-drafts'
+ const MarkdownCanvas = defineAsyncComponent(() => import('./MarkdownCanvas.vue'))
+ const canvas = ref<any>(), richHistory = ref({ undo: false, redo: false })
+-const props = defineProps<{ draft: CommunityDraft; busy?: boolean; error?: string; savedAt?: number; detached?: boolean; expanded?: boolean; uploading?: boolean }>()
++const props = defineProps<{ draft: CommunityDraft; busy?: boolean; saving?: boolean; error?: string; savedAt?: number; detached?: boolean; expanded?: boolean; uploading?: boolean }>()
+ const emit = defineEmits(['change', 'save', 'publish', 'close', 'detach', 'expand', 'upload'])
+-const source = ref<HTMLTextAreaElement>(), outlineOpen = ref(false)
++const source = ref<any>(), outlineOpen = ref(false), mode = ref(props.draft.contentType===1||props.draft.content.length>50000?'source':'rich'), richReady=ref(props.draft.content.length<=50000), sourceReady = ref(props.draft.content.length>50000), toolbarVisible = ref(true), documentMenu = ref(false), tableOpen = ref(false), formulaOpen = ref(false), latex = ref('a^2 + b^2 = c^2'), displayMath = ref(false), lineNumbers = ref(false), zoom = ref(100), preview = ref<any>(), split = ref(50), workspace = ref<HTMLElement>(), ctx = inject<any>('ctx')
++const textHistory = createTextHistory(props.draft.content), historyVersion = ref(0), stats = shallowRef(editorStats(props.draft.content))
++const undoState = computed(()=>{historyVersion.value;return {undo:textHistory.canUndo,redo:textHistory.canRedo}})
++let statsTimer: ReturnType<typeof setTimeout>, stopSplit:(()=>void)|undefined, syncFrame=0, scrolling = ''
++watch(()=>props.draft.content,value=>{textHistory.record(value);historyVersion.value++;clearTimeout(statsTimer);statsTimer=setTimeout(()=>{stats.value=editorStats(value)},180)})
++watch(mode,value=>{if(value!=='rich')sourceReady.value=true})
++onBeforeUnmount(()=>{clearTimeout(statsTimer);stopSplit?.();cancelAnimationFrame(syncFrame)})
+ const findOpen = ref(false), find = ref(''), replacement = ref(''), linkOpen = ref(false), linkUrl = ref('https://'), linkLabel = ref(''), linkImage = ref(false)
+-const history = ref<string[]>([props.draft.content]), cursor = ref(0)
+ const headings = computed(() => props.draft.content.split('\n').map((line, index) => ({ line, index, match: /^(#{1,6})\s+(.+)/.exec(line) })).filter(x => x.match).slice(0, 100))
+ const matches = computed(() => find.value ? props.draft.content.split(find.value).length - 1 : 0)
+ let selected = { start: 0, end: 0 }
+-function remember() { if (source.value) selected = { start: source.value.selectionStart, end: source.value.selectionEnd } }
++function remember() { if (source.value && mode.value !== 'rich') selected = source.value.selection() }
+ function change(content: string, record = true) {
+-  if (record) {
+-    const next = history.value.slice(0, cursor.value + 1)
+-    if (next[next.length - 1] !== content) next.push(content)
+-    if (next.length > 80) next.shift()
+-    history.value = next; cursor.value = next.length - 1
+-  }
++  if(content.length>200000){ctx?.ui?.toast?.('正文最多 20 万字，原内容已保留','error');return}
++  if(content.length>50000&&mode.value==='rich'){mode.value='source';sourceReady.value=true}
++  if (record) textHistory.record(content)
++  historyVersion.value++
+   emit('change', { content })
+ }
+-function edit(before: string, _after = '', _placeholder = '文字') {
+-  if (!props.busy && props.draft.contentType !== 1) canvas.value?.format(before)
+-}
+-function undo(redo = false) {
++function edit(before: string, _after = '', _placeholder = '文字') { if (!props.busy) canvas.value?.format(before) }
++function action(id: EditAction) {
+   if (props.busy) return
+-  if (props.draft.contentType !== 1) { redo ? canvas.value?.redo() : canvas.value?.undo(); return }
+-  const index = cursor.value + (redo ? 1 : -1)
+-  if (index < 0 || index >= history.value.length) return
+-  cursor.value = index; change(history.value[index], false)
++  textHistory.record(props.draft.content,false)
++  if (id === 'math' || id === 'mathblock') { displayMath.value = id==='mathblock'; formulaOpen.value=true; return }
++  if (id==='link' || id==='image') { openLink(id==='image'); return }
++  if (mode.value!=='rich' || props.draft.contentType===1) { source.value?.action(id); return }
++  const map:Record<string,string>={bold:'**',italic:'*',strike:'~~',underline:'<u>',highlight:'<mark>',quote:'\n> ',bullet:'\n- ',ordered:'\n1. ',task:'\n- [ ] ',code:'`',codeblock:'\n```text\n',table:'\n| 列一',rule:'\n---\n'}
++  if(id==='table') {tableOpen.value=true;if(canvas.value?.isTable?.())return}
++  if(id==='footnote') {void setMode('source').then(()=>source.value?.action('footnote'));return}
++  edit(/^h[1-6]$/.test(id)?'#'.repeat(Number(id.slice(1)))+' ':map[id]||'')
++}
++function undo(redo = false) { if(props.busy)return;const content=redo?textHistory.redo():textHistory.undo();historyVersion.value++;change(content,false) }
++async function setMode(value:string){const previous=mode.value;const at=previous==='rich'?canvas.value?.offset?.()||0:source.value?.selection?.().start||0;mode.value=value;if(value!=='rich')sourceReady.value=true;else richReady.value=true;await nextTick();if(previous!==value){if(value==='rich')canvas.value?.selectOffset?.(at);else source.value?.select(at)}}
++function sync(side:string,ratio:number){if(mode.value!=='split'||scrolling&&scrolling!==side)return;scrolling=side;if(side==='source')preview.value?.setScroll(ratio);else source.value?.setScroll(ratio);cancelAnimationFrame(syncFrame);syncFrame=requestAnimationFrame(()=>{scrolling=''})}
++function resizeSplit(e:PointerEvent){if(e.button!==0)return;stopSplit?.();const area=workspace.value!,el=e.currentTarget as HTMLElement;el.setPointerCapture(e.pointerId);const move=(ev:PointerEvent)=>{const rect=area.getBoundingClientRect();split.value=Math.max(25,Math.min(75,(ev.clientX-rect.left)/rect.width*100))};const stop=()=>{el.removeEventListener('pointermove',move);el.removeEventListener('pointerup',stop);el.removeEventListener('pointercancel',stop);if(el.hasPointerCapture(e.pointerId))el.releasePointerCapture(e.pointerId);stopSplit=undefined};stopSplit=stop;el.addEventListener('pointermove',move);el.addEventListener('pointerup',stop);el.addEventListener('pointercancel',stop)}
++function insertFormula(){if(mode.value==='rich')canvas.value?.formula(latex.value,displayMath.value);else {remember();const marker=displayMath.value?'$$':'$';const value=props.draft.content.slice(0,selected.start)+(displayMath.value?'\n':'')+marker+(displayMath.value?'\n':'')+latex.value+(displayMath.value?'\n':'')+marker+props.draft.content.slice(selected.end);change(value)}formulaOpen.value=false}
++function codeLanguage(value:{start:number;language:string}){const before=props.draft.content.slice(0,value.start),after=props.draft.content.slice(value.start).replace(/^(```|~~~)[^\n]*/,(_m,fence)=>fence+value.language);change(before+after)}
++function task(value:{start:number;index:number;checked:boolean}){const before=props.draft.content.slice(0,value.start);let index=0;change(before+props.draft.content.slice(value.start).replace(/([-*+] \[)[ xX](\])/g,(m,a,b)=>index++===value.index?a+(value.checked?'x':' ')+b:m))}
++async function exportHtml(print=false){
++  const {renderExportBody}=await import('../core/editor/render');const rendered=await renderExportBody(props.draft.content)
++  const html='<!doctype html><html><head><meta charset="utf-8"><title>'+escapeHtml(props.draft.title)+'</title><style>body{font:16px/1.8 system-ui,sans-serif;max-width:900px;margin:40px auto;padding:0 30px;color:#202124;background:white}img{max-width:100%}pre{white-space:pre-wrap;background:#f5f5f5;padding:16px}table{border-collapse:collapse}td,th{border:1px solid #aaa;padding:8px}blockquote{border-left:3px solid #666;padding-left:16px}@media print{body{margin:0;padding:0}pre,table,figure{break-inside:avoid}}</style></head><body><h1>'+escapeHtml(props.draft.title)+'</h1>'+rendered+'</body></html>'
++  if(!print){downloadDocument(props.draft.title,html,'text/html;charset=utf-8','html');return}
++  const frame=document.createElement('iframe');frame.style.cssText='position:fixed;left:-10000px;width:900px;height:1000px;border:0';frame.title='导出 PDF';frame.srcdoc=html;frame.onload=()=>{frame.contentWindow?.focus();frame.contentWindow?.print();setTimeout(()=>frame.remove(),1000)};document.body.append(frame);documentMenu.value=false
+ }
++async function copyRich(){try{const {renderExportBody}=await import('../core/editor/render');const html=await renderExportBody(props.draft.content);if(typeof ClipboardItem==='function')await navigator.clipboard.write([new ClipboardItem({'text/html':new Blob([html],{type:'text/html'}),'text/plain':new Blob([props.draft.content],{type:'text/plain'})})]);else await navigator.clipboard.writeText(props.draft.content);ctx?.ui?.toast?.('已复制文章','success')}catch{ctx?.ui?.toast?.('剪贴板暂不可用','error')}}
+ function key(e: KeyboardEvent) {
+-  if (e.defaultPrevented || e.isComposing) return
++  if (e.isComposing) return
+   // Preserve normal selection, search and undo in title/link/search input fields.
+   const target = e.target as HTMLElement
+   const inBody = !!target.closest('.editor-workspace')
+-  if (e.key === 'Tab' && target === source.value && !props.busy) {
+-    e.preventDefault(); remember()
+-    change(props.draft.content.slice(0, selected.start) + '  ' + props.draft.content.slice(selected.end))
+-    const end = selected.start + 2; void nextTick(() => source.value?.setSelectionRange(end, end)); return
+-  }
+   if (!(e.ctrlKey || e.metaKey)) return
+   const k = e.key.toLowerCase()
+   if (k === 's') { e.preventDefault(); if (!props.busy) emit('save'); return }
+@@ -49,35 +67,35 @@ function key(e: KeyboardEvent) {
+   if (!inBody) return
+   remember()
+   if (['b', 'i', 'f', 'h', 'z', 'y', 'k'].includes(k)) e.preventDefault()
+-  if (k === 'b') edit('**')
+-  if (k === 'i') edit('*')
++  if (k === 'b') {e.stopImmediatePropagation();action('bold')}
++  if (k === 'i') {e.stopImmediatePropagation();action('italic')}
+   if (k === 'f' || k === 'h') findOpen.value = !findOpen.value
+-  if (k === 'z') undo(e.shiftKey)
+-  if (k === 'y') undo(true)
++  if (k === 'z') {e.stopImmediatePropagation();undo(e.shiftKey)}
++  if (k === 'y') {e.stopImmediatePropagation();undo(true)}
+   if (k === 'k' && props.draft.contentType !== 1) openLink(false)
+ }
+-function openLink(image: boolean) { linkImage.value = image; linkLabel.value = canvas.value?.selectionText() || ''; linkOpen.value = true }
++function openLink(image: boolean) {remember();linkImage.value = image;linkLabel.value = mode.value==='rich'?canvas.value?.selectionText()||'':props.draft.content.slice(selected.start,selected.end);linkOpen.value=true}
+ function insertLink() {
+   if (props.busy) return
+   try {
+     const url = new URL(linkUrl.value)
+     if (!['https:', 'http:'].includes(url.protocol)) return
+     const label = linkLabel.value.replace(/[\[\]\n]/g, '') || (linkImage.value ? '图片' : '链接')
+-    canvas.value?.link(url.href, label, linkImage.value); linkOpen.value = false
++    if(mode.value==='rich')canvas.value?.link(url.href,label,linkImage.value);else change(props.draft.content.slice(0,selected.start)+(linkImage.value?'!':'')+'['+label+']('+url.href.replace(/\)/g,'%29')+')'+props.draft.content.slice(selected.end));linkOpen.value=false
+   } catch { /* Invalid URL remains editable. */ }
+ }
+-function replaceAll() { if (props.busy) return; if (props.draft.contentType !== 1) canvas.value?.replaceAll(find.value, replacement.value); else if (find.value) change(props.draft.content.split(find.value).join(replacement.value)) }
+-function selectText(offset: number, length = 0) { source.value?.focus(); source.value?.setSelectionRange(offset, offset + length); remember() }
++function replaceAll() { if (props.busy) return; if (mode.value==='rich' && props.draft.contentType !== 1) canvas.value?.replaceAll(find.value, replacement.value); else if (find.value) change(props.draft.content.split(find.value).join(replacement.value)) }
++function selectText(offset: number, length = 0) { source.value?.focus(); source.value?.select(offset, offset + length); remember() }
+ function findNext() {
+   if (!find.value) return
+-  if (props.draft.contentType !== 1) { canvas.value?.findNext(find.value); return }
+-  const from = source.value?.selectionEnd || 0
++  if (mode.value==='rich' && props.draft.contentType !== 1) { canvas.value?.findNext(find.value); return }
++  remember();const from = selected.end || 0
+   let index = props.draft.content.indexOf(find.value, from)
+   if (index < 0) index = props.draft.content.indexOf(find.value)
+   if (index >= 0) selectText(index, find.value.length)
+ }
+ function gotoLine(line: number) {
+-  if (props.draft.contentType !== 1) { canvas.value?.gotoHeading(headings.value.findIndex(h => h.index === line)); return }
++  if (mode.value==='rich' && props.draft.contentType !== 1) { canvas.value?.gotoHeading(headings.value.findIndex(h => h.index === line)); return }
+   selectText(props.draft.content.split('\n').slice(0, line).reduce((sum, value) => sum + value.length + 1, 0))
+   if (source.value) source.value.scrollTop = line * 26
+ }
+@@ -94,34 +112,35 @@ function upload(ev: Event) { const el = ev.target as HTMLInputElement; if (el.fi
+ </script>
+ 
+ <template>
+-  <section class="community-editor" aria-label="文章编辑器" @keydown="key">
++  <section class="community-editor" aria-label="文章编辑器" @keydown.capture="key">
+     <header class="editor-top">
+       <div class="editor-context"><Icon name="pencil" :size="17" /><span>{{ draft.postId ? '编辑文章' : '撰写文章' }}</span><span class="editor-board" :title="draft.boardName">{{ draft.boardName || '未关联板块' }}</span></div>
+       <div class="editor-buttons">
+-        <button type="button" title="导出 Markdown 文件" aria-label="导出 Markdown" @click="exportMd"><Icon name="download" :size="16" /><span class="file-action-text">导出</span></button>
++        <button type="button" title="文档设置与导出" aria-label="文档菜单" @click="documentMenu=!documentMenu"><Icon name="more" :size="17"/></button><button type="button" title="导出 Markdown 文件" aria-label="导出 Markdown" @click="exportMd"><Icon name="download" :size="16" /><span class="file-action-text">导出</span></button>
+         <button v-if="!detached" type="button" :title="expanded ? '恢复窗口内编辑器大小' : '填满当前软件窗口'" :aria-label="expanded ? '还原编辑器大小' : '窗口内展开'" :aria-pressed="!!expanded" @click="emit('expand')"><Icon :name="expanded ? 'collapse' : 'expand'" :size="16" /><span>{{ expanded ? '还原大小' : '窗口内展开' }}</span></button>
+         <button type="button" :title="detached ? '移回主窗口继续编辑' : '在独立窗口继续编辑，可移至软件外'" :aria-label="detached ? '返回主窗口编辑' : '在独立窗口编辑'" :disabled="busy" @click="emit('detach')"><Icon name="windowOut" :size="16" /><span>{{ detached ? '返回主窗口' : '独立窗口' }}</span></button>
+-        <button type="button" class="editor-close" title="关闭编辑器" aria-label="关闭编辑器" :disabled="busy" @click="emit('close')"><Icon name="close" :size="18" /></button>
++        <button type="button" class="editor-close" title="关闭编辑器" aria-label="关闭编辑器" :disabled="busy||saving" @click="emit('close')"><Icon name="close" :size="18" /></button>
+       </div>
+     </header>
+     <input class="editor-title" :value="draft.title" aria-label="文章标题" placeholder="文章标题" maxlength="200" :disabled="busy" @input="emit('change', { title: ($event.target as HTMLInputElement).value })" />
+-    <div class="editor-toolbar" role="toolbar" aria-label="Markdown 工具栏" @pointerdown="remember">
+-      <button type="button" aria-label="撤销" title="撤销 Ctrl+Z" :disabled="busy || (draft.contentType !== 1 ? !richHistory.undo : cursor === 0)" @click="undo()"><Icon name="undo" :size="16" /></button><button type="button" aria-label="重做" title="重做 Ctrl+Y" :disabled="busy || (draft.contentType !== 1 ? !richHistory.redo : cursor >= history.length - 1)" @click="undo(true)"><Icon name="redo" :size="16" /></button>
+-      <select aria-label="插入标题" :disabled="busy || draft.contentType === 1" value="" @change="edit(($event.target as HTMLSelectElement).value, '', '标题'); ($event.target as HTMLSelectElement).value = ''"><option value="" disabled>标题</option><option v-for="n in 6" :key="n" :value="'#'.repeat(n) + ' '">H{{ n }}</option></select>
+-      <button aria-label="加粗" title="加粗 Ctrl+B" :disabled="busy" @click="edit('**', '**')"><b>B</b></button><button aria-label="斜体" title="斜体 Ctrl+I" :disabled="busy" @click="edit('*', '*')"><i>I</i></button><button aria-label="删除线" title="删除线" :disabled="busy" @click="edit('~~', '~~')"><s>S</s></button><button aria-label="下划线" title="下划线" :disabled="busy" @click="edit('<u>', '</u>')"><u>U</u></button><button aria-label="高亮" title="高亮" :disabled="busy" @click="edit('<mark>', '</mark>')">荧光</button>
+-      <span class="tool-separator"></span><button aria-label="引用" title="引用" :disabled="busy" @click="edit('\n> ', '\n')"><Icon name="quote" :size="16" /></button><button aria-label="无序列表" title="无序列表" :disabled="busy" @click="edit('\n- ', '\n', '列表项')">• 列表</button><button aria-label="有序列表" title="有序列表" :disabled="busy" @click="edit('\n1. ', '\n', '列表项')">1. 列表</button><button aria-label="任务列表" title="任务列表" :disabled="busy" @click="edit('\n- [ ] ', '\n', '待办事项')">☐ 待办</button><button aria-label="行内代码" title="行内代码" :disabled="busy" @click="edit('`', '`', 'code')">&lt;/&gt;</button><button aria-label="代码块" title="代码块" :disabled="busy" @click="edit('\n```text\n', '\n```\n', '代码')">代码块</button>
+-      <button aria-label="插入链接" title="链接 Ctrl+K" :disabled="busy" @click="openLink(false)"><Icon name="link" :size="16" /></button><button aria-label="插入图片链接" title="图片链接" :disabled="busy" @click="openLink(true)"><Icon name="image" :size="16" /></button><label class="editor-file" title="上传图片"><Icon name="plus" :size="16" />图片<input type="file" accept="image/*" hidden :disabled="busy || uploading" aria-label="上传文章图片" @change="upload" /></label>
+-      <span class="tool-separator"></span><label class="editor-file editor-import">导入 .md<input type="file" accept=".md,.txt,.markdown" hidden aria-label="导入 Markdown" :disabled="busy" @change="importMd" /></label>
+-      <button aria-label="插入表格" title="插入表格" :disabled="busy" @click="edit('\n| 列一 | 列二 |\n| --- | --- |\n| ', ' | 内容 |\n', '内容')">表格</button><button aria-label="插入分隔线" title="分隔线" :disabled="busy" @click="edit('\n\n---\n', '', '')">―</button><button aria-label="查找替换" title="查找替换 Ctrl+F" @click="findOpen = !findOpen"><Icon name="search" :size="16" /></button><button aria-label="文章大纲" :aria-pressed="outlineOpen" @click="outlineOpen = !outlineOpen"><Icon name="menu" :size="16" /><span>大纲</span></button>
+-    </div>
++    <Transition name="editor-bar"><div v-if="documentMenu" class="editor-document-menu" aria-label="文档设置">
++      <label><input type="checkbox" v-model="toolbarVisible"/>显示工具栏</label><label><input type="checkbox" v-model="lineNumbers"/>源文行号</label><button @click="exportHtml()">导出 HTML</button><button @click="exportHtml(true)">导出 PDF</button><button @click="copyRich">复制为富文本</button><button v-if="ctx?.theme" @click="ctx.ui?.toggleTheme?.()">切换主题</button>
++    </div></Transition>
++    <div class="editor-mode-row"><nav aria-label="编辑模式"><button v-for="item in [{id:'rich',label:'实时写作'},{id:'split',label:'双栏'},{id:'source',label:'源文'}]" :key="item.id" :aria-pressed="mode===item.id" @click="setMode(item.id)">{{item.label}}</button></nav><button aria-label="折叠格式工具栏" :aria-expanded="toolbarVisible" @click="toolbarVisible=!toolbarVisible"><Icon name="collapse" :size="15"/></button><button aria-label="文章大纲" :aria-pressed="outlineOpen" @click="outlineOpen=!outlineOpen"><Icon name="menu" :size="16"/>大纲</button><label class="editor-file">导入 .md<input type="file" accept=".md,.txt,.markdown" hidden aria-label="导入 Markdown" :disabled="busy" @change="importMd"/></label><label class="editor-file"><Icon name="image" :size="15"/>图片<input type="file" accept="image/*" hidden aria-label="上传文章图片" :disabled="busy||uploading" @change="upload"/></label><button aria-label="查找替换" title="查找替换 Ctrl+F" @click="findOpen=!findOpen"><Icon name="search" :size="16"/></button></div>
++    <Transition name="editor-bar"><div v-show="toolbarVisible" class="editor-toolbar"><EditorToolbar :disabled="busy" :undo="undoState.undo" :redo="undoState.redo" @action="action" @undo="undo()" @redo="undo(true)"/></div></Transition>
++    <Transition name="editor-bar"><form v-if="formulaOpen" class="editor-find" @submit.prevent="insertFormula"><input v-model="latex" aria-label="数学公式" placeholder="LaTeX 公式"/><label><input type="checkbox" v-model="displayMath"/>独立公式</label><button type="submit">插入公式</button><button type="button" @click="formulaOpen=false">取消</button></form></Transition>
++    <Transition name="editor-bar"><div v-if="tableOpen&&mode==='rich'" class="table-tools" aria-label="表格编辑"><button v-for="item in [{id:'addRowBefore',label:'上方插入行'},{id:'addRowAfter',label:'下方插入行'},{id:'addColumnBefore',label:'左侧插入列'},{id:'addColumnAfter',label:'右侧插入列'},{id:'deleteRow',label:'删除行'},{id:'deleteColumn',label:'删除列'},{id:'deleteTable',label:'删除表格'}]" :key="item.id" :disabled="busy" @pointerdown.prevent @click="canvas?.table(item.id)">{{item.label}}</button><button aria-label="关闭表格工具" @click="tableOpen=false">×</button></div></Transition>
+     <Transition name="editor-bar"><form v-if="linkOpen" class="editor-find" @submit.prevent="insertLink"><input v-model="linkLabel" aria-label="链接文字" placeholder="文字或图片说明" /><input v-model="linkUrl" aria-label="链接地址" type="url" required placeholder="https://" /><button type="submit">插入</button><button type="button" @click="linkOpen = false">取消</button></form></Transition>
+     <Transition name="editor-bar"><div v-if="findOpen" class="editor-find"><input v-model="find" aria-label="查找文字" placeholder="查找文字" /><input v-model="replacement" aria-label="替换文字" placeholder="替换为" /><small>{{ matches }} 处</small><button type="button" @click="findNext">下一处</button><button type="button" :disabled="!find || busy" @click="replaceAll">全部替换</button><button type="button" aria-label="关闭查找" @click="findOpen = false">×</button></div></Transition>
+-    <div class="editor-workspace">
++    <div ref="workspace" class="editor-workspace" :class="'mode-'+mode">
+       <Transition name="editor-outline"><aside v-if="outlineOpen" class="editor-outline" aria-label="文章大纲"><strong>大纲</strong><button v-for="h in headings" :key="h.index" :style="{ paddingLeft: (h.match![1].length - 1) * 10 + 6 + 'px' }" @click="gotoLine(h.index)">{{ h.match![2] }}</button><p v-if="!headings.length">使用标题组织文章</p></aside></Transition>
+-      <MarkdownCanvas v-if="draft.contentType !== 1" ref="canvas" :model-value="draft.content" :disabled="busy" @update:model-value="change" @history="richHistory = $event" />
+-      <textarea v-else ref="source" class="editor-source" :value="draft.content" aria-label="文章正文" placeholder="开始写作…" :disabled="busy" spellcheck="false" maxlength="200000" @input="change(($event.target as HTMLTextAreaElement).value); remember()" @select="remember" @keyup="remember" @click="remember"></textarea>
++      <MarkdownCanvas v-if="richReady&&draft.contentType!==1" v-show="mode==='rich'" ref="canvas" :active="mode==='rich'" :zoom="zoom" :model-value="draft.content" :disabled="busy" @update:model-value="change" @history="richHistory=$event" @image="file=>emit('upload',file)"/>
++      <div v-if="sourceReady||draft.contentType===1" v-show="mode!=='rich'||draft.contentType===1" class="source-pane" :style="{flexBasis:mode==='split'?'calc((100% - '+(outlineOpen?170:0)+'px - 7px) * '+split/100+')':'100%'}"><MarkdownSource ref="source" :model-value="draft.content" :disabled="busy" :active="mode!=='rich'||draft.contentType===1" :line-numbers="lineNumbers" :zoom="zoom" @update:model-value="change" @undo="undo()" @redo="undo(true)" @image="file=>emit('upload',file)" @scroll="ratio=>sync('source',ratio)"/></div>
++      <div v-if="sourceReady" v-show="mode==='split'" class="split-handle" role="separator" aria-label="调整编辑预览比例" aria-orientation="vertical" tabindex="0" :aria-valuenow="split" aria-valuemin="25" aria-valuemax="75" @pointerdown.prevent="resizeSplit" @keydown.left.prevent="split=Math.max(25,split-5)" @keydown.right.prevent="split=Math.min(75,split+5)"></div>
++      <EditorPreview v-if="sourceReady" v-show="mode==='split'" ref="preview" :content="draft.content" :active="mode==='split'" :zoom="zoom" @scroll="ratio=>sync('preview',ratio)" @edit="async offset=>{await setMode('source');source?.select(offset)}" @language="codeLanguage" @task="task"/>
++
+     </div>
+-    <footer class="editor-bottom"><div class="editor-save-status"><span>{{ draft.content.length }} 字符</span><span role="status">{{ uploading ? '正在上传图片…' : savedAt ? '云端草稿已保存 ' + new Date(savedAt).toLocaleTimeString() : '未保存到云端' }}</span></div><div class="editor-submit"><button type="button" class="secondary" :disabled="busy" @click="emit('save')">保存草稿</button><button type="button" :disabled="busy || uploading || !draft.title.trim() || !draft.content.trim()" @click="emit('publish')">{{ busy ? '发布中…' : draft.postId ? '更新文章' : '发布文章' }}</button></div></footer>
++    <footer class="editor-bottom"><div class="editor-save-status"><span>{{stats.words}} 字 · {{stats.chars}} 字符 · {{stats.lines}} 行 · 约 {{stats.minutes}} 分钟</span><label>缩放 <select aria-label="编辑器缩放" v-model.number="zoom"><option v-for="value in [75,90,100,110,125,150,200]" :value="value" :key="value">{{value}}%</option></select></label><span role="status">{{ uploading ? '正在上传图片…' : saving ? '正在保存到云端…' : savedAt ? '云端草稿已保存 ' + new Date(savedAt).toLocaleTimeString() : '等待自动保存' }}</span></div><div class="editor-submit"><button type="button" class="secondary" :disabled="busy||saving" @click="emit('save')">保存草稿</button><button type="button" :disabled="busy || saving || uploading || !draft.title.trim() || !draft.content.trim()" @click="emit('publish')">{{ busy ? '发布中…' : draft.postId ? '更新文章' : '发布文章' }}</button></div></footer>
+     <Transition name="editor-bar"><p v-if="error" class="editor-error" role="alert">{{ error }}</p></Transition>
+   </section>
+ </template>
+@@ -144,4 +163,6 @@ function upload(ev: Event) { const el = ev.target as HTMLInputElement; if (el.fi
+ @media(max-width:760px) { .editor-top { flex-wrap:wrap; gap:7px; padding:9px 12px; }.editor-context { flex:1; }.editor-context .editor-board { max-width:140px; }.editor-buttons { margin-left:auto; flex-wrap:wrap; }.editor-buttons button { padding:5px 6px; }.file-action-text { display:none; } }
+ @media(max-width:480px) { .editor-top { gap:6px; }.editor-context { flex-basis:100%; }.editor-buttons { width:100%; margin:0; }.editor-buttons .editor-close { margin-left:auto; }.editor-title { padding:10px 16px; height:49px; font-size:21px; }.editor-toolbar { padding:5px 8px; gap:2px; max-height:98px; overflow:auto; }.editor-toolbar button { padding:4px 6px; }.editor-source { padding:16px; }.editor-outline { width:110px; }.editor-bottom { padding:9px 10px; gap:8px; }.editor-save-status { gap:7px; } }
+ @media(prefers-reduced-motion:reduce) { * { transition:none !important; } }
++.editor-mode-row{display:flex;align-items:center;gap:5px;padding:5px 14px;color:var(--fg2);min-height:32px}.editor-mode-row nav{display:flex;gap:2px;margin-right:auto}.editor-mode-row button{display:inline-flex;align-items:center;justify-content:center;gap:5px;font-size:11px;padding:5px 7px;border-color:transparent;background:transparent;white-space:nowrap}.editor-mode-row button[aria-pressed=true]{background:var(--acc-soft);color:var(--fg)}.editor-mode-row .editor-file{padding:4px 7px}.editor-toolbar{border-top:0;padding-block:3px;overflow:visible}.editor-workspace>.source-pane{display:flex;min-width:0;min-height:0;flex-shrink:0;flex-grow:1}.mode-split>.source-pane{flex-grow:0}.split-handle{width:7px;flex-shrink:0;cursor:col-resize;background:var(--card2);touch-action:none;transition:background .12s}.split-handle:hover,.split-handle:focus-visible{background:var(--acc-soft);outline:1px solid var(--link)}.editor-workspace{transition:background .2s}.editor-document-menu,.table-tools{display:flex;align-items:center;flex-wrap:wrap;gap:6px;padding:8px 18px;background:var(--card2);font-size:11px}.editor-document-menu label{display:flex;align-items:center;gap:4px;margin-right:8px}.editor-document-menu button,.table-tools button{font-size:11px;padding:4px 7px}.editor-save-status select{font-size:10px;padding:2px}.editor-find label{display:flex;align-items:center;white-space:nowrap}.editor-find label input{width:auto;min-width:0}.editor-top .editor-buttons button{background:transparent}@media(max-width:650px){.editor-mode-row{flex-wrap:wrap;padding-inline:8px}.editor-mode-row .editor-file{font-size:10px}.mode-split{flex-wrap:wrap;overflow:auto}.mode-split>.source-pane{flex-basis:100%!important;height:50%;min-height:210px}.mode-split>.editor-preview{flex-basis:100%;height:50%;min-height:210px}.mode-split>.split-handle{display:none}.editor-save-status{font-size:10px}}
++.mode-rich>.markdown-canvas,.mode-source>.source-pane,.mode-split>.source-pane,.mode-split>.editor-preview{animation:editor-pane-in .18s ease-out}@keyframes editor-pane-in{from{opacity:.35;transform:translateY(3px)}to{opacity:1;transform:none}}@media(prefers-reduced-motion:reduce){.editor-workspace>*{animation:none!important;transition:none!important}}
+ </style>
+diff --git a/src/components/CommunityEditorHost.vue b/src/components/CommunityEditorHost.vue
+index e042011..7af8306 100644
+--- a/src/components/CommunityEditorHost.vue
++++ b/src/components/CommunityEditorHost.vue
+@@ -1,6 +1,7 @@
+ <script setup lang="ts">
+ import { inject, ref, watch, onBeforeUnmount, shallowRef } from 'vue'
+ import CommunityEditor from './CommunityEditor.vue'
++import { saveCommunityDraft, removeCommunityDraft } from '../core/community-drafts'
+ import { PANEL_COLORS, newPanelId } from '../core/ai-panel'
+ const ctx = inject<any>('ctx'), cm = ctx.community, s = cm.state
+ const dialog = ref<HTMLDialogElement>(), detached = ref(false), uploading = ref(false), expanded = ref(false), visible = ref(false)
+@@ -14,13 +15,13 @@ const invoke = (command: string, args?: any) => (window as any).__TAURI__.core.i
+ function snapshot() {
+   if (!bus) return
+   const styles = getComputedStyle(document.documentElement)
+-  bus.postMessage({ type: 'snapshot', ack, draft: s.editor ? { ...s.editor } : null, busy: s.publishing || s.savingDraft, uploading: uploading.value,
++  bus.postMessage({ type: 'snapshot', ack, draft: s.editor ? { ...s.editor } : null, busy: s.publishing, saving:s.savingDraft, uploading: uploading.value,
+     error: s.editorError, savedAt: s.savedAt, theme: document.documentElement.dataset.theme,
+     colors: Object.fromEntries([...PANEL_COLORS, '--err', '--warn', '--on-acc'].map(k => [k, styles.getPropertyValue(k)])),
+     locked: !!ctx.lock?.isLocked })
+ }
+ function change(patch: any) {
+-  if (!s.editor || s.publishing || s.savingDraft || ctx.lock?.isLocked) return
++  if (!s.editor || s.publishing || ctx.lock?.isLocked) return
+   for (const key of ['title', 'content']) {
+     if (typeof patch?.[key] !== 'string') continue
+     if (patch[key].length > (key === 'title' ? 200 : 200000)) { s.editorError = key === 'title' ? '标题最多 200 字' : '正文最多 20 万字，原内容已保留'; return }
+@@ -88,12 +89,18 @@ function showDialog() { dialog.value?.showModal() }
+ function hideDialog() { dialog.value?.close(); if (!s.editor) renderedDraft.value = null }
+ watch(() => [s.editor?.title, s.editor?.content, s.editor?.contentType, s.editor?.baId, s.publishing, s.savingDraft, s.savedAt, s.editorError, uploading.value], snapshot)
+ watch(() => ctx.lock?.isLocked, locked => { if (locked) { dialog.value?.close(); renderedDraft.value = null; void dock() } })
++let autosave: ReturnType<typeof setTimeout>, backupTimer: ReturnType<typeof setTimeout>
++function scheduleSave(){clearTimeout(autosave);clearTimeout(backupTimer);const draft=s.editor;if(!draft||ctx.lock?.isLocked)return;backupTimer=setTimeout(()=>{if(draft===s.editor&&cm.editorDirty())try{saveCommunityDraft({...draft,updatedAt:Date.now()})}catch{}},500);autosave=setTimeout(async()=>{if(draft===s.editor&&cm.editorDirty()&&!s.publishing&&!s.savingDraft&&!uploading.value){const saved=await cm.saveDraft({silent:true});if(saved&&!cm.editorDirty())try{removeCommunityDraft(draft.owner,draft.id)}catch{}if(saved&&draft===s.editor&&cm.editorDirty())scheduleSave()}},1600)}
++watch(()=>[s.editor?.id,s.editor?.title,s.editor?.content,s.editor?.contentType],scheduleSave)
++watch(()=>s.savingDraft,(saving,was)=>{if(was&&!saving&&s.editor&&cm.editorDirty()&&!s.editorError)scheduleSave()})
++function retrySave(){if(s.editor&&cm.editorDirty())scheduleSave()}
++window.addEventListener('online',retrySave)
+ function preventLoss(e: BeforeUnloadEvent) { if (cm.editorDirty()) { e.preventDefault(); e.returnValue = '' } }
+ window.addEventListener('beforeunload', preventLoss)
+-onBeforeUnmount(() => { void dock(); window.removeEventListener('beforeunload', preventLoss) })
++onBeforeUnmount(() => { clearTimeout(autosave);clearTimeout(backupTimer);window.removeEventListener('online',retrySave);void dock(); window.removeEventListener('beforeunload', preventLoss) })
+ </script>
+ <template>
+-  <Teleport to="body"><Transition name="editor-dialog" appear @enter="showDialog" @after-leave="hideDialog"><dialog v-show="visible" ref="dialog" class="community-editor-dialog" :class="{ 'is-expanded': expanded }" aria-label="撰写文章" @cancel.prevent="cm.closeEditor()"><CommunityEditor v-if="renderedDraft" :key="renderedDraft.id" :draft="renderedDraft" :expanded="expanded" :busy="s.publishing || s.savingDraft" :error="s.editorError" :saved-at="s.savedAt" :uploading="uploading" @change="change" @save="cm.saveDraft()" @publish="!uploading && cm.publish()" @upload="image" @close="cm.closeEditor()" @expand="expanded = !expanded" @detach="detach" /></dialog></Transition></Teleport>
++  <Teleport to="body"><Transition name="editor-dialog" appear @enter="showDialog" @after-leave="hideDialog"><dialog v-show="visible" ref="dialog" class="community-editor-dialog" :class="{ 'is-expanded': expanded }" aria-label="撰写文章" @cancel.prevent="cm.closeEditor()"><CommunityEditor v-if="renderedDraft" :key="renderedDraft.id" :draft="renderedDraft" :expanded="expanded" :busy="s.publishing" :saving="s.savingDraft" :error="s.editorError" :saved-at="s.savedAt" :uploading="uploading" @change="change" @save="cm.saveDraft()" @publish="!uploading && cm.publish()" @upload="image" @close="cm.closeEditor()" @expand="expanded = !expanded" @detach="detach" /></dialog></Transition></Teleport>
+ </template>
+ <style scoped>
+ .community-editor-dialog { width:min(1240px,96vw); height:92dvh; max-width:none; max-height:none; padding:0; border:1px solid var(--line); border-radius:14px; background:var(--card); color:var(--fg); overflow:hidden; box-shadow:0 24px 90px #0005; transition:width .24s,height .24s,border-radius .24s; }.community-editor-dialog.is-expanded { width:100vw; height:100dvh; border-radius:0; border-width:0; }.community-editor-dialog::backdrop { background:#0006; transition:background .2s; }.editor-dialog-enter-active,.editor-dialog-leave-active { transition:opacity .2s,transform .24s,width .24s,height .24s,border-radius .24s; }.editor-dialog-enter-from,.editor-dialog-leave-to { opacity:0; transform:translateY(12px) scale(.985); }.editor-dialog-enter-from::backdrop,.editor-dialog-leave-to::backdrop { background:#0000; }@media(max-width:650px) { .community-editor-dialog { width:100vw; height:100dvh; margin:0; border:0; border-radius:0; } }@media(prefers-reduced-motion:reduce) { .community-editor-dialog { transition:none; } }
+diff --git a/src/components/Composer.vue b/src/components/Composer.vue
+index 04627a7..b246d03 100644
+--- a/src/components/Composer.vue
++++ b/src/components/Composer.vue
+@@ -3,6 +3,8 @@ import { newMsgId } from '../plugins/api'
+ import { decodedImageUrl, imageMetadata, mediaMetadata } from '../core/media'
+ import { inject, ref, nextTick, computed, onUnmounted, toRefs, defineAsyncComponent, watch } from 'vue'
+ import QuoteBar from './QuoteBar.vue'
++import EditorToolbar from './EditorToolbar.vue'
++import { markdownAction, createTextHistory, type EditAction } from '../core/editor/core'
+ import AiInstructionDialog from './AiInstructionDialog.vue'
+ const ImageEditor = defineAsyncComponent(() => import('./ImageEditor.vue'))
+ const ImageProperties = defineAsyncComponent(() => import('./ImageProperties.vue'))
+@@ -104,6 +106,14 @@ function useAiDraft() {
+ 
+ // 1 文本 / 3 Markdown / 8 HTML
+ const ta = ref<HTMLTextAreaElement | null>(null)
++const formatting = ref(false), moreTools = ref(false), composerHistory = createTextHistory(text.value), historyVersion = ref(0)
++let textSelection = {start:0,end:0}
++const historyState = computed(()=>{historyVersion.value;return {undo:composerHistory.canUndo,redo:composerHistory.canRedo}})
++function rememberSelection(){if(ta.value)textSelection={start:ta.value.selectionStart,end:ta.value.selectionEnd}}
++watch(text,value=>{composerHistory.record(value);historyVersion.value++;nextTick(autoresize)})
++function formatText(action:EditAction){if(uploading.value)return;const value=markdownAction(text.value,textSelection,action);composerHistory.record(text.value,false);kind.value=3;text.value=value.text;composerHistory.record(value.text,false);historyVersion.value++;nextTick(()=>{ta.value?.focus();ta.value?.setSelectionRange(value.start,value.end);rememberSelection();autoresize()})}
++function historyMove(redo=false){text.value=redo?composerHistory.redo():composerHistory.undo();historyVersion.value++;nextTick(()=>{ta.value?.focus();autoresize()})}
++
+ const imgInput = ref<HTMLInputElement | null>(null)
+ const fileInput = ref<HTMLInputElement | null>(null)
+ const audioInput = ref<HTMLInputElement | null>(null)
+@@ -213,7 +223,7 @@ function autoresize() {
+   if (!el) return
+   el.style.height = 'auto'
+   // 尊重用户手动拖拽的高度：输入只往上长，不缩回 scrollHeight
+-  el.style.height = Math.max(el.scrollHeight, manualMinH.value) + 'px'
++  el.style.height = Math.min(Math.max(el.scrollHeight, manualMinH.value,52),Math.min(300,window.innerHeight*.38)) + 'px'
+ }
+ 
+ /* ---------------- 待发送附件：由 chat 服务保存，切会话保留草稿与预览 ---------------- */
+@@ -272,9 +282,12 @@ function onDrop(e: DragEvent) {
+ /* 拖到页面其他位置时阻止浏览器直接打开文件（window 级兜底） */
+ function winDragOver(e: DragEvent) { e.preventDefault() }
+ function winDrop(e: DragEvent) { e.preventDefault() }
++function dismissMore(e:PointerEvent){if(!(e.target as HTMLElement)?.closest('.composer-more'))moreTools.value=false}
++window.addEventListener('pointerdown',dismissMore)
+ window.addEventListener('dragover', winDragOver)
+ window.addEventListener('drop', winDrop)
+ onUnmounted(() => {
++  window.removeEventListener('pointerdown',dismissMore)
+   window.removeEventListener('dragover', winDragOver)
+   window.removeEventListener('drop', winDrop)
+ })
+@@ -393,12 +406,12 @@ async function prepareAttachment(p: Pending) {
+   }
+ }
+ 
+-async function submit() {
++async function submit(onlyId?: number) {
+   if (!isCurrent() || uploading.value || chat.state.sending) return
+-  const originalText = text.value
++  const originalText = typeof onlyId==='number' ? '' : text.value
+   const v = originalText.trim()
+   const contentKind = kind.value
+-  const todo = [...pending.value]
++  const todo = typeof onlyId==='number' ? pending.value.filter(p=>p.id===onlyId) : [...pending.value]
+   if (!v && !todo.length) return
+   uploading.value = true
+   let attachFailed = 0
+@@ -447,19 +460,26 @@ async function submit() {
+ 
+ /* ---- 输入区高度拖拽（顶边把手）：最低一行字高，双击复位 ---- */
+ const taMinH = 24   // 一行字的高度（px）
++let stopResize:(()=>void)|undefined
++onUnmounted(()=>stopResize?.())
+ function startResize(e: MouseEvent) {
++  stopResize?.()
+   const startY = e.clientY
+   const el = ta.value
+   const startH = el ? el.getBoundingClientRect().height : 140
+   const move = (ev: MouseEvent) => {
+-    const h = Math.max(taMinH, Math.min(startH + (startY - ev.clientY), window.innerHeight * 0.7))
++    const h = Math.max(taMinH, Math.min(startH + (startY - ev.clientY), Math.min(300,window.innerHeight * 0.38)))
+     manualMinH.value = h          // 记住拖拽高度，autoresize 不再缩回
+     if (el) el.style.height = h + 'px'
+   }
+   const up = () => {
+     window.removeEventListener('mousemove', move)
+     window.removeEventListener('mouseup', up)
++    window.removeEventListener('blur',up)
++    stopResize=undefined
+   }
++  stopResize=up
++  window.addEventListener('blur',up)
+   window.addEventListener('mousemove', move)
+   window.addEventListener('mouseup', up)
+ }
+@@ -472,6 +492,8 @@ function resetHeight() {
+ function onKey(e: KeyboardEvent) {
+   // 中文输入法 Enter 确认候选字时不能发送消息。
+   if (e.isComposing || e.keyCode === 229) return
++  rememberSelection()
++  if(e.ctrlKey||e.metaKey){const key=e.key.toLowerCase();if(['b','i','k'].includes(key)){e.preventDefault();formatText(key==='b'?'bold':key==='i'?'italic':'link');return}if(['z','y'].includes(key)){e.preventDefault();historyMove(key==='y'||e.shiftKey);return}}
+   if (e.key === 'Enter' && !e.shiftKey && !e.ctrlKey && !e.metaKey) {
+     // @ 成员下拉打开时，Enter 选中当前高亮项而不是发送
+     if (atOpen.value && atList.value.length) { e.preventDefault(); pickAt(atIdx.value); return }
+@@ -547,31 +569,8 @@ function fmtSize(n: number) {
+     <div class="resize-bar" title="拖拽调整输入区高度（双击复位）"
+          @mousedown.prevent="startResize" @dblclick="resetHeight"></div>
+     <QuoteBar />
+-    <div class="bar-row">
+-      <template v-for="it in barItems" :key="it.id">
+-        <button v-if="it.kind === 'type'" class="ghost tiny" draggable="true"
+-                :class="{ on: kind === it.value }" @click="onBar(it)"
+-                @dragstart="onDragStart(it.id)" @dragover.prevent @drop.stop="onDropReorder(it.id, 'bar')">{{ it.label }}</button>
+-        <button v-else class="ghost tiny icon-btn" :title="it.label" draggable="true"
+-                @click="onBar(it)"
+-                @dragstart="onDragStart(it.id)" @dragover.prevent @drop.stop="onDropReorder(it.id, 'bar')">
+-          <Icon :name="BAR_ICON[it.kind] || 'page'" :size="16" />
+-        </button>
+-      </template>
+-      <div v-if="ctx.userbot" class="ai-wrap">
+-        <button class="ghost tiny ai-trigger" title="用户 Bot / AI" aria-label="用户 Bot / AI" :aria-expanded="aiOpen" aria-controls="ai-reply-strip" :class="{ active: aiOpen }" @click="aiOpen = !aiOpen">AI<span v-if="ctx.userbot.state.drafts[aiKey]" class="ai-dot"></span></button>
+-      </div>
+-      <input ref="imgInput" type="file" accept="image/*" multiple hidden @change="onPick" />
+-      <input ref="fileInput" type="file" multiple hidden @change="onPick" />
+-      <input ref="audioInput" type="file" accept="audio/*" multiple hidden @change="onPick" />
+-      <input ref="videoInput" type="file" accept="video/*" multiple hidden @change="onPick" />
+-      <span v-if="ctx.stickers?.state?.recording" class="rec-dot">
+-        录音中 {{ ctx.stickers.state.seconds }}s（再点「语音」结束并发送）
+-      </span>
+-      <span v-if="ctx.stickers?.state?.recordingVideo" class="rec-dot">
+-        录制中 {{ ctx.stickers.state.videoSeconds }}s（再点「录制视频」结束并发送）
+-      </span>
+-    </div>
++    <Transition name="composer-format"><div v-show="formatting" class="composer-format"><EditorToolbar compact :disabled="uploading" :undo="historyState.undo" :redo="historyState.redo" @action="formatText" @undo="historyMove()" @redo="historyMove(true)"/></div></Transition>
++    <input ref="imgInput" type="file" accept="image/*" multiple hidden @change="onPick"/><input ref="fileInput" type="file" multiple hidden @change="onPick"/><input ref="audioInput" type="file" accept="audio/*" multiple hidden @change="onPick"/><input ref="videoInput" type="file" accept="video/*" multiple hidden @change="onPick"/>
+     <Transition name="ai-strip">
+       <section v-if="aiOpen && ctx.userbot && !aiDetached" id="ai-reply-strip" class="ai-menu" aria-label="AI 回复助手" @keydown.esc.stop="aiOpen = false">
+         <div class="ai-strip-row">
+@@ -615,7 +614,7 @@ function fmtSize(n: number) {
+           <div class="bar" :style="{ width: Math.round(p.progress * 100) + '%' }"></div>
+           <span class="spd">{{ p.speed.toFixed(1) }} MB/s</span>
+         </div>
+-        <span v-if="p.error" class="pend-err" :title="p.error">发送失败：{{ p.error }} · 点发送重试</span>
++        <span v-if="p.error" class="pend-err" :title="p.error">{{p.error}}<button :disabled="uploading" @click="submit(p.id)">重试</button></span>
+         <button class="pend-x" title="移除" :disabled="uploading" @click="unstage(p)">×</button>
+         <input v-if="p.kind === 'image'" v-model="p.caption" :disabled="uploading" class="pend-cap" placeholder="给这张图配一句话（可选）" />
+       </div>
+@@ -634,13 +633,17 @@ function fmtSize(n: number) {
+ 
+     <div class="line">
+       <textarea ref="ta" v-model="text" :placeholder="placeholder"
+-                @input="onInput" @keydown="onKey" @paste="onPaste"></textarea>
+-      <div class="send-row">
+-        <span class="hint">{{ pending.length ? pending.length + ' 个附件待发' : '' }}</span>
+-        <button :disabled="chat.state.sending || uploading || (!text.trim() && !pending.length)" @click="submit">
+-          {{ chat.state.sending || uploading ? '…' : '发送' }}
+-        </button>
+-      </div>
++                aria-label="聊天消息" @input="onInput" @keydown="onKey" @paste="onPaste" @select="rememberSelection" @click="rememberSelection" @keyup="rememberSelection" @blur="rememberSelection"></textarea>
++      <div class="composer-footer"><div class="bar-row">
++        <button v-for="it in barItems.filter((it:any)=>['emoji','image','file'].includes(it.kind))" :key="it.id" class="ghost tiny icon-btn" :title="it.label" :aria-label="it.label" draggable="true" @click="onBar(it)" @dragstart="onDragStart(it.id)" @dragover.prevent @drop.stop="onDropReorder(it.id,'bar')"><Icon :name="BAR_ICON[it.kind]||'page'" :size="17"/></button>
++        <select class="composer-kind" aria-label="消息格式" v-model.number="kind"><option v-for="it in barItems.filter((it:any)=>it.kind==='type')" :key="it.id" :value="it.value">{{it.label}}</option></select>
++        <button class="ghost tiny" aria-label="Markdown 格式工具" :aria-expanded="formatting" :class="{on:formatting}" @click="formatting=!formatting"><Icon name="code" :size="17"/></button>
++        <div class="composer-more"><button class="ghost tiny" aria-label="更多输入功能" :aria-expanded="moreTools" @click="moreTools=!moreTools"><Icon name="plus" :size="17"/></button><Transition name="composer-format"><div v-if="moreTools" class="composer-more-menu" @keydown.esc.stop="moreTools=false"><button v-for="it in barItems.filter((it:any)=>it.kind!=='type'&&!['emoji','image','file'].includes(it.kind))" :key="it.id" @click="onBar(it);moreTools=false"><Icon :name="BAR_ICON[it.kind]||'page'" :size="16"/>{{it.label}}</button><button v-for="it in qrItems" :key="it.id" draggable="true" @dragstart="onDragStart(it.id)" @dragover.prevent @drop.stop="onDropReorder(it.id,'qr')" @click="onBar(it);moreTools=false">{{it.label}}</button><input v-if="addingQr" v-model="qrNew" aria-label="快捷回复内容" @keydown.enter.prevent="qrAdd"/><button @click="addingQr?qrAdd():addingQr=true">{{addingQr?'保存快捷回复':'添加快捷回复'}}</button></div></Transition></div>
++        <button v-if="ctx.userbot" class="ghost tiny ai-trigger" title="用户 Bot / AI" aria-label="用户 Bot / AI" :aria-expanded="aiOpen" :class="{active:aiOpen}" @click="aiOpen=!aiOpen">AI<span v-if="ctx.userbot.state.drafts[aiKey]" class="ai-dot"></span></button>
++      </div><div class="send-row"><span class="hint draft-state" role="status" :title="draft.syncError||''">{{draft.syncStatus|| (text?'本机草稿':'')}}{{pending.length?' · '+pending.length+' 个附件':''}}</span><button aria-label="发送" :disabled="chat.state.sending||uploading||(!text.trim()&&!pending.length)" @click="submit()"><Icon name="send" :size="16"/><span>{{chat.state.sending||uploading?'发送中':'发送'}}</span></button></div></div>
++      <div v-if="draft.remoteText!=null" class="draft-conflict" role="status">另一台设备修改了草稿<button @click="chat.drafts.useRemote(target)">采用云端</button><button @click="chat.drafts.keepLocal(target)">保留本机</button></div>
++      <span v-if="ctx.stickers?.state?.recording" class="rec-dot">录音中 {{ctx.stickers.state.seconds}}s <button @click="ctx.stickers.recordStop()">结束录音</button></span><span v-if="ctx.stickers?.state?.recordingVideo" class="rec-dot">录制中 {{ctx.stickers.state.videoSeconds}}s <button @click="ctx.stickers.recordVideoStop()">结束录制</button></span>
++
+     </div>
+ 
+     <ImageProperties v-if="propertiesAttachment" :file="propertiesAttachment.file" @close="propertiesAttachment = null" />
+@@ -778,4 +781,5 @@ function fmtSize(n: number) {
+ .pend-prog .spd {
+   position: relative; width: 100%; text-align: center; font-size: 9.5px; color: #fff; line-height: 14px;
+ }
++.composer{position:relative;background:var(--card);padding:10px 12px;border:0;border-top:1px solid var(--line);color:var(--fg)}.composer .line{display:flex;flex-direction:column;background:var(--card2);border:1px solid transparent;border-radius:11px;padding:0;overflow:visible;transition:border-color .15s,background .15s}.composer .line:focus-within{border-color:var(--line);background:var(--card)}.composer .line textarea{display:block;flex:auto;box-sizing:border-box;min-height:52px!important;max-height:min(300px,38vh);height:52px;width:100%;resize:none!important;border:0!important;border-radius:11px!important;background:transparent!important;padding:12px 14px!important;color:var(--fg);font-family:inherit;font-size:14px;line-height:1.65;overflow:auto;box-shadow:none!important}.composer-footer{display:flex;align-items:center;gap:8px;padding:4px 8px 8px;min-width:0}.composer .bar-row{display:flex;align-items:center;gap:3px;margin:0;flex:1;min-width:0;flex-wrap:nowrap}.composer .bar-row button{width:29px;height:29px;padding:5px;border:0;border-radius:6px;display:inline-flex;align-items:center;justify-content:center;background:transparent;color:var(--fg);transition:background .13s,transform .12s}.composer .bar-row button:hover{background:var(--acc-soft)}.composer button:active{transform:translateY(1px)}.composer :focus-visible{outline:2px solid var(--link,var(--fg));outline-offset:1px}.composer button:disabled{opacity:.45;cursor:default}.composer-kind{font-family:inherit;font-size:11px;border:0;border-radius:5px;background:transparent;color:var(--fg2);max-width:88px;padding:4px;min-width:0}.send-row{position:static;display:flex;align-items:center;gap:7px;flex-shrink:0}.send-row button{display:inline-flex;align-items:center;gap:5px;height:31px;padding:5px 10px;border:0;background:var(--acc);color:var(--on-acc,var(--fg));border-radius:7px;font-size:12px}.draft-state{max-width:135px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:10px!important}.composer-format{min-height:32px;padding:3px 4px 5px;position:relative;z-index:10}.composer-format-enter-active,.composer-format-leave-active{transition:opacity .16s,transform .16s,max-height .16s;max-height:220px}.composer-format-enter-from,.composer-format-leave-to{opacity:0;transform:translateY(4px);max-height:0;overflow:hidden}.composer-more{position:relative}.composer-more-menu{position:absolute;bottom:calc(100% + 8px);left:-70px;z-index:80;width:200px;max-height:260px;overflow:auto;border:1px solid var(--line);background:var(--card);border-radius:8px;padding:5px;box-shadow:0 6px 18px #0002}.composer .composer-more-menu button{display:flex;width:100%;justify-content:flex-start;gap:8px;font-size:12px;height:32px;white-space:nowrap}.composer-more-menu input{width:100%;box-sizing:border-box}.draft-conflict{display:flex;gap:6px;align-items:center;flex-wrap:wrap;font-size:11px;padding:6px 10px;color:var(--fg2)}.draft-conflict button{font-size:11px;padding:3px 6px}.pending{flex-wrap:nowrap;overflow:auto;max-height:170px;gap:7px}.pend,.pend.wide{width:112px;border:1px solid var(--line);border-radius:8px;background:var(--card2)}.pend img,.pend video{height:62px}.pend-file{height:62px;box-sizing:border-box}.pend-meta{position:static;display:block;color:var(--fg2);background:transparent;padding:3px 5px;font-size:10px;text-align:left}.pend-err{position:static;display:block;padding:3px 5px;color:var(--err);background:transparent;font-size:10px;max-height:44px;overflow:auto}.pend-err button{font-size:10px;padding:2px 5px}.pend-properties{margin:0 5px 3px;padding:2px 5px}.pend-cap{min-width:0;box-sizing:border-box}.pend-x{width:21px;height:21px;padding:2px;border-radius:5px}.composer-more-menu input{max-width:100%}@media(max-width:650px){.draft-state{display:none}.composer{padding:7px}.composer-footer{gap:3px;padding-inline:5px}.composer .bar-row{gap:1px}.composer .bar-row button{width:27px}.composer-kind{max-width:72px}.send-row button{padding:5px 8px}.composer .line textarea{font-size:14px}}@media(prefers-reduced-motion:reduce){.composer *{transition:none!important;animation:none!important}}
+ </style>
+diff --git a/src/components/FloatingCommunityEditor.vue b/src/components/FloatingCommunityEditor.vue
+index c6279bd..082943e 100644
+--- a/src/components/FloatingCommunityEditor.vue
++++ b/src/components/FloatingCommunityEditor.vue
+@@ -17,5 +17,5 @@ const timer = setInterval(() => { bus.postMessage({ type: 'ready' }); if (Date.n
+ bus.postMessage({ type: 'ready' })
+ onBeforeUnmount(() => { clearInterval(timer); bus.close() })
+ </script>
+-<template><div class="floating-editor"><CommunityEditor v-if="state?.draft" :key="state.draft.id" :draft="state.draft" :busy="state.busy" :error="state.error" :saved-at="state.savedAt" :uploading="state.uploading" detached @change="patch => { Object.assign(state.draft, patch); command('change', { patch }) }" @save="command('save')" @publish="command('publish')" @upload="file => command('upload', { file })" @close="command('close')" @detach="command('detach')" /><p v-else role="status">正在连接主窗口，或当前账号已锁定/退出。</p></div></template>
++<template><div class="floating-editor"><CommunityEditor v-if="state?.draft" :key="state.draft.id" :draft="state.draft" :busy="state.busy" :saving="state.saving" :error="state.error" :saved-at="state.savedAt" :uploading="state.uploading" detached @change="patch => { Object.assign(state.draft, patch); command('change', { patch }) }" @save="command('save')" @publish="command('publish')" @upload="file => command('upload', { file })" @close="command('close')" @detach="command('detach')" /><p v-else role="status">正在连接主窗口，或当前账号已锁定/退出。</p></div></template>
+ <style scoped>.floating-editor { height:100dvh; width:100%; background:var(--card); color:var(--fg); overflow:hidden; }.floating-editor > p { padding:25px; }</style>
+diff --git a/src/components/MarkdownCanvas.vue b/src/components/MarkdownCanvas.vue
+index 3162423..c5774d9 100644
+--- a/src/components/MarkdownCanvas.vue
++++ b/src/components/MarkdownCanvas.vue
+@@ -1,6 +1,7 @@
+ <script setup lang="ts">
+ /** A headless ProseMirror surface: one editable document, Markdown stays the storage format. */
+-import { watch } from 'vue'
++import { watch, onMounted, onBeforeUnmount } from 'vue'
++import { MathInline, MathBlock, EditorCodeBlock } from '../core/editor/rich-nodes'
+ import { EditorContent, useEditor } from '@tiptap/vue-3'
+ import StarterKit from '@tiptap/starter-kit'
+ import { Markdown } from '@tiptap/markdown'
+@@ -10,8 +11,8 @@ import TaskList from '@tiptap/extension-task-list'
+ import TaskItem from '@tiptap/extension-task-item'
+ import Highlight from '@tiptap/extension-highlight'
+ import { resUrl } from '../core/res'
+-const props = defineProps<{ modelValue: string; disabled?: boolean }>()
+-const emit = defineEmits<{ (e: 'update:modelValue', value: string): void; (e: 'history', value: { undo: boolean; redo: boolean }): void }>()
++const props = defineProps<{ modelValue: string; disabled?: boolean; active?: boolean; zoom?: number }>()
++const emit = defineEmits<{ (e: 'update:modelValue', value: string): void; (e: 'history', value: { undo: boolean; redo: boolean }): void; (e: 'image', file: File): void }>()
+ let lastOutput = props.modelValue
+ const renderImage = Image.extend({
+   renderHTML({ node, HTMLAttributes }) {
+@@ -21,12 +22,14 @@ const renderImage = Image.extend({
+   },
+ })
+ const editor = useEditor({
+-  extensions: [StarterKit.configure({ link: { openOnClick: false, autolink: true } }), Markdown.configure({ markedOptions: { gfm: true, breaks: true } }),
+-    renderImage, TableKit.configure({ table: { resizable: false } }), TaskList, TaskItem.configure({ nested: true }), Highlight.extend({ renderMarkdown: (node, helpers) => '<mark>' + helpers.renderChildren(node) + '</mark>' })],
++  extensions: [StarterKit.configure({ codeBlock: false, link: { openOnClick: false, autolink: true } }), Markdown.configure({ markedOptions: { gfm: true, breaks: true } }),
++    EditorCodeBlock, MathInline, MathBlock, renderImage, TableKit.configure({ table: { resizable: false } }), TaskList, TaskItem.configure({ nested: true }), Highlight.extend({ renderMarkdown: (node, helpers) => '<mark>' + helpers.renderChildren(node) + '</mark>' })],
+   content: props.modelValue, contentType: 'markdown', editable: !props.disabled,
+   editorProps: {
+     attributes: { role: 'textbox', 'aria-label': '文章正文', 'aria-multiline': 'true', spellcheck: 'false', 'data-placeholder': '开始写作，或输入 # 标题、> 引用、- 列表…' },
++    handleDrop(_view,event) { const files=Array.from(event.dataTransfer?.files||[]).filter(f=>f.type.startsWith('image/'));if(files.length){for(const file of files)emit('image',file);return true}return false },
+     handlePaste(_view, event) {
++      const files=Array.from(event.clipboardData?.files||[]).filter(f=>f.type.startsWith('image/'));if(files.length){for(const file of files)emit('image',file);return true}
+       // Clipboard Markdown is parsed as Markdown; rich HTML remains schema filtered by ProseMirror.
+       const plain = event.clipboardData?.getData('text/plain') || ''
+       if (!event.clipboardData?.getData('text/html') && /(^|\n)(#{1,6} |```|> |[-*] |\d+\. )|\*\*[^*]+\*\*/.test(plain)) {
+@@ -39,11 +42,14 @@ const editor = useEditor({
+   onTransaction({ editor: ed }) { emit('history', { undo: ed.can().undo(), redo: ed.can().redo() }) },
+ })
+ watch(() => props.modelValue, value => {
+-  if (!editor.value || value === lastOutput) return
++  if (!editor.value || props.active === false || value === lastOutput) return
+   lastOutput = value
+   editor.value.commands.setContent(value, { contentType: 'markdown', emitUpdate: false })
+ })
+-watch(() => props.disabled, value => editor.value?.setEditable(!value, false))
++watch(() => [props.disabled, props.active], () => { const ed=editor.value;if(!ed)return;ed.setEditable(!props.disabled && props.active!==false,false);if(props.active!==false&&props.modelValue!==lastOutput){lastOutput=props.modelValue;ed.commands.setContent(lastOutput,{contentType:'markdown',emitUpdate:false})} })
++let themeObserver: MutationObserver
++onMounted(()=>{themeObserver=new MutationObserver(()=>{if(props.active!==false)window.dispatchEvent(new Event('yh-editor-theme'))});themeObserver.observe(document.documentElement,{attributes:true,attributeFilter:['style','data-theme']})})
++onBeforeUnmount(()=>themeObserver?.disconnect())
+ function format(before: string) {
+   const ed = editor.value; if (!ed || props.disabled) return
+   const chain = ed.chain().focus()
+@@ -101,9 +107,13 @@ function gotoHeading(index: number) {
+     if (node.type.name === 'heading' && count++ === index) ed.chain().focus().setTextSelection(pos + 1).scrollIntoView().run()
+   })
+ }
+-defineExpose({ format, link, findNext, replaceAll, gotoHeading, undo: () => editor.value?.chain().focus().undo().run(), redo: () => editor.value?.chain().focus().redo().run(), selectionText: () => { const ed = editor.value; return ed ? ed.state.doc.textBetween(ed.state.selection.from, ed.state.selection.to) : '' } })
++function table(action:string){const ed=editor.value;if(!ed||props.disabled)return;const commands:any=ed.chain().focus();if(typeof commands[action]==='function')commands[action]().run()}
++function formula(latex:string,block=false){const ed=editor.value;if(props.disabled||!ed)return;if(block&&ed.isActive('table')){const position=ed.state.selection.$from;for(let depth=position.depth;depth>0;depth--)if(position.node(depth).type.name==='table'){const after=position.after(depth);ed.view.dispatch(ed.state.tr.insert(after,ed.schema.nodes.mathBlock.create({latex})));ed.commands.focus();return}}ed.chain().focus().insertContent({type:block?'mathBlock':'mathInline',attrs:{latex}}).run()}
++function offset(){const ed=editor.value;if(!ed)return 0;const before=ed.state.selection.$from.parent.textBetween(0,ed.state.selection.$from.parentOffset);const hint=ed.state.selection.from/Math.max(1,ed.state.doc.content.size)*props.modelValue.length;let best=0,distance=Infinity;if(before){let at=props.modelValue.indexOf(before);while(at>=0){if(Math.abs(at-hint)<distance){best=at+before.length;distance=Math.abs(at-hint)}at=props.modelValue.indexOf(before,at+1)}}return best}
++function selectOffset(value:number){const ed=editor.value;if(!ed)return;const before=props.modelValue.slice(0,value).split('\n').at(-1)?.replace(/^(?:#{1,6} |[-*+] |\d+\. |> )/,'').replace(/[*_~`]/g,'')||'';let found=1;ed.state.doc.descendants((node,pos)=>{if(before&&node.isText&&node.text?.includes(before))found=pos+node.text.indexOf(before)+before.length});ed.chain().focus().setTextSelection(Math.min(found,ed.state.doc.content.size)).scrollIntoView().run()}
++defineExpose({ offset, selectOffset, format, link, findNext, replaceAll, gotoHeading, table, formula, isTable:()=>editor.value?.isActive('table'), focus:()=>editor.value?.commands.focus(), undo: () => editor.value?.chain().focus().undo().run(), redo: () => editor.value?.chain().focus().redo().run(), selectionText: () => { const ed = editor.value; return ed ? ed.state.doc.textBetween(ed.state.selection.from, ed.state.selection.to) : '' } })
+ </script>
+-<template><div class="markdown-canvas"><EditorContent :editor="editor" /></div></template>
++<template><div class="markdown-canvas" :style="{fontSize:(15*(zoom||100)/100)+'px'}" @dragover.prevent><EditorContent :editor="editor" /></div></template>
+ <style scoped>
+ .markdown-canvas { flex:1; min-width:0; overflow:auto; padding:22px 24px 72px; font-size:15px; line-height:1.85; color:var(--fg); background:var(--card); scroll-behavior:smooth; }
+ .markdown-canvas :deep(.tiptap) { outline:none; min-height:280px; max-width:900px; margin-inline:auto; overflow-wrap:anywhere; white-space:pre-wrap; }
+@@ -117,4 +127,5 @@ defineExpose({ format, link, findNext, replaceAll, gotoHeading, undo: () => edit
+ .markdown-canvas :deep(.tableWrapper) { max-width:100%; overflow:auto; }.markdown-canvas :deep(table) { border-collapse:collapse; table-layout:fixed; width:100%; margin:1em 0; }.markdown-canvas :deep(td),.markdown-canvas :deep(th) { border:1px solid var(--line); padding:8px 10px; min-width:70px; position:relative; }.markdown-canvas :deep(th) { background:var(--card2); }.markdown-canvas :deep(.selectedCell) { background:var(--acc-soft); }.markdown-canvas :deep(hr) { border:0; border-top:1px solid var(--line); margin:2em 0; }
+ @media(max-width:650px) { .markdown-canvas { padding:20px 17px 60px; font-size:14px; } }
+ @media(prefers-reduced-motion:reduce) { .markdown-canvas { scroll-behavior:auto; } }
++.markdown-canvas :deep(.rich-code){background:var(--card2);border-radius:8px;padding:10px 14px;margin:1em 0;overflow:auto}.markdown-canvas :deep(.rich-code pre){background:transparent;border:0;padding:0;margin:0;font:13px/1.7 ui-monospace,Consolas,monospace;white-space:pre-wrap;overflow-wrap:anywhere}.markdown-canvas :deep(.code-actions){display:flex;justify-content:space-between;gap:10px;margin-bottom:10px}.markdown-canvas :deep(.code-actions select),.markdown-canvas :deep(.code-actions button){font-size:11px;border:0;background:transparent;color:var(--fg2);padding:3px 6px;cursor:pointer}.markdown-canvas :deep(.code-stack){position:relative}.markdown-canvas :deep(pre.code-paint){position:absolute;inset:0;pointer-events:none}.markdown-canvas :deep(.code-input code){color:transparent;background:transparent;caret-color:var(--fg);padding:0;position:relative}.markdown-canvas :deep(.code-input code::selection){background:var(--acc-soft);color:var(--fg)}.markdown-canvas :deep(.rich-math){border-radius:5px;cursor:text;max-width:100%;overflow:auto}.markdown-canvas :deep(.rich-math input){font:14px ui-monospace,monospace;color:var(--fg);background:var(--card2);border:1px solid var(--line);max-width:100%}.markdown-canvas :deep(.katex-display){overflow:auto}
+ </style>
+diff --git a/src/components/QuoteBar.vue b/src/components/QuoteBar.vue
+index 1a3779a..17c108e 100644
+--- a/src/components/QuoteBar.vue
++++ b/src/components/QuoteBar.vue
+@@ -4,6 +4,7 @@
+  * 引用态存在 chat.state.reply，发送时作为 quoteId 带上；点 × 清掉。
+  */
+ import { inject } from 'vue'
++import Icon from '../console/components/Icon.vue'
+ import { resUrl } from '../core/res'
+ 
+ const ctx = inject<any>('ctx')
+@@ -11,28 +12,28 @@ const chat = ctx.chat
+ </script>
+ 
+ <template>
+-  <div class="quotebar" v-if="chat.state.reply">
+-    <span class="qb-ico">↩</span>
++  <Transition name="reply"><div class="quotebar" v-if="chat.state.reply">
++    <Icon class="qb-ico" :name="chat.state.reply.kind==='video'?'video':chat.state.reply.kind==='file'?'paperclip':chat.state.reply.kind==='audio'?'mic':'quote'" :size="17"/>
+     <img v-if="chat.state.reply.image" class="qb-thumb" :src="resUrl(chat.state.reply.image)" alt="引用图片" />
+     <div class="qb-main">
+       <b>{{ chat.state.reply.sender }}</b>
+       <span class="qb-text">{{ chat.state.reply.preview }}</span>
+     </div>
+-    <button class="qb-x" title="取消引用" @click="chat.clearReply()">×</button>
+-  </div>
++    <button class="qb-x" aria-label="取消引用" title="取消引用" @click="chat.clearReply()"><Icon name="close" :size="15"/></button>
++  </div></Transition>
+ </template>
+ 
+ <style scoped>
+ .quotebar {
+-  display: flex; align-items: center; gap: 10px; margin-bottom: 8px;
++  display: flex; align-items: center; gap: 10px; margin-bottom:6px; max-height:70px;overflow:hidden;box-sizing:border-box;
+   padding: 7px 12px; border-radius: 9px; background: var(--card2); color: var(--fg);
+   border-left: 3px solid var(--acc);
+ }
+ .qb-ico { color: var(--acc); font-size: 15px; }
+ .qb-thumb { width: 36px; height: 36px; object-fit: cover; border-radius: 5px; flex-shrink: 0; }
+-.qb-main { flex: 1; min-width: 0; display: flex; gap: 8px; align-items: baseline; font-size: 12.5px; }
++.qb-main { flex: 1; min-width: 0; display:flex; flex-direction:column; gap:2px; align-items:stretch; font-size: 12.5px; }
+ .qb-main b { color: var(--link, var(--fg)); }
+ .qb-text { color: var(--fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+ .qb-x { background: transparent; color: var(--fg2); padding: 0 6px; font-size: 16px; line-height: 1; }
+ .qb-x:hover { color: var(--err); background: transparent; }
+-</style>
++.reply-enter-active,.reply-leave-active{transition:max-height .18s,opacity .16s,margin .18s,padding .18s}.reply-enter-from,.reply-leave-to{max-height:0;opacity:0;margin-block:0;padding-block:0}.qb-x{display:grid;place-items:center;flex-shrink:0;width:24px;height:24px;border-radius:5px}.qb-main b{font-size:11px}.qb-text{font-size:12px}@media(prefers-reduced-motion:reduce){*{transition:none!important}}</style>
+diff --git a/src/console/components/Icon.vue b/src/console/components/Icon.vue
+index 777103a..01b9356 100644
+--- a/src/console/components/Icon.vue
++++ b/src/console/components/Icon.vue
+@@ -38,6 +38,19 @@ const PATHS = {
+   forward: 'M15 5l7 7-7 7M22 12H3',
+   copy: 'M9 9h10v12H9zM5 3h10v4M5 3v12h4',
+   undo: 'M3 7v6h6M3 13a9 9 0 1 0 3-7.7L3 8',
++  bold: 'M6 4h7a4 4 0 0 1 0 8H6zM6 12h8a4 4 0 0 1 0 8H6z',
++  italic: 'M10 4h9M5 20h9M14 4L10 20',
++  strike: 'M17 5c-2-2-8-2-9 2-.6 2 2 4 4 5M7 18c2 3 9 3 10-1M4 12h16',
++  underline: 'M6 3v8a6 6 0 0 0 12 0V3M4 21h16',
++  list: 'M9 6h12M9 12h12M9 18h12M3 6h1M3 12h1M3 18h1',
++  listOrdered: 'M10 6h11M10 12h11M10 18h11M3 3h1v6M3 13c4-3 5 1 1 4l-1 2h4',
++  code: 'M8 6l-6 6 6 6M16 6l6 6-6 6M14 3l-4 18',
++  codeblock: 'M3 4h18v16H3zM7 9l3 3-3 3M13 15h4',
++  table: 'M3 4h18v16H3zM3 9h18M9 4v16M15 4v16',
++  formula: 'M18 4h-6l-3 16H5M6 10h10M17 14l5 6M22 14l-5 6',
++  more: 'M4 12h1M11 12h1M18 12h1',
++  minus: 'M4 12h16',
++  split: 'M3 4h18v16H3zM12 4v16',
+   redo: 'M21 7v6h-6M21 13a9 9 0 1 1-3-7.7L21 8',
+   windowOut: 'M14 3h7v7M21 3l-9 9M10 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-5',
+   check: 'M20 6L9 17l-5-5',
+diff --git a/src/console/pages/CommunityPage.vue b/src/console/pages/CommunityPage.vue
+index 06c5f3c..514ea38 100644
+--- a/src/console/pages/CommunityPage.vue
++++ b/src/console/pages/CommunityPage.vue
+@@ -37,7 +37,7 @@ const selectedGroup = ref<any>(null), groupJoined = ref(false), groupBusy = ref(
+ const shareTargets = computed(() => (ctx.chat?.state?.conversations || []).map((c: any) => ({ ...c, key: c.type + ':' + c.id })))
+ function showDrafts() { cm.refreshDrafts(); draftsOpen.value = true }
+ async function resumeDraft(draft: any) { if (await cm.resumeDraft(draft)) draftsOpen.value = false }
+-async function removeDraft(draft: any) { if (await ctx.ui.confirm?.('删除草稿', draft.cloudId ? '确定删除这篇云端草稿？此操作会同步到官方客户端。' : '确定删除这篇旧版本机草稿？', { danger: true })) cm.deleteDraft(draft.id) }
++async function removeDraft(draft: any) { if (await ctx.ui.confirm?.('删除草稿', draft.cloudId && !draft.legacy ? '确定删除这篇云端草稿？此操作会同步到官方客户端。' : '确定删除这份本机恢复副本？', { danger: true })) cm.deleteDraft(draft.id, !!draft.legacy) }
+ function share(kind: 'board' | 'post') { sharing.value = kind; shareTarget.value = '' }
+ async function copyPostLink() {
+   try { await navigator.clipboard.writeText('yunhu://post-detail?id=' + encodeURIComponent(s.postDetail.id)); ctx.ui.toast('文章链接已复制', 'success') }
+@@ -247,7 +247,7 @@ onBeforeUnmount(() => { creating.value = false; s.editing = null; cm.closeGroups
+       <dialog ref="dialog" class="community-dialog" :aria-label="dialogTitle" @cancel.prevent="closeDialog" @click="e => { if (e.target === dialog) closeDialog() }">
+         <template v-if="dialogType">
+           <header class="dialog-header"><div><span class="eyebrow">{{ dialogType === 'groups' ? s.groupsOf?.name : 'COMMUNITY' }}</span><h3>{{ dialogTitle }}</h3></div><button class="icon-button" aria-label="关闭对话框" :disabled="busy" @click="closeDialog"><Icon name="close" :size="20" /></button></header>
+-          <div v-if="draftsOpen" class="dialog-content"><p class="dialog-hint">点击编辑器中的“保存草稿”手动保存到官方云端，可在其他设备继续编辑。</p><p v-if="s.draftsLoading" role="status">正在读取云端草稿…</p><p v-if="s.draftsError" role="alert">{{ s.draftsError }} <button @click="cm.refreshDrafts()">重试</button></p><div v-for="d in s.drafts" :key="d.id" class="draft-row"><button class="text-button" @click="resumeDraft(d)"><b>{{ d.title || '未命名草稿' }}</b><span>{{ d.legacy ? '本机旧草稿 · 点击保存可迁移到云端' : d.boardName }} · {{ new Date(d.updatedAt).toLocaleString() }}</span></button><button class="text-button" @click="removeDraft(d)">删除</button></div><button v-if="s.hasMoreDrafts" :disabled="s.draftsLoading" @click="cm.refreshDrafts(true)">加载更多</button><p v-if="!s.drafts.length && !s.draftsLoading && !s.draftsError" class="end-note">还没有保存的草稿。</p></div>
++          <div v-if="draftsOpen" class="dialog-content"><p class="dialog-hint">编辑内容会自动保存到官方云端，也可点击“保存草稿”立即保存。断网时会保留本机临时草稿。</p><p v-if="s.draftsLoading" role="status">正在读取云端草稿…</p><p v-if="s.draftsError" role="alert">{{ s.draftsError }} <button @click="cm.refreshDrafts()">重试</button></p><div v-for="d in s.drafts" :key="(d.legacy ? 'local:' : 'cloud:') + d.id" class="draft-row"><button class="text-button" @click="resumeDraft(d)"><b>{{ d.title || '未命名草稿' }}</b><span>{{ d.legacy ? '本机恢复副本 · 点击打开并保存到云端' : d.boardName }} · {{ new Date(d.updatedAt).toLocaleString() }}</span></button><button class="text-button" @click="removeDraft(d)">删除</button></div><button v-if="s.hasMoreDrafts" :disabled="s.draftsLoading" @click="cm.refreshDrafts(true)">加载更多</button><p v-if="!s.drafts.length && !s.draftsLoading && !s.draftsError" class="end-note">还没有保存的草稿。</p></div>
+           <form v-else-if="sharing" class="dialog-content" @submit.prevent="sendShare"><p class="dialog-hint">{{ sharing === 'post' ? s.postDetail?.title : s.viewing?.name }}</p><label class="field-label">选择会话<select v-model="shareTarget" :disabled="sharingBusy"><option value="" disabled>请选择接收的会话</option><option v-for="c in shareTargets" :key="c.key" :value="c.key">{{ c.name || c.id }} · {{ c.type === 2 ? '群聊' : c.type === 3 ? '机器人' : '私聊' }}</option></select></label><p v-if="!shareTargets.length" class="dialog-hint">暂无会话，请先建立会话。</p><footer class="dialog-footer"><button type="button" class="secondary" :disabled="sharingBusy" @click="closeDialog">取消</button><button :disabled="!shareTarget || sharingBusy">{{ sharingBusy ? '分享中…' : '发送分享' }}</button></footer></form>
+           <form v-else-if="creating" class="dialog-content" @submit.prevent="submitCreate">
+             <p class="dialog-hint">一个名字，一群同好。为你的板块选个名字吧。</p>
+diff --git a/src/core/augment.ts b/src/core/augment.ts
+index 04502d3..f78d19c 100644
+--- a/src/core/augment.ts
++++ b/src/core/augment.ts
+@@ -60,6 +60,7 @@ declare module 'cordis' {
+     'ws/raw': (...args: any[]) => void
+     'ws/message': (...args: any[]) => void
+     'ws/draft': (...args: any[]) => void
++    'ws/draft-ready': () => void
+     'ws/stream': (...args: any[]) => void
+     'message-created': (...args: any[]) => void
+     'message-updated': (...args: any[]) => void
+diff --git a/src/core/composer-drafts.ts b/src/core/composer-drafts.ts
+index 3010d7f..38a135c 100644
+--- a/src/core/composer-drafts.ts
++++ b/src/core/composer-drafts.ts
+@@ -1,5 +1,4 @@
+-import { reactive } from 'vue'
+-
++import { reactive, watch } from 'vue'
+ export interface PendingAttachment {
+   id: number
+   file: File
+@@ -15,25 +14,19 @@ export interface PendingAttachment {
+   messageId?: string
+ }
+ 
+-/** 属于 chat 服务的会话草稿；组件切换不释放，退出账号/卸载服务时统一回收。 */
+-export function createComposerDrafts() {
+-  const drafts = new Map<string, ReturnType<typeof makeDraft>>()
+-  function makeDraft() {
+-    return reactive({ text: '', kind: 1, pending: [] as PendingAttachment[], uploading: false })
+-  }
+-  return {
+-    get(channel: { id: string; type: number }) {
+-      const key = `${channel.type}:${channel.id}`
+-      if (!drafts.has(key)) drafts.set(key, makeDraft())
+-      return drafts.get(key)!
+-    },
+-    clear() {
+-      for (const draft of drafts.values()) {
+-        for (const p of draft.pending) if (p.url) URL.revokeObjectURL(p.url)
+-        draft.pending = []
+-        draft.text = ''
+-      }
+-      drafts.clear()
+-    },
+-  }
++
++interface Options { owner?:()=>string; send?:(channel:{id:string;type:number},text:string)=>boolean; delay?:number }
++/** Per-account/per-conversation drafts. Files stay in memory; only text/format/reply metadata are persisted. */
++export function createComposerDrafts(options:Options={}) {
++ const drafts=new Map<string,any>(),remote=new Map<string,string>(),owner=()=>String(options.owner?.()||''),key=(account:string,c:{id:string;type:number})=>account+':'+c.type+':'+c.id
++ let disposed=false
++ function read(account:string){try{const raw=JSON.parse(localStorage.getItem('yh.composer.drafts.v2:'+account)||'[]');return Array.isArray(raw)?raw.filter(d=>typeof d.text==='string'&&d.text.length<=200000&&d.updatedAt>Date.now()-7*86400000):[]}catch{return []}}
++ function persist(entry:any){if(!entry.account)return;try{let values=read(entry.account).filter(d=>d.id!==entry.channel.id||d.type!==entry.channel.type);if(entry.draft.text||entry.draft.reply||entry.dirty)values.unshift({id:entry.channel.id,type:entry.channel.type,text:entry.draft.text,kind:entry.draft.kind,reply:entry.draft.reply,dirty:entry.dirty||entry.sent!==undefined,updatedAt:Date.now()});values=values.slice(0,20);while(values.length>1&&JSON.stringify(values).length>1000000)values.pop();localStorage.setItem('yh.composer.drafts.v2:'+entry.account,JSON.stringify(values));entry.draft.localSavedAt=Date.now()}catch{entry.draft.syncError='本地暂存失败，请保留当前窗口'}}
++ function flushEntry(entry:any){clearTimeout(entry.timer);persist(entry);if((!entry.dirty&&entry.sent===undefined)||entry.account!==owner()||disposed)return;try{const text=entry.draft.text;if(options.send?.(entry.channel,text)){entry.sent=text;entry.dirty=false;entry.draft.syncStatus='已提交云端同步';entry.draft.syncError='';persist(entry)}else entry.draft.syncStatus='已暂存本机 · 等待联网'}catch(e:any){entry.draft.syncStatus='已暂存本机 · 同步待重试';entry.draft.syncError=e.message||'云端同步失败'}}
++ function entryFor(channel:{id:string;type:number}){const account=owner(),id=key(account,channel);if(drafts.has(id))return drafts.get(id);const stored=read(account).find(d=>d.id===channel.id&&d.type===channel.type),received=remote.get(account+':'+channel.id);const draft=reactive({text:stored?.text||received||'',kind:[1,3,8].includes(stored?.kind)?stored.kind:1,reply:stored?.reply||null,pending:[] as PendingAttachment[],uploading:false,localSavedAt:stored?.updatedAt||0,syncStatus:stored?'已恢复本机草稿':received?'已同步云端草稿':'',syncError:'',remoteText:null as string|null});const entry={account,channel:{...channel},draft,dirty:!!stored?.dirty,sent:undefined as string|undefined,receiving:false,timer:undefined as ReturnType<typeof setTimeout>,stop:()=>{}};drafts.set(id,entry);entry.stop=watch(()=>[draft.text,draft.kind,draft.reply],()=>{if(entry.receiving)return;entry.dirty=true;draft.syncStatus='等待同步';clearTimeout(entry.timer);entry.timer=setTimeout(()=>flushEntry(entry),options.delay??800)},{deep:true,flush:'sync'});return entry}
++ function receive(chatId:string,input:string){if(!owner()||typeof input!=='string'||input.length>200000)return;remote.set(owner()+':'+chatId,input);const matches=[...drafts.values()].filter(e=>e.account===owner()&&e.channel.id===chatId);if(matches.length>1)return;for(const entry of matches){const d=entry.draft;if(entry.dirty&&d.text!==input){d.remoteText=input;d.syncStatus='云端另有草稿';continue}if(entry.sent!==undefined&&d.text!==input){d.remoteText=input;d.syncStatus='云端另有草稿';continue}entry.receiving=true;d.text=input;d.syncStatus='已同步云端草稿';d.remoteText=null;entry.dirty=false;entry.sent=undefined;entry.receiving=false;persist(entry)}}
++ return {get(channel:{id:string;type:number}){return entryFor(channel).draft},flush(channel?:{id:string;type:number}){if(channel)flushEntry(entryFor(channel));else for(const e of drafts.values())flushEntry(e)},receive,
++ useRemote(channel:{id:string;type:number}){const e=entryFor(channel);if(e.draft.remoteText==null)return;e.receiving=true;e.draft.text=e.draft.remoteText;e.draft.remoteText=null;e.dirty=false;e.sent=undefined;e.draft.syncStatus='已同步云端草稿';e.receiving=false;persist(e)},
++ keepLocal(channel:{id:string;type:number}){const e=entryFor(channel);e.draft.remoteText=null;e.dirty=true;flushEntry(e)},
++ clear(){for(const e of drafts.values()){clearTimeout(e.timer);persist(e);e.stop();for(const p of e.draft.pending)if(p.url)URL.revokeObjectURL(p.url);e.draft.pending=[];e.draft.text=''}drafts.clear();remote.clear()},dispose(){this.clear();disposed=true},}
+ }
+diff --git a/src/core/message-preview.ts b/src/core/message-preview.ts
+index a168465..5da6a10 100644
+--- a/src/core/message-preview.ts
++++ b/src/core/message-preview.ts
+@@ -21,5 +21,5 @@ export function messagePreview(message: any): string {
+ export function messageQuote(message: any) {
+   const elements = message.elements?.length ? message.elements : parse(message.content || {}, message.type)
+   const image = !message.recalled && elements.find((el: any) => el.type === 'img' || el.type === 'sticker')
+-  return { id: message.id, sender: message.sender || '', preview: messagePreview(message), image: image?.attrs.src || '' }
++  return { kind: elements.find((el:any)=>['video','audio','file'].includes(el.type))?.type || 'text', id: message.id, sender: message.sender || '', preview: messagePreview(message), image: image?.attrs.src || '' }
+ }
+diff --git a/src/plugins/chat.ts b/src/plugins/chat.ts
+index c90fce7..7c81164 100644
+--- a/src/plugins/chat.ts
++++ b/src/plugins/chat.ts
+@@ -61,7 +61,9 @@ export const chatPlugin = {
+     const storage = (ctx as any).storage
+     const pollMs = config.pollMs ?? 4000
+     const messageLimit = () => config.maxMessages ?? (resourceMode.economy ? 80 : 200)
+-    const drafts = createComposerDrafts()
++    const drafts = createComposerDrafts({owner:()=>auth.state.user?.id,send:(channel,text)=>{try{return !!ctx.ws?.sendDraft(channel.id,text)}catch{return false}}})
++    ctx.on('ws/draft',data=>drafts.receive(String(data.chatId),String(data.input??'')))
++    ctx.on('ws/draft-ready',()=>drafts.flush())
+     let viewVersion = 0
+     let messageRequest = 0
+     let messageFlightVersion = -1
+@@ -741,6 +743,7 @@ export const chatPlugin = {
+     async function open(chat: any) {
+       cancelPendingNotification(chat.id, chat.type)
+       const sameChannel = state.current?.id === chat.id && state.current?.type === chat.type
++      if(state.current){drafts.get(state.current).reply=state.reply;drafts.flush(state.current)}
+       rememberWindow()
+       const version = ++viewVersion
+       state.current = state.conversations.find((c: any) => c.id === chat.id && c.type === chat.type) || chat
+@@ -762,7 +765,8 @@ export const chatPlugin = {
+       state.locatingId = null
+       state.searchResults = []
+       state.searchWord = ''
+-      clearReply()
++      clearReply(false)
++      state.reply=drafts.get(state.current).reply
+       clearSelection()
+       saveCurrentId(chat.id)
+       await loadMessages()
+@@ -935,9 +939,11 @@ export const chatPlugin = {
+     /* ---------------- 引用态 ---------------- */
+     function setReply(msg: any) {
+       state.reply = messageQuote(msg)
++      if(state.current)drafts.get(state.current).reply=state.reply
+       ctx.emit('chat/reply', state.reply)
+     }
+-    function clearReply() {
++    function clearReply(save = true) {
++      if(save&&state.current)drafts.get(state.current).reply=null
+       state.reply = null
+       ctx.emit('chat/reply', null)
+     }
+diff --git a/src/plugins/community.ts b/src/plugins/community.ts
+index b0deff8..2714888 100644
+--- a/src/plugins/community.ts
++++ b/src/plugins/community.ts
+@@ -327,10 +327,16 @@ export const communityPlugin = {
+         state.drafts = [...combined.sort((a, b) => b.updatedAt - a.updatedAt), ...legacy]
+         state.draftPage = page; state.hasMoreDrafts = !!result.more
+       } catch (e: any) {
+-        if (identity === identityRequest && request === draftRequest) state.draftsError = '读取云端草稿失败：' + e.message
++        if (identity === identityRequest && request === draftRequest) {
++          state.draftsError = '读取云端草稿失败：' + e.message
++          try {
++            const local = readCommunityDrafts(account).map(d => ({ ...d, legacy: true }))
++            state.drafts = [...state.drafts.filter(d => !d.legacy), ...local]
++          } catch { /* Keep the existing list if browser storage is unavailable. */ }
++        }
+       } finally { if (identity === identityRequest && request === draftRequest) state.draftsLoading = false }
+     }
+-    async function saveDraft() {
++    async function saveDraft(options: { silent?: boolean } = {}) {
+       const d = state.editor, identity = identityRequest
+       if (!d || d.owner !== owner() || state.savingDraft || state.publishing) return false
+       if (!d.title.trim() && !d.content.trim()) { state.editorError = '请先填写标题或正文'; return false }
+@@ -343,10 +349,12 @@ export const communityPlugin = {
+         // Updating a cloud draft replaces its ID. Always retain the new ID, even if text changed in flight.
+         d.cloudId = cloudId; d.updatedAt = Date.now(); savedFingerprint = signature; draftRequest++; state.draftsLoading = false
+         state.savedAt = fingerprint(d) === signature ? d.updatedAt : 0
+-        if (d.legacy) { try { removeCommunityDraft(d.owner, d.id) } catch {} d.legacy = false }
++        // A local recovery copy may be newer than the in-flight cloud snapshot.
++        if (state.savedAt) { try { removeCommunityDraft(d.owner, d.id) } catch {} }
++        d.legacy = false
+         const item = { ...snapshot, cloudId, id: 'cloud:' + cloudId, updatedAt: d.updatedAt }
+         state.drafts = [item, ...state.drafts.filter(x => x.cloudId !== snapshot.cloudId && x.id !== snapshot.id && x.cloudId !== cloudId)]
+-        ui.toast(state.savedAt ? '草稿已保存到云端' : '已保存点击时的版本，后续修改尚未保存', 'success')
++        if (!options.silent) ui.toast(state.savedAt ? '草稿已保存到云端' : '已保存点击时的版本，后续修改尚未保存', 'success')
+         return true
+       } catch (e: any) { if (identity === identityRequest && d === state.editor) state.editorError = '云端草稿保存失败，编辑内容已保留：' + e.message; return false }
+       finally { if (identity === identityRequest) state.savingDraft = false }
+@@ -365,7 +373,7 @@ export const communityPlugin = {
+     async function resumeDraft(draft: CommunityDraft) {
+       const identity = identityRequest, request = ++editorRequest
+       try {
+-        const detail = draft.cloudId ? await api.baGetDraft(draft.cloudId, 0) : null
++        const detail = draft.cloudId && !draft.legacy ? await api.baGetDraft(draft.cloudId, 0) : null
+         if (identity !== identityRequest || request !== editorRequest || draft.owner !== owner()) return false
+         return openEditor(detail ? asCloudDraft({ ...detail, baId: detail.baId || detail.ba?.id || draft.baId, ba: detail.ba || { name: draft.boardName } }) : draft)
+       } catch (e: any) { if (identity === identityRequest) state.draftsError = '打开云端草稿失败：' + e.message; return false }
+@@ -378,6 +386,7 @@ export const communityPlugin = {
+         if (!await ui.confirm?.('放弃未保存的修改', '这部分内容尚未保存到云端，确定关闭？', { okText: '放弃修改', cancelText: '继续编辑' })) return false
+       }
+       if (d !== state.editor) return false
++      if (d) { try { removeCommunityDraft(d.owner, d.id) } catch {} }
+       state.editor = null; return true
+     }
+     async function publish() {
+@@ -392,21 +401,21 @@ export const communityPlugin = {
+         else await api.baCreatePost(d.baId, d.title.trim(), d.content, d.contentType, d.cloudId || 0)
+         if (identity !== identityRequest) return false
+         if (d.postId && d.cloudId) { try { await api.baDeleteDraft(d.cloudId) } catch { ui.toast('文章已更新，云端草稿未清理，可在草稿列表手动删除', 'warn') } }
+-        if (d.legacy) { try { removeCommunityDraft(d.owner, d.id) } catch {} }
++        try { removeCommunityDraft(d.owner, d.id) } catch {}
+         state.editor = null; void refreshDrafts(); ui.toast(d.postId ? '文章已更新' : '文章已发布', 'success')
+         if (Number(state.viewing?.id) === d.baId) await enter(state.viewing)
+         return true
+       } catch (e: any) { if (identity === identityRequest) state.editorError = '发布失败，编辑内容已保留：' + e.message; return false }
+       finally { if (identity === identityRequest) state.publishing = false }
+     }
+-    async function deleteDraft(id: string) {
+-      const d = state.drafts.find(d => d.id === id), identity = identityRequest
++    async function deleteDraft(id: string, local?: boolean) {
++      const d = state.drafts.find(d => d.id === id && (local === undefined || !!d.legacy === local)), identity = identityRequest
+       if (!d || d.owner !== owner() || state.savingDraft || state.publishing) return
+       try {
+-        if (d.cloudId) await api.baDeleteDraft(d.cloudId)
++        if (d.cloudId && !d.legacy) await api.baDeleteDraft(d.cloudId)
+         else removeCommunityDraft(owner(), id)
+         if (identity !== identityRequest) return
+-        draftRequest++; state.draftsLoading = false; state.drafts = state.drafts.filter(d => d.id !== id)
++        draftRequest++; state.draftsLoading = false; state.drafts = state.drafts.filter(item => item !== d)
+       } catch (e) { if (identity === identityRequest) fail('删除草稿失败：', e) }
+     }
+     ctx.set('community', { state, load, mine, countOf, owns, create, createWithAvatar, edit, manage, loadGroups, closeGroups, bindGroup, enter, exitBoard, backToPosts, openPost, uploadAvatar, focus, loadFollows, isFollowed, toggleFollow, loadMorePosts,
+diff --git a/src/plugins/ws.ts b/src/plugins/ws.ts
+index 55f5a0a..043dba7 100644
+--- a/src/plugins/ws.ts
++++ b/src/plugins/ws.ts
+@@ -74,7 +74,7 @@ export const wsPlugin = {
+     function log(...a) { ctx.logger?.info('[ws]', ...a) }
+ 
+     function sendJson(obj) {
+-      if (socket && socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify(obj))
++      if (socket && socket.readyState === WebSocket.OPEN) {socket.send(JSON.stringify(obj));return true}return false
+     }
+ 
+     async function url() {
+@@ -106,6 +106,7 @@ export const wsPlugin = {
+           data: { userId: auth.state.user?.id, token: api.token, platform: 'Web', deviceId: auth.deviceId || deviceId() },
+         })
+         clearInterval(hbTimer)
++        ctx.emit('ws/draft-ready')
+         hbTimer = setInterval(() => sendJson({ seq: seq(), cmd: 'heartbeat', data: {} }), hbMs)
+         // 稳定计时：存活够久才认为「真的连上了」，把重连计数归零；
+         // 若在此期间被秒断，onclose 会清掉这个计时器，retry 得以继续累加
+@@ -224,6 +225,7 @@ export const wsPlugin = {
+       connect,
+       close,
+       reconnect: () => { close(); retry = 0; connect() },   // 手动重连：重置计数，重新快速重连
++      sendDraft(chatId:string,input:string){if(!chatId||typeof input!=='string'||input.length>200000)return false;return sendJson({seq:seq(),cmd:'inputInfo',data:{chatId,input,deviceId:auth.deviceId||deviceId()}})},
+       get online() { return state.status === 'online' },
+       send: sendJson,
+     }
+diff --git a/RELEASE_NOTES_1.0.27.md b/RELEASE_NOTES_1.0.27.md
+new file mode 100644
+index 0000000..0be6652
+--- /dev/null
++++ b/RELEASE_NOTES_1.0.27.md
+@@ -0,0 +1,61 @@
++# YH LaoDa 1.0.27 — 聊天输入区与 Markdown 编辑器
++
++基线：当前本机 1.0.26 源码（提交 `3a3364a`），续接超时对话保留的编辑器修改。保留 1.0.26 的 EXIF、图片拖动、资料卡及图片可靠发送修复。未访问或推送用户 GitHub 账号。
++
++## 主要改动
++
++- 聊天输入区改为紧凑布局，随文字自动增高，常用附件入口常驻，其他功能收入展开菜单；保留 AI、快捷回复、录音、录像、拖放及附件编辑。
++- 共用 Markdown 工具栏支持自定义常用工具、选区格式化、撤销/重做、标题、加粗、斜体、删除线、下划线、高亮、引用、列表、链接、代码、表格、公式和脚注入口。
++- 保留 Enter 发送、Shift+Enter 换行和中文输入法候选确认保护；发送失败保留输入，发送期间新输入不会被成功回执清空。
++- 引用栏紧凑展示发送者、摘要、图片缩略图或媒体图标，保留原消息 ID。切换会话后恢复对应文字、格式和引用。
++- 聊天草稿按账号和会话分隔，防抖暂存文字，使用官方 WebSocket `inputInfo` 同步，接收 `draft_input`；冲突可选择云端或本机版本。附件仍只保存在当前运行会话内存中。
++- 独立文章编辑器提供实时写作、Markdown 源文和双栏预览；支持拖动分栏、双向比例滚动、预览定位到原文、大纲、查找替换、行号、缩放和统计。
++- 实时写作保留 Tiptap/ProseMirror；补充公式编辑、代码语言选择/复制、按需代码高亮和表格增删行列。KaTeX/Shiki 按需载入，预览经过已有 HTML 净化。
++- Markdown 导入/导出、HTML 导出、复制为富文本、通过系统打印保存 PDF，以及独立窗口往返编辑继续可用。
++- 文章停笔后防抖自动保存官方云端草稿，保留手动保存按钮；自动保存使用状态提示，不反复弹成功 Toast。保存失败保留正文和本机恢复副本。
++- 修复恢复副本带旧云端 ID 时错误读取旧内容的问题；断网可打开本机副本，删除副本不会删除同 ID 云端草稿。确认保存、发布或放弃后清理对应本机副本，保存期间的新修改继续保留。
++- 超过 5 万字符默认进入源文模式，并使用原生文字绘制，避免每次输入重建大量高亮节点。撤销记录、预览和统计均做容量限制或延后处理。
++- 深浅色、窄屏、工具展开及模式切换过渡；遵从系统减少动态效果设置。
++- 新编辑核心 `src/core/editor/core.ts` 原被全局 `core.*` 忽略规则误伤，已增加例外，确保完整源码与后续 PR 包含该文件。
++
++## 验证结果
++
++- `npm run typecheck`、`npm run build`（含 preflight）、`git diff --check` 通过。
++- `npm run test:chat`：104 项通过。
++- `npm run test:image-delivery`：9 项通过。
++- `npm run test:community`：23 项通过。
++- `npm run test:editor`：7 项通过。
++- `npm run test:windows-assets`：2 项通过。以上合计 145 项。
++- `npm run test:ui-editor`：真实 Vue 组件、模拟服务的浏览器回归通过，包括选区格式/历史、三模式、公式/代码、表格任务、分栏/同步滚动、自动保存及失败保留、独立窗口、深浅主题、320/390/740/1280 宽度、会话草稿与引用、Enter/输入法/发送失败。
++- `npm run test:ui-uploads`：PNG/JPEG/WebP/GIF、缺失 MIME、上传字节保留、临时 404、回执丢失、未入库假成功、原 ID 重试及滚轮缩放通过。
++- `npm run test:ui-community-extended`：工具栏、图片上传、草稿保存与重载恢复、发布失败保留/成功发布、评论/分享/关联群聊、独立窗口及窄屏回归通过。
++- 长文档样本 88,904 字符，本轮 8 次自动化输入操作中位数 41 ms、最大 80 ms，浏览器 JavaScript 堆约 22 MiB。这不是整机、整个应用 RAM 或 Windows WebView2 实机性能承诺。
++- `npm run test:sidecar-port`：真实打包 sidecar 两次在 8902 启动，SIGTERM 退出后立即重新绑定成功。Windows 壳原有主窗口关闭、托盘退出和最终退出清理路径保留。
++- 本机 Rust 1.92 交叉编译 Windows x64 release 通过；安装器使用 NSIS 构建，包含前端、Node sidecar、官方 Node runtime、WebView2 Loader 及微软 WebView2 安装引导程序。
++
++## 测试范围与使用说明
++
++- 未使用真实账号联调官方云端草稿、消息和附件；网络协议验证使用模拟接口。没有在 Windows 实机启动安装器或验证系统打印对话框。
++- 聊天“已提交云端同步”表示 WebSocket 已提交，不冒充服务器持久化确认；收到对应草稿推送后显示已同步。
++- 实时写作会按编辑模型规范化 Markdown。需要保留复杂 HTML 或精确源文格式时使用源文/双栏模式；长文档可手动切换实时写作，但可能增加解析耗时。
++- PDF 导出调用系统打印功能，需要在打印对话框选择保存 PDF。没有引入额外 PDF 引擎。
++- 仍存在 Vite 大分块体积提示；未为消除提示而关闭检查。数学、代码高亮和编辑器使用按需加载。
++
++## 主要维护入口
++
++`Composer.vue`、`QuoteBar.vue`、`CommunityEditor.vue`、`CommunityEditorHost.vue`、`FloatingCommunityEditor.vue`、`MarkdownCanvas.vue`、`MarkdownSource.vue`、`EditorPreview.vue`、`EditorToolbar.vue`、`src/core/editor/`、`composer-drafts.ts`、`plugins/chat.ts`、`plugins/community.ts`、`plugins/ws.ts`。
++
++## 本机构建
++
++```bash
++npm ci
++npm run typecheck
++npm run build
++node scripts/build-server-bundle.mjs
++npm run fetch:windows-node
++# Windows 主机按现有 Tauri 构建流程执行；Linux 交叉编译需要 MinGW 和 NSIS。
++cargo build --manifest-path src-tauri/Cargo.toml --release --target x86_64-pc-windows-gnu
++WEBVIEW2_BOOTSTRAPPER=/path/MicrosoftEdgeWebview2Setup.exe bash scripts/package-windows-local.sh
++```
++
++源码包不包含 node_modules、Rust 编译缓存、账号凭据或用户聊天数据。依赖锁文件、构建脚本和全部新增编辑器文件均包含在内。
+diff --git a/scripts/test-editor-core.mjs b/scripts/test-editor-core.mjs
+new file mode 100644
+index 0000000..0e94798
+--- /dev/null
++++ b/scripts/test-editor-core.mjs
+@@ -0,0 +1,18 @@
++import assert from 'node:assert/strict'
++import {test,after} from 'node:test'
++import {build} from 'esbuild'
++import {mkdtemp,rm} from 'node:fs/promises'
++import {resolve,join} from 'node:path'
++import {pathToFileURL} from 'node:url'
++const folder=await mkdtemp(join(resolve('node_modules'),'.editor-test-'))
++await build({stdin:{contents:"export * from './src/core/editor/core';export * from './src/core/composer-drafts';export {wsPlugin} from './src/plugins/ws'",resolveDir:process.cwd()},outfile:join(folder,'subject.mjs'),bundle:true,platform:'node',format:'esm',packages:'external'})
++const core=await import(pathToFileURL(join(folder,'subject.mjs')))
++after(()=>rm(folder,{recursive:true,force:true}))
++const data=new Map();globalThis.localStorage={getItem:k=>data.get(k)||null,setItem:(k,v)=>data.set(k,v),removeItem:k=>data.delete(k)}
++await test('selection formatting preserves surrounding text and chooses template content without a selection',()=>{const a=core.markdownAction('left selected right',{start:5,end:13},'bold');assert.equal(a.text,'left **selected** right');assert.equal(a.text.slice(a.start,a.end),'selected');assert.equal(core.markdownAction('text',{start:0,end:4},'highlight').text,'<mark>text</mark>');assert.match(core.markdownAction('',{start:0,end:0},'math').text,/\$a\^2/);assert.match(core.markdownAction('a\nb',{start:0,end:3},'ordered').text,/^1. a\n2. b$/)})
++await test('list Enter continues numbering/tasks and exits empty lists; indent/outdent preserve the text',()=>{assert.equal(core.markdownEnter('7. item',{start:7,end:7}).text,'7. item\n8. ');assert.equal(core.markdownEnter('- [x] done',{start:10,end:10}).text,'- [x] done\n- [ ] ');assert.equal(core.markdownEnter('- ',{start:2,end:2}).text,'');const a=core.indentMarkdown('a\nb',{start:0,end:3});assert.equal(a.text,'  a\n  b');assert.equal(core.indentMarkdown(a.text,{start:0,end:a.text.length},true).text,'a\nb')})
++await test('undo groups typing, branches after undo, respects formatting boundaries and bounds stored data',()=>{const h=core.createTextHistory('',6000);h.record('a');h.record('ab');assert.equal(h.undo(),'');assert.equal(h.redo(),'ab');h.record('ab',false);h.record('**ab**');assert.equal(h.undo(),'ab');h.record('new',false);assert.equal(h.canRedo,false);for(let i=0;i<30;i++)h.record('x'.repeat(2000)+i,false);assert.ok(h.bytes<10000)})
++await test('drafts debounce cloud synchronization, isolate conversations/accounts, preserve offline data and detect conflicts',async()=>{data.clear();let owner='a',online=false;const calls=[],d=core.createComposerDrafts({owner:()=>owner,delay:15,send:(c,t)=>{if(!online)return false;calls.push([owner,c.id,t]);return true}}),one={id:'one',type:2},two={id:'two',type:2};d.get(one).text='first';d.get(one).text='first edit';await new Promise(r=>setTimeout(r,25));assert.equal(calls.length,0);assert.match(d.get(one).syncStatus,/本机/);d.get(two).text='second';online=true;d.flush();assert.deepEqual(calls.map(c=>c[1]).sort(),['one','two']);d.receive('one','from another device');assert.equal(d.get(one).text,'first edit');assert.equal(d.get(one).remoteText,'from another device');d.useRemote(one);assert.equal(d.get(one).text,'from another device');owner='b';assert.equal(d.get(one).text,'');d.get(one).text='account b';d.flush(one);owner='a';assert.equal(d.get(one).text,'from another device');d.clear();assert.equal(d.get(one).text,'from another device');d.dispose()})
++await test('incoming drafts do not overwrite unsent local text and same-ID ambiguous chat types are not mixed',()=>{data.clear();const d=core.createComposerDrafts({owner:()=> 'a'}),a={id:'same',type:1},b={id:'same',type:2};d.get(a).text='private';d.get(b).text='group';d.receive('same','remote');assert.equal(d.get(a).text,'private');assert.equal(d.get(b).text,'group');d.dispose()})
++await test('document statistics count CJK words, characters, logical lines and reading time',()=>{const s=core.editorStats('你好 editor\nworld');assert.equal(s.words,4);assert.equal(s.lines,2);assert.equal(s.minutes,1)})
++await test('official WebSocket draft command uses inputInfo and exactly the documented fields',async()=>{const original=globalThis.WebSocket,cleanups=[];let socket;globalThis.WebSocket=class{static OPEN=1;readyState=0;sent=[];constructor(){socket=this}send(v){this.sent.push(JSON.parse(v))}close(){this.readyState=3}};const ctx={auth:{state:{status:'idle',user:{id:'me'}},deviceId:'device-fixture'},api:{token:'virtual',wsAddress:async()=> 'wss://local.invalid/ws'},set(k,v){this[k]=v},effect(fn){cleanups.push(fn())},emit(){},logger:{info(){}}};try{core.wsPlugin.apply(ctx);await ctx.ws.connect();socket.readyState=1;socket.onopen();assert.equal(ctx.ws.sendDraft('chat','草稿'),true);assert.deepEqual(socket.sent.at(-1).data,{chatId:'chat',input:'草稿',deviceId:'device-fixture'});assert.equal(socket.sent.at(-1).cmd,'inputInfo')}finally{for(const fn of cleanups)fn?.();ctx.ws.close();globalThis.WebSocket=original}})
+diff --git a/scripts/test-ui-editor-rebuild.mjs b/scripts/test-ui-editor-rebuild.mjs
+new file mode 100644
+index 0000000..a74388e
+--- /dev/null
++++ b/scripts/test-ui-editor-rebuild.mjs
+@@ -0,0 +1,63 @@
++import assert from 'node:assert/strict'
++import {createServer} from 'vite'
++import vue from '@vitejs/plugin-vue'
++import {mkdir,writeFile} from 'node:fs/promises'
++const {chromium}=await import(process.env.PLAYWRIGHT_MODULE||'playwright')
++const server=await createServer({configFile:false,plugins:[vue()],server:{host:'127.0.0.1',port:0},logLevel:'error'});await server.listen()
++const browser=await chromium.launch({executablePath:process.env.CHROMIUM_EXECUTABLE||undefined,args:['--no-sandbox','--disable-dev-shm-usage']})
++const context=await browser.newContext({viewport:{width:1360,height:920}}),page=await context.newPage(),errors=[],base='http://127.0.0.1:'+server.httpServer.address().port
++page.on('pageerror',e=>{errors.push(e.message);console.error('PAGE',e.message)})
++const qa=process.env.EDITOR_QA_DIR||'/tmp/yh-editor-qa';await mkdir(qa,{recursive:true})
++async function shot(name){await page.screenshot({path:qa+'/'+name+'.png'})}
++async function tool(name){let button=page.getByRole('button',{name,exact:true});if(await button.isVisible())await button.click();else {await page.getByRole('button',{name:'更多 Markdown 工具',exact:true}).click();await page.getByRole('menuitem',{name,exact:true}).click()}}
++try {
++ await page.goto(base+'/scripts/ui-fixture/community.html');await page.getByRole('button',{name:'进入板块 笔记 / 随感',exact:true}).click();await page.getByRole('button',{name:'发布文章',exact:true}).click()
++ const dialog=page.getByRole('dialog',{name:'撰写文章',exact:true}),body=page.getByLabel('文章正文',{exact:true})
++ await page.getByLabel('文章标题',{exact:true}).fill('编辑器重构回归')
++ await body.fill('需要格式化的文字');await body.evaluate(el=>{const r=document.createRange();r.selectNodeContents(el);const s=getSelection();s.removeAllRanges();s.addRange(r)})
++ await tool('加粗');await page.waitForFunction(()=>window.__community.ctx.community.state.editor.content==='**需要格式化的文字**')
++ await page.getByRole('button',{name:'撤销',exact:true}).click();await page.waitForFunction(()=>window.__community.ctx.community.state.editor.content==='需要格式化的文字')
++ await page.getByRole('button',{name:'重做',exact:true}).click();await page.waitForFunction(()=>window.__community.ctx.community.state.editor.content==='**需要格式化的文字**')
++ await page.getByRole('button',{name:'源文',exact:true}).click();const source=page.getByLabel('Markdown 源文',{exact:true})
++ await source.fill('# 写作测试\n\n```javascript\nconst value = 42\n```\n\n$E=mc^2$\n\n$$\n\\frac{a}{b}\n$$\n\n- [ ] 一个任务\n\n<script>window.editorEvil=true</script>')
++ await page.getByRole('button',{name:'双栏',exact:true}).click();await page.locator('.editor-preview .katex').first().waitFor();await page.locator('.editor-preview pre code span').first().waitFor()
++ assert.equal(await page.locator('.editor-preview script').count(),0);assert.equal(await page.evaluate(()=>window.editorEvil),undefined)
++ const separator=page.getByRole('separator',{name:'调整编辑预览比例'}),r=await separator.boundingBox();await page.mouse.move(r.x+3,r.y+40);await page.mouse.down();await page.mouse.move(r.x+120,r.y+40,{steps:8});await page.mouse.up();assert.ok(Number(await separator.getAttribute('aria-valuenow'))>55)
++ await page.locator('.editor-preview input[type=checkbox]').check();await page.waitForFunction(()=>window.__community.ctx.community.state.editor.content.includes('- [x]'))
++ await page.locator('.editor-preview select[aria-label="代码语言"]').selectOption('typescript');await page.waitForFunction(()=>window.__community.ctx.community.state.editor.content.includes('```typescript'))
++ await shot('split-dark')
++ await page.getByRole('button',{name:'实时写作',exact:true}).click();await page.locator('.markdown-canvas .rich-math .katex').first().waitFor()
++ await page.getByRole('button',{name:'源文',exact:true}).click();await source.fill('');await page.getByRole('button',{name:'实时写作',exact:true}).click();await page.waitForFunction(()=>!document.querySelector('.markdown-canvas h1'));await body.click();await page.keyboard.type('# ');await page.keyboard.type('真正的标题');assert.equal(await page.locator('.markdown-canvas h1').textContent(),'真正的标题')
++ await page.keyboard.press('Enter');await page.keyboard.type('- ');await page.keyboard.type('列表一');await page.keyboard.press('Enter');await page.keyboard.type('列表二');assert.equal(await page.locator('.markdown-canvas ul:not([data-type]) li').count(),2)
++ await page.keyboard.press('Enter');await page.keyboard.press('Enter');await page.keyboard.type('退出列表后的正文');await page.locator('.markdown-canvas .tiptap > p').filter({hasText:'退出列表后的正文'}).waitFor()
++ console.log('PHASE table');await tool('插入表格');await page.locator('.markdown-canvas table').waitFor();const rows=await page.locator('.markdown-canvas tr').count();await page.getByRole('button',{name:'下方插入行',exact:true}).click();assert.equal(await page.locator('.markdown-canvas tr').count(),rows+1);await page.getByRole('button',{name:'右侧插入列',exact:true}).click();assert.equal(await page.locator('.markdown-canvas tr').first().locator('th,td').count(),3)
++ await page.getByRole('button',{name:'关闭表格工具',exact:true}).click()
++ console.log('PHASE formula');await tool('独立公式');await page.getByLabel('数学公式',{exact:true}).fill('\\sqrt{x^2+y^2}');await page.getByRole('button',{name:'插入公式',exact:true}).click();await page.locator('.markdown-canvas .rich-math .katex').last().waitFor()
++ await page.getByRole('button',{name:'查找替换',exact:true}).click();await page.getByLabel('查找文字',{exact:true}).fill('正文');await page.getByLabel('替换文字',{exact:true}).fill('文章');await page.getByRole('button',{name:'全部替换',exact:true}).click();await page.waitForFunction(()=>window.__community.ctx.community.state.editor.content.includes('文章'));await page.getByRole('button',{name:'关闭查找',exact:true}).click()
++ console.log('PHASE autosave');await page.waitForFunction(()=>window.__community.ctx.community.state.savedAt>0);assert.ok(await page.evaluate(()=>window.__community.calls.some(c=>c[0]==='saveDraft'&&c[1]===925)))
++ await shot('rich-dark');await page.evaluate(()=>document.documentElement.dataset.theme='light');await shot('rich-light')
++ // Autosave errors retain text and a manual retry uses the same official draft
++ // service. Background saves must not repeatedly produce success Toasts.
++ await page.getByRole('button',{name:'源文',exact:true}).click();await page.evaluate(()=>window.__community.fail.saveDraft=true);await source.fill('断网后保留的正文');await page.getByRole('alert').filter({hasText:'云端草稿保存失败'}).waitFor();assert.equal(await page.evaluate(()=>window.__community.ctx.community.state.editor.content),'断网后保留的正文');assert.equal(await page.evaluate(()=>window.__community.errors.filter(e=>e==='草稿已保存到云端').length),0)
++ await page.evaluate(()=>window.__community.fail.saveDraft=false);await page.getByRole('button',{name:'保存草稿',exact:true}).click();await page.waitForFunction(()=>window.__community.ctx.community.state.savedAt>0);assert.equal(await page.evaluate(()=>window.__community.calls.filter(c=>c[0]==='saveDraft').at(-1)[3]),'断网后保留的正文')
++ await page.getByRole('button',{name:'源文',exact:true}).click();const long='# 长文档\n\n'+Array.from({length:2500},(_,i)=>'## 记录 '+i+'\n\n这一段记录文档编辑与性能验证，包含一些文字。\n').join('\n');assert.ok(long.length<200000);console.log('SOURCE-BOX',await source.boundingBox(),await source.isVisible(),await source.isEnabled(),await source.isEditable());await source.fill('短文本');console.log('SMALL-FILL-OK');await writeFile(qa+'/large.md',long);await page.getByLabel('导入 Markdown').setInputFiles(qa+'/large.md');await page.waitForFunction(n=>window.__community.ctx.community.state.editor.content.length===n,long.length)
++ console.log('PHASE large-input');const latencies=[];for(let i=0;i<8;i++){const started=Date.now();await source.press('End');await source.pressSequentially('测');latencies.push(Date.now()-started)}
++ const largeContent=await source.inputValue();for(let i=0;i<3;i++){await page.getByRole('button',{name:'双栏',exact:true}).click();await page.getByRole('button',{name:'源文',exact:true}).click();assert.equal(await source.inputValue(),largeContent)}
++ await page.getByRole('button',{name:'双栏',exact:true}).click();await page.waitForFunction(()=>document.querySelectorAll('.editor-preview h2').length===2500);await source.evaluate(el=>el.scrollTop=el.scrollHeight*.7);await page.waitForTimeout(80);const ratios=await page.evaluate(()=>{const a=document.querySelector('.source-input'),b=document.querySelector('.editor-preview');return [a.scrollTop/(a.scrollHeight-a.clientHeight),b.scrollTop/(b.scrollHeight-b.clientHeight)]});assert.ok(Math.abs(ratios[0]-ratios[1])<.05)
++ const cdp=await context.newCDPSession(page),heap=await cdp.send('Runtime.getHeapUsage');console.log('PERFORMANCE',JSON.stringify({characters:largeContent.length,keystrokeMaxMs:Math.max(...latencies),keystrokeMedianMs:latencies.sort((a,b)=>a-b)[4],heapMiB:Math.round(heap.usedSize/1048576)}))
++ await page.getByRole('button',{name:'源文',exact:true}).click();await source.fill('保存的正文')
++ console.log('PHASE popup');const popupPromise=page.waitForEvent('popup');await page.getByRole('button',{name:'在独立窗口编辑',exact:true}).click();const popup=await popupPromise;await popup.getByLabel('文章正文',{exact:true}).waitFor();await popup.getByLabel('文章正文',{exact:true}).fill('独立窗口修改');await page.waitForFunction(()=>window.__community.ctx.community.state.editor.content==='独立窗口修改');await popup.getByRole('button',{name:'返回主窗口编辑',exact:true}).click();await dialog.waitFor();assert.equal(await source.inputValue(),'独立窗口修改')
++ for(const width of [1280,740,390,320]){await page.setViewportSize({width,height:820});await page.waitForTimeout(100);assert.ok(await dialog.evaluate(el=>el.scrollWidth<=el.clientWidth+1));await shot('editor-'+width)}
++ await page.goto(base+'/scripts/ui-fixture/index.html');await page.waitForFunction(()=>window.__qa);await page.evaluate(async()=>{const {ctx}=window.__qa;await ctx.chat.open(ctx.chat.state.conversations.find(c=>c.id==='normal'));ctx.ws={state:{status:'online',error:''},online:true,sendDraft:(id,text)=>{window.__draftCalls||=[];window.__draftCalls.push([id,text]);return true}}})
++ const composer=page.getByLabel('聊天消息',{exact:true});await composer.fill('选中文字');await composer.evaluate(el=>{el.focus();el.setSelectionRange(0,4);el.dispatchEvent(new Event('select'))});await page.getByRole('button',{name:'Markdown 格式工具',exact:true}).click();await tool('加粗');assert.equal(await composer.inputValue(),'**选中文字**');assert.equal(await page.getByLabel('消息格式').inputValue(),'3')
++ await composer.press('Shift+Enter');assert.ok((await composer.inputValue()).includes('\n'));await composer.fill('准备同步的消息');await page.waitForFunction(()=>window.__draftCalls?.some(v=>v[0]==='normal'&&v[1]==='准备同步的消息'))
++ await page.evaluate(async()=>{const {ctx}=window.__qa;ctx.chat.setReply({id:'original-id',sender:'发送者',type:1,content:{text:'要引用的文字'}});await ctx.chat.open(ctx.chat.state.conversations.find(c=>c.id==='other'));await ctx.chat.open(ctx.chat.state.conversations.find(c=>c.id==='normal'))});await page.getByLabel('聊天消息').waitFor();assert.equal(await composer.inputValue(),'准备同步的消息');assert.equal(await page.evaluate(()=>window.__qa.ctx.chat.state.reply.id),'original-id')
++ await shot('composer-320');await page.setViewportSize({width:1280,height:820});await shot('composer-1280')
++ // The general UI fixture deliberately has no sending transport. Supply a fake
++ // bot at the protocol boundary, retaining the real chat service and composer.
++ await page.evaluate(()=>{window.__sent=[];window.__qa.ctx.bots=[{sendMessage:async(...args)=>{if(window.__sendFails)throw Error('模拟发送失败');window.__sent.push(args);return 'editor-send-'+window.__sent.length}}]})
++ await composer.fill('失败时保留草稿');await page.evaluate(()=>window.__sendFails=true);await composer.press('Enter');await page.waitForFunction(()=>!window.__qa.ctx.chat.state.sending);assert.equal(await composer.inputValue(),'失败时保留草稿');assert.equal(await page.evaluate(()=>window.__sent.length),0)
++ await page.evaluate(()=>window.__sendFails=false);await composer.fill('输入法确认');await composer.dispatchEvent('keydown',{key:'Enter',code:'Enter',isComposing:true});assert.equal(await composer.inputValue(),'输入法确认');assert.equal(await page.evaluate(()=>window.__sent.length),0)
++ await composer.fill('按回车发送');await composer.press('Enter');await page.waitForFunction(()=>document.querySelector('.composer textarea').value==='');assert.equal(await page.evaluate(()=>window.__sent.length),1);assert.equal(await page.evaluate(()=>window.__sent[0][3].quoteId),'original-id')
++ assert.deepEqual(errors,[]);console.log('PASS: formatting/selection/history; three modes; real syntax and math; split drag/scroll; task and table edits; Typora lists; autosave; detached round-trip; long-document input; themes/narrow layouts; chat shortcuts/drafts/reply ID/Enter')
++} catch(e){console.error('FAILURE',e);try{await page.screenshot({path:qa+'/failure.png',timeout:3000})}catch{};console.error('STATE',await Promise.race([page.evaluate(()=>({text:window.__community?.ctx.community.state.editor?.content?.slice(0,300),html:document.querySelector('.community-editor')?.innerHTML.slice(0,1500)})),new Promise(r=>setTimeout(()=>r('Renderer unresponsive'),2000))]));throw e} finally {await context.close();await browser.close();await server.close()}
+diff --git a/src/components/EditorPreview.vue b/src/components/EditorPreview.vue
+new file mode 100644
+index 0000000..234b797
+--- /dev/null
++++ b/src/components/EditorPreview.vue
+@@ -0,0 +1,18 @@
++<script setup lang="ts">
++import { shallowRef,ref,watch,onBeforeUnmount,onMounted,nextTick } from 'vue'
++import { previewBlocks,renderMath,highlightCode,codeLanguages } from '../core/editor/render'
++import { fixResourceUrls } from '../core/res'
++const props=defineProps<{content:string;active?:boolean;zoom?:number}>(),emit=defineEmits(['scroll','edit','language','task'])
++const blocks=shallowRef<ReturnType<typeof previewBlocks>>([]),root=ref<HTMLElement>();let timer:ReturnType<typeof setTimeout>,generation=0,observer:MutationObserver,disposed=false
++async function enrich(){const seq=++generation;await nextTick();if(!root.value||props.active===false)return;fixResourceUrls(root.value);for(const el of root.value.querySelectorAll<HTMLImageElement>('img'))el.loading='lazy';for(const el of root.value.querySelectorAll<HTMLElement>('[data-latex]'))void renderMath(el,el.dataset.latex||'',el.dataset.display==='true');for(const code of root.value.querySelectorAll<HTMLElement>('pre > code')){const pre=code.parentElement!,language=code.className.match(/language-([\w+-]+)/)?.[1]||'text',text=code.textContent||'';if(pre.querySelector('.code-actions'))continue;const actions=document.createElement('div');actions.className='code-actions';const select=document.createElement('select');select.setAttribute('aria-label','代码语言');for(const lang of Array.from(new Set([language,...codeLanguages]))){const option=document.createElement('option');option.value=lang;option.textContent=lang;select.append(option)}select.value=language;select.onchange=()=>emit('language',{start:Number(pre.closest<HTMLElement>('[data-source-start]')?.dataset.sourceStart||0),language:select.value});const copy=document.createElement('button');copy.textContent='复制';copy.onclick=async()=>{try{await navigator.clipboard.writeText(text);copy.textContent='已复制'}catch{copy.textContent='复制失败'}};actions.append(select,copy);pre.prepend(actions);void highlightCode(text,language).then(html=>{if(!disposed&&seq===generation&&code.isConnected)code.innerHTML=html})}for(const box of root.value.querySelectorAll<HTMLInputElement>('input[type=checkbox]')){box.disabled=false;box.onchange=()=>emit('task',{start:Number(box.closest<HTMLElement>('[data-source-start]')?.dataset.sourceStart||0),index:Array.from(box.closest<HTMLElement>('[data-source-start]')!.querySelectorAll('input[type=checkbox]')).indexOf(box),checked:box.checked})}}
++function update(){clearTimeout(timer);if(props.active===false)return;timer=setTimeout(()=>{blocks.value=previewBlocks(props.content);void enrich()},180)}
++watch(()=>[props.content,props.active],update,{immediate:true})
++function scroll(){const el=root.value!;emit('scroll',el.scrollTop/Math.max(1,el.scrollHeight-el.clientHeight))}
++function setScroll(ratio:number){if(root.value)root.value.scrollTop=ratio*Math.max(0,root.value.scrollHeight-root.value.clientHeight)}
++onMounted(()=>{observer=new MutationObserver(()=>{if(props.active!==false){for(const code of root.value?.querySelectorAll<HTMLElement>('pre > code')||[]){const text=code.textContent||'',lang=code.className.match(/language-([\w+-]+)/)?.[1]||'text';void highlightCode(text,lang).then(html=>{if(!disposed&&code.isConnected)code.innerHTML=html})}}});observer.observe(document.documentElement,{attributes:true,attributeFilter:['data-theme','style']})})
++onBeforeUnmount(()=>{disposed=true;clearTimeout(timer);generation++;observer?.disconnect()});defineExpose({setScroll})
++</script>
++<template><article ref="root" class="editor-preview" aria-label="文章预览" :style="{fontSize:(15*(zoom||100)/100)+'px'}" @scroll="scroll"><div v-for="block in blocks" :key="block.key" :data-source-start="block.start" v-html="block.html" @dblclick="e=>{if(!(e.target as HTMLElement).closest('button,select,input,a'))emit('edit',block.start)}"></div><p v-if="!content" class="empty-preview">正文实时预览</p></article></template>
++<style scoped>
++.editor-preview{flex:1;min-width:0;min-height:0;overflow:auto;padding:22px 28px 80px;color:var(--fg);background:var(--card);line-height:1.85;overflow-wrap:anywhere}.editor-preview :deep(img){max-width:100%;height:auto;border-radius:7px}.editor-preview :deep(pre){overflow:auto;background:var(--card2);padding:12px 16px;border-radius:8px;font-size:13px;white-space:pre}.editor-preview :deep(.code-actions){display:flex;justify-content:space-between;gap:10px;margin-bottom:12px}.editor-preview :deep(.code-actions select),.editor-preview :deep(.code-actions button){border:0;background:transparent;color:var(--fg2);font:12px inherit;padding:3px 5px;border-radius:4px;cursor:pointer}.editor-preview :deep(.code-actions button:hover){background:var(--acc-soft);color:var(--fg)}.editor-preview :deep(table){border-collapse:collapse;display:block;overflow:auto;max-width:100%}.editor-preview :deep(td),.editor-preview :deep(th){padding:8px 10px;border:1px solid var(--line)}.editor-preview :deep(blockquote){border-left:3px solid var(--link,var(--fg));padding:8px 16px;margin-left:0;background:var(--card2);border-radius:0 6px 6px 0}.editor-preview :deep(a){color:var(--link,var(--fg))}.editor-preview :deep(.katex-display){overflow-x:auto;overflow-y:hidden}.empty-preview{color:var(--fg2)}.editor-preview :deep(input[type=checkbox]){accent-color:var(--acc)}
++</style>
+diff --git a/src/components/EditorToolbar.vue b/src/components/EditorToolbar.vue
+new file mode 100644
+index 0000000..c1d6847
+--- /dev/null
++++ b/src/components/EditorToolbar.vue
+@@ -0,0 +1,27 @@
++<script setup lang="ts">
++import { ref,computed,onMounted,onBeforeUnmount } from 'vue'
++import Icon from '../console/components/Icon.vue'
++import type { EditAction } from '../core/editor/core'
++const props=defineProps<{disabled?:boolean;undo?:boolean;redo?:boolean;compact?:boolean}>()
++const emit=defineEmits<{(e:'action',action:EditAction):void;(e:'undo'):void;(e:'redo'):void}>()
++const tools=[{id:'bold',label:'加粗',icon:'bold',key:'Ctrl+B'},{id:'italic',label:'斜体',icon:'italic',key:'Ctrl+I'},{id:'strike',label:'删除线',icon:'strike'},{id:'underline',label:'下划线',icon:'underline'},{id:'highlight',label:'高亮',icon:'pencil'},{id:'quote',label:'引用',icon:'quote'},{id:'bullet',label:'无序列表',icon:'list'},{id:'ordered',label:'有序列表',icon:'listOrdered'},{id:'task',label:'任务列表',icon:'check'},{id:'code',label:'行内代码',icon:'code'},{id:'link',label:'插入链接',icon:'link',key:'Ctrl+K'},{id:'image',label:'插入图片链接',icon:'image'},{id:'codeblock',label:'代码块',icon:'codeblock'},{id:'table',label:'插入表格',icon:'table'},{id:'math',label:'行内公式',icon:'formula'},{id:'mathblock',label:'独立公式',icon:'formula'},{id:'rule',label:'插入分隔线',icon:'minus'},{id:'footnote',label:'脚注',icon:'page'}]
++let saved:string[]|undefined;try{saved=JSON.parse(localStorage.getItem('yh.editor.toolbar')||'null')}catch{}
++const enabled=ref(Array.isArray(saved)?saved:['bold','italic','strike','underline','quote','bullet','ordered','code','link','codeblock']),open=ref(false),custom=ref(false),root=ref<HTMLElement>(),width=ref(900)
++const chosen=computed(()=>tools.filter(t=>enabled.value.includes(t.id))),limit=computed(()=>Math.max(2,Math.min(props.compact?8:12,Math.floor((width.value-160)/32)))),visible=computed(()=>chosen.value.slice(0,limit.value)),overflow=computed(()=>tools.filter(t=>!visible.value.includes(t)))
++function pick(id:string){if(props.disabled)return;emit('action',id as EditAction);open.value=false}
++function toggle(id:string){enabled.value=enabled.value.includes(id)?enabled.value.filter(x=>x!==id):[...enabled.value,id];try{localStorage.setItem('yh.editor.toolbar',JSON.stringify(enabled.value))}catch{}}
++let observer:ResizeObserver
++function outside(e:PointerEvent){if(!root.value?.contains(e.target as Node)){open.value=false;custom.value=false}}
++onMounted(()=>{observer=new ResizeObserver(entries=>width.value=entries[0].contentRect.width);observer.observe(root.value!);document.addEventListener('pointerdown',outside)})
++onBeforeUnmount(()=>{observer?.disconnect();document.removeEventListener('pointerdown',outside)})
++</script>
++<template><div ref="root" class="editor-tools" role="toolbar" aria-label="Markdown 工具栏" @keydown.esc.stop="open=false;custom=false" @pointerdown="e=>{if((e.target as HTMLElement).closest('button'))e.preventDefault()}">
++<button type="button" aria-label="撤销" title="撤销 Ctrl+Z" :disabled="disabled||!undo" @click="emit('undo')"><Icon name="undo" :size="16"/></button><button type="button" aria-label="重做" title="重做 Ctrl+Shift+Z" :disabled="disabled||!redo" @click="emit('redo')"><Icon name="redo" :size="16"/></button><span class="et-divider"></span>
++<select aria-label="插入标题" title="标题 H1–H6" value="" :disabled="disabled" @change="pick(($event.target as HTMLSelectElement).value);($event.target as HTMLSelectElement).value='' "><option value="" disabled>标题</option><option v-for="n in 6" :key="n" :value="'h'+n">H{{n}}</option></select>
++<button v-for="tool in visible" :key="tool.id" type="button" :aria-label="tool.label" :title="tool.label+(tool.key?' '+tool.key:'')" :disabled="disabled" @click="pick(tool.id)"><Icon :name="tool.icon" :size="16"/></button>
++<button type="button" class="et-more" aria-label="更多 Markdown 工具" :aria-expanded="open" :disabled="disabled" @click="open=!open;custom=false"><Icon name="more" :size="17"/></button>
++<Transition name="tool-menu"><div v-if="open" class="et-menu" role="menu"><button v-for="tool in overflow" :key="tool.id" type="button" role="menuitem" @click="pick(tool.id)"><Icon :name="tool.icon" :size="16"/><span>{{tool.label}}</span><small>{{tool.key}}</small></button><button type="button" role="menuitem" @click="custom=!custom"><Icon name="settings" :size="16"/>自定义工具栏</button><div v-if="custom" class="et-custom"><label v-for="tool in tools" :key="tool.id"><input type="checkbox" :checked="enabled.includes(tool.id)" @change="toggle(tool.id)"/>{{tool.label}}</label></div></div></Transition>
++</div></template>
++<style scoped>
++.editor-tools{position:relative;display:flex;align-items:center;gap:2px;min-width:0;flex:1;color:var(--fg);height:32px}.editor-tools button,.editor-tools select{display:inline-flex;align-items:center;justify-content:center;gap:8px;border:0;background:transparent;color:inherit;border-radius:6px;height:29px;padding:5px 7px;flex-shrink:0;font:inherit;font-size:12px;cursor:pointer;transition:background .14s,color .14s,transform .12s}.editor-tools button:hover,.editor-tools select:hover{background:var(--acc-soft)}.editor-tools button:active{transform:translateY(1px)}.editor-tools button:disabled,.editor-tools select:disabled{opacity:.4;cursor:default}.editor-tools :focus-visible{outline:2px solid var(--link,var(--acc));outline-offset:1px}.et-divider{height:17px;border-left:1px solid var(--line);margin:0 4px}.editor-tools .et-more{margin-left:auto}.et-menu{position:absolute;top:calc(100% + 5px);right:0;z-index:40;min-width:210px;max-height:min(380px,55vh);overflow:auto;padding:5px;background:var(--card);border:1px solid var(--line);border-radius:9px;box-shadow:0 8px 24px #0002}.et-menu button{width:100%;justify-content:flex-start;height:32px}.et-menu small{margin-left:auto;color:var(--fg2);font-size:10px}.et-custom{display:grid;grid-template-columns:1fr 1fr;gap:8px;padding:10px 4px;font-size:11px}.et-custom label{display:flex;align-items:center;gap:4px}.et-custom input{accent-color:var(--acc)}.tool-menu-enter-active,.tool-menu-leave-active{transition:opacity .14s,transform .14s}.tool-menu-enter-from,.tool-menu-leave-to{opacity:0;transform:translateY(-4px)}@media(prefers-reduced-motion:reduce){*{transition:none!important}}
++</style>
+diff --git a/src/components/MarkdownSource.vue b/src/components/MarkdownSource.vue
+new file mode 100644
+index 0000000..337d177
+--- /dev/null
++++ b/src/components/MarkdownSource.vue
+@@ -0,0 +1,28 @@
++<script setup lang="ts">
++import { ref,computed,watch,nextTick,onBeforeUnmount } from 'vue'
++import { markdownAction,markdownEnter,indentMarkdown,escapeHtml,type EditAction } from '../core/editor/core'
++const props=defineProps<{modelValue:string;disabled?:boolean;active?:boolean;lineNumbers?:boolean;zoom?:number}>(),emit=defineEmits(['update:modelValue','undo','redo','image','scroll'])
++const input=ref<HTMLTextAreaElement>(),paint=ref<HTMLElement>(),gutter=ref<HTMLElement>(),highlight=ref(''),numbers=ref('1')
++// Large source documents use native text painting; a full highlighted overlay
++// would rebuild thousands of DOM spans on each input pause.
++const highlighted=computed(()=>props.modelValue.length<=50000)
++let selection={start:0,end:0},timer:ReturnType<typeof setTimeout>
++function remember(){if(input.value)selection={start:input.value.selectionStart,end:input.value.selectionEnd}}
++function refresh(){clearTimeout(timer);if(props.active===false)return;timer=setTimeout(()=>{const value=props.modelValue;highlight.value=highlighted.value?value.split('\n').map(line=>{const escaped=escapeHtml(line);return /^(#{1,6}\s|&gt;|\s*(?:[-*+] |\d+\. )|```|\$\$)/.test(escaped)?'<span class="md-marker">'+escaped+'</span>':escaped.replace(/(\*\*[^*]+\*\*|`[^`]+`|\$[^$]+\$|\[[^\]]+\]\([^)]*\))/g,'<span class="md-token">$1</span>')}).join('\n')+'\n':'';numbers.value=props.lineNumbers?Array.from({length:value.split('\n').length},(_,i)=>i+1).join('\n'):''},120)}
++watch(()=>[props.modelValue,props.active,props.lineNumbers],refresh,{immediate:true})
++function update(value:string,start?:number,end=start){emit('update:modelValue',value);if(start!=null)void nextTick(()=>{input.value?.focus();input.value?.setSelectionRange(start,end!);remember()})}
++function action(id:EditAction){rememberIfFocused();const value=markdownAction(props.modelValue,selection,id);update(value.text,value.start,value.end)}
++function rememberIfFocused(){if(document.activeElement===input.value)remember()}
++function key(e:KeyboardEvent){if(e.isComposing||props.disabled)return;remember();if((e.ctrlKey||e.metaKey)&&['z','y'].includes(e.key.toLowerCase())){e.preventDefault();emit(e.key.toLowerCase()==='y'||e.shiftKey?'redo':'undo');return}if(e.key==='Tab'){e.preventDefault();const v=indentMarkdown(props.modelValue,selection,e.shiftKey);update(v.text,v.start,v.end)}else if(e.key==='Enter'&&!e.ctrlKey&&!e.metaKey){e.preventDefault();const v=markdownEnter(props.modelValue,selection);update(v.text,v.start)}}
++function scroll(){const el=input.value;if(!el)return;if(paint.value){paint.value.scrollTop=el.scrollTop;paint.value.scrollLeft=el.scrollLeft}if(gutter.value)gutter.value.scrollTop=el.scrollTop;emit('scroll',el.scrollTop/Math.max(1,el.scrollHeight-el.clientHeight))}
++function setScroll(ratio:number){const el=input.value;if(el){el.scrollTop=ratio*Math.max(0,el.scrollHeight-el.clientHeight);scroll()}}
++function paste(e:ClipboardEvent){const files=Array.from(e.clipboardData?.files||[]).filter(f=>f.type.startsWith('image/'));if(files.length){e.preventDefault();for(const f of files)emit('image',f)}}
++function drop(e:DragEvent){const files=Array.from(e.dataTransfer?.files||[]).filter(f=>f.type.startsWith('image/'));if(files.length){e.preventDefault();for(const f of files)emit('image',f)}}
++function select(start:number,end=start){selection={start,end};void nextTick(()=>{input.value?.focus();input.value?.setSelectionRange(start,end);if(input.value){const line=props.modelValue.slice(0,start).split('\n').length-1;input.value.scrollTop=Math.max(0,line*parseFloat(getComputedStyle(input.value).lineHeight)-input.value.clientHeight/3);scroll()}})}
++defineExpose({action,select,setScroll,focus:()=>input.value?.focus(),selection:()=>{rememberIfFocused();return selection}})
++onBeforeUnmount(()=>clearTimeout(timer))
++</script>
++<template><div class="markdown-source" :style="{'--editor-scale':(zoom||100)/100}" @dragover.prevent @drop="drop"><pre v-if="lineNumbers" ref="gutter" class="source-gutter" aria-hidden="true">{{numbers}}</pre><div class="source-stack"><pre v-if="highlighted" ref="paint" class="source-paint" aria-hidden="true" v-html="highlight"></pre><textarea ref="input" class="source-input" :class="{highlighted}" aria-label="Markdown 源文" :value="modelValue" :disabled="disabled" spellcheck="false" maxlength="200000" placeholder="开始写作…" @input="emit('update:modelValue',($event.target as HTMLTextAreaElement).value);remember()" @select="remember" @click="remember" @keyup="remember" @blur="remember" @keydown="key" @scroll="scroll" @paste="paste"></textarea></div></div></template>
++<style scoped>
++.markdown-source{display:flex;flex:1;min-width:0;min-height:0;overflow:hidden;background:var(--card);color:var(--fg)}.source-stack{flex:1;position:relative;min-width:0;min-height:0}.source-input,.source-paint,.source-gutter{font:calc(14px * var(--editor-scale))/1.85 ui-monospace,Consolas,monospace!important;tab-size:2;margin:0;box-sizing:border-box;white-space:pre-wrap;overflow-wrap:anywhere;letter-spacing:normal;text-align:left}.source-input,.source-paint{position:absolute;inset:0;width:100%;height:100%;padding:22px 24px;border:0!important;border-radius:0!important;resize:none;overflow:auto;outline:0;background:transparent!important}.source-input{color:var(--fg)!important;caret-color:var(--link,var(--fg));min-height:0!important}.source-input.highlighted{-webkit-text-fill-color:transparent}.source-input::placeholder{-webkit-text-fill-color:var(--fg2)}.source-input::selection{background:var(--acc-soft);-webkit-text-fill-color:var(--fg)}.source-paint{pointer-events:none;color:var(--fg);scrollbar-width:none}.source-paint :deep(.md-marker){color:var(--link,var(--fg));font-weight:600}.source-paint :deep(.md-token){color:var(--link,var(--fg));text-decoration:underline;text-decoration-color:var(--line)}.source-gutter{width:48px;flex-shrink:0;padding:22px 8px 22px 0;overflow:hidden;text-align:right;color:var(--fg2);background:var(--card2);user-select:none}@media(max-width:480px){.source-input,.source-paint{padding:16px}.source-gutter{padding-top:16px;width:35px}}
++</style>
+diff --git a/src/core/editor/core.ts b/src/core/editor/core.ts
+new file mode 100644
+index 0000000..bb287b9
+--- /dev/null
++++ b/src/core/editor/core.ts
+@@ -0,0 +1,48 @@
++/** Shared, DOM-independent editing primitives. Raw Markdown remains the wire/storage format. */
++export type EditAction = 'bold'|'italic'|'strike'|'underline'|'highlight'|'link'|'image'|'quote'|'bullet'|'ordered'|'task'|'code'|'codeblock'|'table'|'rule'|'math'|'mathblock'|'footnote'|`h${number}`
++export interface TextSelection { start: number; end: number }
++export function markdownAction(text: string, selection: TextSelection, action: EditAction, data = '') {
++  const start=Math.max(0,Math.min(text.length,selection.start)),end=Math.max(start,Math.min(text.length,selection.end)), selected=text.slice(start,end)
++  let before='',after='',placeholder='文字'
++  const wrappers:Record<string,[string,string]>={bold:['**','**'],italic:['*','*'],strike:['~~','~~'],underline:['<u>','</u>'],highlight:['<mark>','</mark>'],code:['`','`'],link:['[','](https://)'],image:['![','](https://)'],math:['$','$'],mathblock:['\n$$\n','\n$$\n'],codeblock:['\n```'+(data||'text')+'\n','\n```\n']}
++  if(wrappers[action]) [before,after]=wrappers[action]
++  else if(action==='table') {before='\n| 列一 | 列二 |\n| --- | --- |\n| ';after=' | 内容 |\n| 内容 | 内容 |\n'}
++  else if(action==='rule'){before='\n\n---\n\n';placeholder=''}
++  else if(action==='footnote'){before='[^note]\n\n[^note]: ';placeholder='脚注内容'}
++  else {
++    const prefix=action==='quote'?'> ':action==='bullet'?'- ':action==='ordered'?'1. ':action==='task'?'- [ ] ':/^h[1-6]$/.test(action)?'#'.repeat(Number(action.slice(1)))+' ':''
++    const lineStart=text.lastIndexOf('\n',start-1)+1, lineEnd=text.indexOf('\n',end),until=lineEnd<0?text.length:lineEnd
++    const original=text.slice(lineStart,until),replacement=original.split('\n').map((line,i)=>(action==='ordered'?`${i+1}. `:prefix)+line).join('\n')
++    return {text:text.slice(0,lineStart)+replacement+text.slice(until),start:start+prefix.length,end:end+replacement.length-original.length}
++  }
++  if(action==='math'||action==='mathblock')placeholder='a^2 + b^2 = c^2'
++  if(action==='codeblock')placeholder='代码'
++  const value=selected||placeholder,insert=before+value+after
++  return {text:text.slice(0,start)+insert+text.slice(end),start:start+before.length,end:start+before.length+value.length}
++}
++export function markdownEnter(text:string,{start,end}:TextSelection) {
++  const lineStart=text.lastIndexOf('\n',start-1)+1,line=text.slice(lineStart,start)
++  const match=/^(\s*)(?:(- \[[ xX]\] )|([-+*] )|(\d+)[.)] |(> ))(.*)$/.exec(line)
++  if(!match)return {text:text.slice(0,start)+'\n'+(/^\s*/.exec(line)?.[0]||'')+text.slice(end),start:start+1+(/^\s*/.exec(line)?.[0].length||0)}
++  if(!match[6].trim())return {text:text.slice(0,lineStart)+text.slice(end),start:lineStart}
++  const prefix=match[1]+(match[2]?'- [ ] ':match[3]|| (match[4]?`${Number(match[4])+1}. `:match[5])),insert='\n'+prefix
++  return {text:text.slice(0,start)+insert+text.slice(end),start:start+insert.length}
++}
++export function indentMarkdown(text:string,{start,end}:TextSelection,outdent=false) {
++  const from=text.lastIndexOf('\n',start-1)+1, lineEnd=text.indexOf('\n',end),until=lineEnd<0?text.length:lineEnd
++  const old=text.slice(from,until),lines=old.split('\n'),firstDelta=outdent?-Math.min(2,/^ */.exec(lines[0])![0].length):2
++  const value=lines.map(l=>outdent?l.replace(/^ {1,2}|^\t/,''):'  '+l).join('\n')
++  return {text:text.slice(0,from)+value+text.slice(until),start:Math.max(from,start+firstDelta),end:Math.max(from,end+value.length-old.length)}
++}
++/** Group adjacent typing; bound retained undo data rather than retaining a document per key. */
++export function createTextHistory(initial:string,maxBytes=4*1024*1024) {
++  let values=[initial],cursor=0,last=0
++  return {
++    record(value:string,group=true){if(value===values[cursor]){if(!group)last=0;return;}const now=Date.now();values=values.slice(0,cursor+1);if(group&&cursor>0&&now-last<400)values[cursor]=value;else{values.push(value);cursor++}last=now;while(values.length>2&&(values.length>60||values.reduce((n,v)=>n+v.length*2,0)>maxBytes)){values.shift();cursor--}},
++    undo(){last=0;if(cursor>0)cursor--;return values[cursor]},redo(){last=0;if(cursor<values.length-1)cursor++;return values[cursor]},
++    get canUndo(){return cursor>0},get canRedo(){return cursor<values.length-1},get bytes(){return values.reduce((n,v)=>n+v.length*2,0)},
++  }
++}
++export const editorStats=(text:string)=>{const chars=Array.from(text).length,words=(text.match(/[\u3400-\u9fff]|[a-z0-9]+(?:['’-][a-z0-9]+)*/gi)||[]).length;return {chars,words,lines:text.split('\n').length,minutes:Math.max(1,Math.ceil(words/300))}}
++export const escapeHtml=(value:string)=>String(value).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]!))
++export function downloadDocument(title:string,content:string,type:string,extension:string){const url=URL.createObjectURL(new Blob([content],{type})),a=document.createElement('a');a.href=url;a.download=(title||'未命名文档').replace(/[\\/:*?"<>|]/g,'_')+'.'+extension;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000)}
+diff --git a/src/core/editor/render.ts b/src/core/editor/render.ts
+new file mode 100644
+index 0000000..acff272
+--- /dev/null
++++ b/src/core/editor/render.ts
+@@ -0,0 +1,18 @@
++import { Marked } from 'marked'
++import { sanitizeHtml } from '../render'
++import { escapeHtml } from './core'
++import { readableColor } from '../theme-colors'
++const parser=new Marked({gfm:true,breaks:true,extensions:[{name:'footnoteDefinition',level:'block',start(src:string){return src.indexOf('[^')},tokenizer(src:string){const m=/^\[\^([\w-]+)\]:[ \t]*(.+)(?:\n|$)/.exec(src);if(m)return {type:'footnoteDefinition',raw:m[0],label:m[1],text:m[2]}},renderer(token:any){return '<aside id="fn-'+escapeHtml(token.label)+'" class="editor-footnote"><sup>'+escapeHtml(token.label)+'</sup> '+parser.parseInline(token.text)+'</aside>'}},{name:'footnoteRef',level:'inline',start(src:string){return src.indexOf('[^')},tokenizer(src:string){const m=/^\[\^([\w-]+)\]/.exec(src);if(m)return {type:'footnoteRef',raw:m[0],label:m[1]}},renderer(token:any){return '<sup><a href="#fn-'+escapeHtml(token.label)+'">'+escapeHtml(token.label)+'</a></sup>'}},{
++ name:'mathBlock',level:'block',start(src:string){return src.indexOf('$$')},tokenizer(src:string){const m=/^\$\$\s*\n?([\s\S]+?)\n?\$\$(?:\n|$)/.exec(src);if(m)return {type:'mathBlock',raw:m[0],text:m[1]}},renderer(token:any){return '<div class="editor-math" data-display="true" data-latex="'+escapeHtml(token.text)+'">'+escapeHtml(token.text)+'</div>'}
++},{name:'mathInline',level:'inline',start(src:string){return src.indexOf('$')},tokenizer(src:string){const m=/^\$(?!\$)([^$\n]+?)\$/.exec(src);if(m)return {type:'mathInline',raw:m[0],text:m[1]}},renderer(token:any){return '<span class="editor-math" data-latex="'+escapeHtml(token.text)+'">'+escapeHtml(token.text)+'</span>'}}] as any})
++export function previewBlocks(text:string){let offset=0;return parser.lexer(text).map((token:any)=>{const start=offset;offset+=token.raw.length;return {start,end:offset,html:sanitizeHtml(parser.parser([token])),key:start+':'+token.raw}})}
++let mathLoad:Promise<any>,codeLoad:Promise<any>
++export function mathRenderer(){return mathLoad ||= Promise.all([import('katex'),import('katex/dist/katex.min.css')]).then(([module])=>module.default)}
++export async function renderMath(el:HTMLElement,latex:string,display=false){try{const katex=await mathRenderer();if(el.isConnected)katex.render(latex,el,{displayMode:display,throwOnError:false,trust:false,strict:'ignore',maxExpand:500})}catch{el.textContent=latex}}
++const loaders:Record<string,()=>Promise<any>>={javascript:()=>import('shiki/langs/javascript.mjs'),typescript:()=>import('shiki/langs/typescript.mjs'),json:()=>import('shiki/langs/json.mjs'),python:()=>import('shiki/langs/python.mjs'),css:()=>import('shiki/langs/css.mjs'),html:()=>import('shiki/langs/html.mjs'),bash:()=>import('shiki/langs/bash.mjs'),markdown:()=>import('shiki/langs/markdown.mjs')}
++export const codeLanguages=['text',...Object.keys(loaders)]
++const aliases:Record<string,string>={js:'javascript',ts:'typescript',py:'python',sh:'bash',md:'markdown',plaintext:'text'}
++export async function highlighter(language:string){language=aliases[language]||language;if(!loaders[language])return null;codeLoad ||= Promise.all([import('shiki/core'),import('shiki/engine/javascript'),import('shiki/themes/github-dark.mjs'),import('shiki/themes/github-light.mjs')]).then(([core,engine,dark,light])=>core.createHighlighterCore({themes:[dark.default,light.default],langs:[],engine:engine.createJavaScriptRegexEngine()}));const h=await codeLoad;if(!h.getLoadedLanguages().includes(language))await h.loadLanguage((await loaders[language]()).default);return {h,language}}
++export async function highlightCode(code:string,language:string){if(code.length>20000)return escapeHtml(code);try{const loaded=await highlighter(language);if(!loaded)return escapeHtml(code);const style=getComputedStyle(document.documentElement),dark=document.documentElement.dataset.theme!=='light',bg=style.getPropertyValue('--card').trim();return loaded.h.codeToTokens(code,{lang:loaded.language,theme:dark?'github-dark':'github-light'}).tokens.map((line:any[])=>line.map(t=>{const color=/^#[\da-f]{3,6}$/i.test(bg)?readableColor(t.color||'#888888',[bg]):style.getPropertyValue('--fg').trim();return '<span style="color:'+color+'">'+escapeHtml(t.content)+'</span>'}).join('')).join('\n')}catch{return escapeHtml(code)}}
++/** Safe export: formulas use native MathML so a saved HTML file does not depend on local font URLs. */
++export async function renderExportBody(text:string){const container=document.createElement('div');container.innerHTML=previewBlocks(text).map(block=>block.html).join('');const formulas=container.querySelectorAll<HTMLElement>('[data-latex]');if(formulas.length){const katex=await mathRenderer();for(const el of formulas)el.innerHTML=katex.renderToString(el.dataset.latex||'',{displayMode:el.dataset.display==='true',throwOnError:false,trust:false,output:'mathml',maxExpand:500})}for(const image of container.querySelectorAll('img')){try{const raw=image.getAttribute('src')||'';if(raw.startsWith('/'))image.src=new URL(raw,location.origin).href}catch{}}return container.innerHTML}
+diff --git a/src/core/editor/rich-nodes.ts b/src/core/editor/rich-nodes.ts
+new file mode 100644
+index 0000000..da4050f
+--- /dev/null
++++ b/src/core/editor/rich-nodes.ts
+@@ -0,0 +1,16 @@
++import { Node, nodeInputRule } from '@tiptap/core'
++import CodeBlock from '@tiptap/extension-code-block'
++import { renderMath,highlightCode,codeLanguages } from './render'
++function mathNode(block:boolean){const name=block?'mathBlock':'mathInline',tag=block?'div':'span';return Node.create({
++ name,group:block?'block':'inline',inline:!block,atom:true,selectable:true,
++ addAttributes(){return {latex:{default:'',parseHTML:el=>el.getAttribute('data-latex')}}},
++ parseHTML(){return [{tag:tag+'[data-math="'+name+'"]'}]},renderHTML({HTMLAttributes}){return [tag,{...HTMLAttributes,'data-math':name,'data-latex':HTMLAttributes.latex,class:'rich-math'},HTMLAttributes.latex]},
++ markdownTokenName:name,markdownTokenizer:{name,level:block?'block':'inline',start:'$',tokenize(src:string){const match=(block?/^\$\$\s*\n?([\s\S]+?)\n?\$\$(?:\n|$)/:/^\$(?!\$)([^$\n]+?)\$/).exec(src);if(match)return {type:name,raw:match[0],text:match[1]}}},
++ parseMarkdown(token:any){return {type:name,attrs:{latex:token.text}}},renderMarkdown(node:any){return block?'$$\n'+node.attrs.latex+'\n$$':'$'+node.attrs.latex+'$'},
++ addInputRules(){return [nodeInputRule({find:block?/^\$\$\s([^$]+)\$\$$/:/\$([^$\n]+)\$$/,type:this.type,getAttributes:m=>({latex:m[1]})})]},
++ addNodeView(){return ({node,editor,getPos})=>{let current=node;const dom=document.createElement(tag),output=document.createElement('span');dom.className='rich-math';dom.setAttribute('data-math',name);dom.append(output);const render=()=>{output.textContent=current.attrs.latex;void renderMath(output,current.attrs.latex,block)};render();dom.ondblclick=e=>{e.preventDefault();if(!editor.isEditable)return;const input=document.createElement('input');input.value=current.attrs.latex;input.setAttribute('aria-label','编辑公式');output.hidden=true;dom.append(input);let finished=false;const finish=(save:boolean)=>{if(finished)return;finished=true;if(save&&typeof getPos==='function'){const pos=getPos();if(typeof pos==='number')editor.view.dispatch(editor.state.tr.setNodeMarkup(pos,undefined,{latex:input.value}))}input.remove();output.hidden=false;editor.commands.focus()};input.onkeydown=e=>{e.stopPropagation();if(e.key==='Enter'){e.preventDefault();finish(true)}if(e.key==='Escape')finish(false)};input.onblur=()=>finish(true);input.focus()};return {dom,update(next){if(next.type!==current.type)return false;current=next;render();return true},stopEvent:e=>e.target instanceof HTMLInputElement,ignoreMutation:()=>true,destroy(){dom.ondblclick=null}}}}
++})}
++export const MathInline=mathNode(false),MathBlock=mathNode(true)
++export const EditorCodeBlock=CodeBlock.extend({
++ addNodeView(){return ({node,editor,getPos})=>{let current=node,sequence=0,timer:ReturnType<typeof setTimeout>,disposed=false;const dom=document.createElement('div');dom.className='rich-code';const header=document.createElement('div');header.className='code-actions';header.contentEditable='false';const language=document.createElement('select');language.setAttribute('aria-label','代码语言');for(const value of codeLanguages){const option=document.createElement('option');option.value=value;option.textContent=value;language.append(option)}const copy=document.createElement('button');copy.type='button';copy.textContent='复制';copy.onclick=async()=>{try{await navigator.clipboard.writeText(current.textContent);copy.textContent='已复制'}catch{copy.textContent='复制失败'}};header.append(language,copy);const stack=document.createElement('div'),paint=document.createElement('pre'),pre=document.createElement('pre'),code=document.createElement('code');stack.className='code-stack';paint.className='code-paint';paint.setAttribute('aria-hidden','true');pre.className='code-input';pre.append(code);stack.append(paint,pre);dom.append(header,stack);const update=()=>{const seq=++sequence;language.value=current.attrs.language||'text';language.disabled=!editor.isEditable;clearTimeout(timer);paint.textContent=current.textContent;timer=setTimeout(()=>{void highlightCode(current.textContent,current.attrs.language||'text').then(html=>{if(!disposed&&seq===sequence)paint.innerHTML=html})},150)};language.onchange=()=>{const pos=getPos();if(typeof pos==='number')editor.view.dispatch(editor.state.tr.setNodeMarkup(pos,undefined,{...current.attrs,language:language.value}))};window.addEventListener('yh-editor-theme',update);update();return {dom,contentDOM:code,update(next){if(next.type!==current.type)return false;current=next;update();return true},stopEvent:e=>header.contains(e.target as globalThis.Node),ignoreMutation:mutation=>!code.contains(mutation.target)&&mutation.target!==code,destroy(){disposed=true;clearTimeout(timer);window.removeEventListener('yh-editor-theme',update);language.onchange=null;copy.onclick=null}}}}
++})

@@ -17,7 +17,7 @@ const sname = computed(() => {
   return (props.title || 'page').toLowerCase().replace(/[^a-z0-9\u4e00-\u9fa5]+/g, '-')
 })
 
-const ctx = inject('ctx')
+const ctx = inject<any>('ctx')
 const items = computed(() => (props.menu && ctx.console ? ctx.console.state.menus[props.menu] || [] : []))
 function run(id) { ctx.console?.run(id) }
 </script>

@@ -1,0 +1,50 @@
+import assert from 'node:assert/strict'
+import { createServer } from 'vite'
+import vue from '@vitejs/plugin-vue'
+
+const { chromium } = await import(process.env.PLAYWRIGHT_MODULE || 'playwright')
+const server = await createServer({ configFile: false, plugins: [vue()], server: { host: '127.0.0.1', port: 0 }, logLevel: 'error' })
+await server.listen()
+let browser
+try {
+  browser = await chromium.launch({ headless: true, executablePath: process.env.CHROMIUM_EXECUTABLE, args: ['--no-sandbox', '--disable-dev-shm-usage'] })
+  const page = await browser.newPage({ viewport: { width: 700, height: 800 } })
+  const errors = []
+  page.on('pageerror', error => errors.push(error.message))
+  await page.goto(`http://127.0.0.1:${server.httpServer.address().port}/scripts/ui-fixture/community.html?share-cards`)
+  const board = page.getByRole('button', { name: '云湖去广版分享 邀请加入该板块' })
+  await board.waitFor()
+  assert.equal(await page.locator('.message-share-card').count(), 3)
+  assert.ok((await board.boundingBox()).height < 100)
+  await page.setViewportSize({ width: 320, height: 740 })
+  const box = await board.boundingBox()
+  assert.ok(box.x >= 0 && box.x + box.width <= 320)
+  await page.evaluate(() => { document.documentElement.dataset.theme = 'light' })
+  assert.equal(await board.evaluate(element => getComputedStyle(element).backgroundColor), 'rgb(255, 255, 255)')
+  if (process.env.COMMUNITY_QA_DIR) await page.screenshot({ path: process.env.COMMUNITY_QA_DIR + '/share-cards.png' })
+  await page.setViewportSize({ width: 700, height: 800 })
+  await page.evaluate(() => { window.__community.ctx.chat.state.selecting = true })
+  await board.click()
+  assert.deepEqual(await page.evaluate(() => window.__community.ctx.chat.state.selected), ['share-0'])
+  assert.equal(await page.evaluate(() => window.__community.calls.some(call => call[0] === 'posts')), false)
+  await page.evaluate(() => { window.__community.ctx.chat.state.selecting = false })
+  await board.click()
+  await page.waitForFunction(() => window.__community.calls.some(call => call[0] === 'posts' && call[1] === 925))
+  assert.equal(await page.getByText('群聊卡片', { exact: true }).count(), 0)
+  assert.equal(await page.evaluate(() => window.__community.calls.some(call => call[0] === 'apply')), false)
+  await page.getByRole('button', { name: '学习交流 邀请加入该群聊' }).click()
+  await page.getByRole('button', { name: '发消息', exact: true }).click()
+  assert.ok(await page.evaluate(() => window.__community.calls.some(call => call[0] === 'chat' && call[1].id === '925' && call[1].type === 2)))
+  await page.getByRole('button', { name: '历史群分享 邀请加入该群聊' }).click()
+  await page.getByRole('button', { name: '加入群聊', exact: true }).click()
+  assert.ok(await page.evaluate(() => window.__community.calls.some(call => call[0] === 'apply' && call[1] === '952' && call[2] === 2)))
+  await page.getByRole('link', { name: '板块入口' }).click()
+  await page.waitForFunction(() => window.__community.calls.some(call => call[0] === 'posts' && call[1] === 1218))
+  await page.getByRole('link', { name: '用户分享' }).click()
+  assert.equal(await page.getByText('群聊卡片', { exact: true }).count(), 0)
+  assert.deepEqual(errors, [])
+  console.log('PASS: community and group shares with the same ID, legacy cards, rich links, narrow layout and multi-select')
+} finally {
+  await browser?.close()
+  await server.close()
+}
